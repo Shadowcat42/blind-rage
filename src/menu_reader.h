@@ -1,0 +1,299 @@
+#pragma once
+#include <algorithm>
+#include <array>
+#include <bit>
+#include <cmath>
+#include <cstdint>
+#include <cstdio>
+#include <cstring>
+#include <functional>
+#include <map>
+#include <optional>
+#include <ostream>
+#include <set>
+#include <string>
+#include <unordered_map>
+#include <unordered_set>
+#include <vector>
+
+namespace a11y {
+// All layouts below are for the fingerprinted Mark2 disc build. Host pointers are
+// never substituted for the game's big-endian, 32-bit guest pointers.
+class Memory {
+ public:
+  using Read = std::function<bool(uint32_t, void*, size_t)>;
+  explicit Memory(Read read): read_(std::move(read)) {}
+  bool copy(uint32_t at, void* out, size_t n) const {
+    if (!at || n > 16*1024*1024 || uint64_t(at)+n > 0x100000000ull) return false;
+    return read_(at,out,n);
+  }
+  uint32_t u32(uint32_t a) const { unsigned char b[4]{}; if(!copy(a,b,4))return 0; return uint32_t(b[0])<<24|uint32_t(b[1])<<16|uint32_t(b[2])<<8|b[3]; }
+  uint8_t u8(uint32_t a) const { uint8_t v{};copy(a,&v,1);return v; }
+  double number(uint32_t a) const { return std::bit_cast<double>(uint64_t(u32(a))<<32|u32(a+4)); }
+  std::string string(uint32_t a,size_t max=2048) const {
+    std::string s; if(!a)return s;
+    for(size_t i=0;i<max;){auto at=a+uint32_t(i);size_t n=std::min({size_t(64),max-i,size_t(4096-(at&4095))});char block[64];if(!copy(at,block,n))return {};for(size_t j=0;j<n;j++){if(!block[j])return s;s+=block[j];}i+=n;}return {};
+  }
+ private: Read read_;
+};
+
+inline std::string clean_text(const std::string& input) {
+ std::string s;bool tag=false;
+ for(char c:input){if(c=='<'){tag=true;continue;}if(c=='>'){tag=false;s+=' ';continue;}if(!tag)s+=(static_cast<unsigned char>(c)<32?' ':c);}
+ for(const auto& [from,to]:std::array<std::pair<const char*,const char*>,6>{{{"&amp;","&"},{"&lt;","<"},{"&gt;",">"},{"&quot;","\""},{"&apos;","'"},{"&nbsp;"," "}}}){
+  size_t p=0;while((p=s.find(from,p))!=std::string::npos){s.replace(p,strlen(from),to);p+=strlen(to);}
+ }
+ std::string out;bool space=true;for(char c:s){if(c==' '){if(!space)out+=' ';space=true;}else{out+=c;space=false;}}if(!out.empty()&&out.back()==' ')out.pop_back();return out;
+}
+struct Value { uint8_t type{};uint32_t pointer{};double number{};bool boolean{}; };
+using Members=std::map<std::string,Value>;
+struct Item { std::string label,help;bool enabled=true;bool operator==(const Item&) const=default; };
+struct Menu {
+ uint32_t movie{},selector{};std::string heading,path;int cursor=-1;std::vector<Item> items;bool message=false,modal=false,collection=false;std::string acquired;bool settings=false,pending=false;
+ bool operator==(const Menu&) const = default;
+};
+
+class Reader {
+ public:
+  static constexpr uint32_t names_global=0x832a9c58,objects_global=0x832a9c98;
+  static constexpr uint32_t sprite_vtable=0x82028718;
+  std::string name(const Memory& m,uint32_t index) {
+   if(index>=m.u32(names_global+4)||index>250000)return {};
+   auto it=names_.find(index);if(it!=names_.end())return it->second;
+   auto p=m.u32(m.u32(names_global)+index*4);if(!p)return {};
+   auto s=m.string(p+8,256);if(!s.empty())names_[index]=s;return s;
+  }
+  std::string object_name(const Memory& m,uint32_t p){return p?name(m,m.u32(p+0x2c)):"";}
+  std::string class_name(const Memory& m,uint32_t p){return object_name(m,m.u32(p+0x34));}
+  bool ready(const Memory& m) { return name(m,0)=="None"&&name(m,1)=="ByteProperty"&&m.u32(objects_global+4)>1000&&m.u32(objects_global+4)<250000; }
+  void discover(const Memory& m) {
+   movies_.clear();if(!ready(m)){discovered_count_=0;discovered_table_=0;return;}
+   auto count=m.u32(objects_global+4),table=m.u32(objects_global);
+   bool reset=discovered_table_!=table||count<discovered_count_;if(reset)menu_classes_.clear();
+   std::vector<unsigned char> pointers(size_t(count)*4);if(!m.copy(table,pointers.data(),pointers.size()))return;
+   auto examine=[&](uint32_t i){
+    const auto* b=pointers.data()+i*4;auto p=uint32_t(b[0])<<24|uint32_t(b[1])<<16|uint32_t(b[2])<<8|b[3];
+    if(!p||m.u32(p+0x20)!=i)return;
+    const auto cls=m.u32(p+0x34);auto cached=menu_classes_.find(cls);bool is_menu;
+    if(cached!=menu_classes_.end())is_menu=cached->second;else{
+     is_menu=false;std::set<uint32_t> seen;
+     for(auto c=cls;c&&seen.insert(c).second&&seen.size()<20;c=m.u32(c+0x40)){
+      auto n=object_name(m,c);if(n=="BCGFxMovieMenu"||n=="BCGFxUI_Common"){is_menu=true;break;}
+     }menu_classes_[cls]=is_menu;
+    }
+    if(!is_menu||object_name(m,p).starts_with("Default__"))return;
+    if(std::none_of(movies_.begin(),movies_.end(),[&](const Movie& movie){return movie.p==p&&movie.index==i&&movie.cls==cls;}))movies_.push_back({p,i,cls});
+   };
+   // Publication and slot reuse do not necessarily change the array's size.
+   // Refresh the complete registry; keep the faster visible-tree polling path.
+   for(uint32_t i=0;i<count;i++)examine(i);
+   discovered_count_=count;discovered_table_=table;
+  }
+  Members members(const Memory& m,uint32_t object) const {
+   Members out;auto table=m.u32(object+0x1c);if(!table)return out;
+   auto count=m.u32(table),mask=m.u32(table+4);
+   if(mask>4095||((mask+1)&mask)||count>mask+1)return out;
+   std::vector<unsigned char> raw(size_t(mask+1)*32);if(!m.copy(table+8,raw.data(),raw.size()))return out;
+   // -2 is a free bucket. -1 is an occupied bucket terminating a collision chain.
+   auto r32=[&](size_t o){auto* b=raw.data()+o;return uint32_t(b[0])<<24|uint32_t(b[1])<<16|uint32_t(b[2])<<8|b[3];};
+   for(uint32_t i=0;i<=mask;i++){
+    auto off=size_t(i)*32;if(r32(off)==0xfffffffe)continue;
+    auto node=r32(off+8);auto key=m.string(m.u32(node),128);if(key.empty())continue;
+    Value v;v.type=raw[off+16];v.pointer=r32(off+20);v.boolean=raw[off+20]!=0;
+    v.number=v.type==4?double(int32_t(r32(off+24))):std::bit_cast<double>(uint64_t(r32(off+24))<<32|r32(off+28));out.emplace(std::move(key),v);
+   }
+   if(m.u32(object+0x1c)!=table||m.u32(table)!=count||m.u32(table+4)!=mask)return {};
+   return out;
+  }
+  static std::optional<Value> get(const Members& v,const std::string& key){auto i=v.find(key);return i==v.end()?std::nullopt:std::optional<Value>(i->second);}
+  std::string value_text(const Memory& m,const std::optional<Value>& value) const {
+   if(!value)return {};if(value->type==5)return clean_text(m.string(m.u32(value->pointer)));
+   if((value->type==3||value->type==4)&&std::isfinite(value->number)){char s[64];snprintf(s,sizeof(s),"%.6g",value->number);return s;}return {};
+  }
+  std::vector<uint32_t> children(const Memory& m,uint32_t c) const {
+   if(m.u32(c)!=sprite_vtable)return {};
+   auto p=m.u32(c+0xc4),n=m.u32(c+0xc8),cap=m.u32(c+0xcc);if(n>2048||n>cap||cap>4096)return {};
+   std::vector<uint32_t> out;for(uint32_t i=0;i<n;i++){auto child=m.u32(p+i*4);if(child)out.push_back(child);}return out;
+  }
+  std::string character_name(const Memory& m,uint32_t c) const {auto h=m.u32(c+0x94);return m.string(m.u32(m.u32(h+0xc)),512);}
+  std::vector<std::string> text(const Memory& m,uint32_t root,size_t limit=500) const {
+   std::vector<std::string> out;std::vector<uint32_t> todo{root};std::set<uint32_t> seen;
+   while(!todo.empty()&&seen.size()<limit){auto c=todo.back();todo.pop_back();if(!c||!seen.insert(c).second||!visible(m,c))continue;
+    if(m.u32(c)==0x8202bcb0){auto s=native_text(m,c);if(!s.empty()&&std::find(out.begin(),out.end(),s)==out.end())out.push_back(std::move(s));continue;}
+    if(m.u32(c)!=sprite_vtable)continue;
+    auto fields=members(m,m.u32(c+0x1c8));auto v=get(fields,"m_text");if(!v)v=get(fields,"_text");
+    auto s=value_text(m,v);if(!s.empty()&&std::find(out.begin(),out.end(),s)==out.end())out.push_back(std::move(s));
+    auto kids=children(m,c);todo.insert(todo.end(),kids.rbegin(),kids.rend());
+   }return out;
+  }
+  bool visible(const Memory& m,uint32_t c) const {std::set<uint32_t> seen;while(c&&seen.insert(c).second&&seen.size()<64){if(m.u32(c+0xa0)&2)return false;c=m.u32(c+0x20);}return c==0;}
+  std::string native_text(const Memory& m,uint32_t field) const {
+   auto view=m.u32(field+0xbc),styled=m.u32(view+8),paragraphs=m.u32(styled+0xc),count=m.u32(styled+0x10),capacity=m.u32(styled+0x14);
+   if(!view||!styled||!paragraphs||count>128||count>capacity||capacity>512)return {};
+   std::string out;for(uint32_t i=0;i<count;i++){
+    auto paragraph=m.u32(paragraphs+i*4),data=m.u32(paragraph),length=m.u32(paragraph+4),cap=m.u32(paragraph+8);if(!data||length>4096||length>cap)return {};
+    if(!out.empty())out+=' ';for(uint32_t j=0;j<length;j++){
+     uint32_t u=uint32_t(m.u8(data+j*2))<<8|m.u8(data+j*2+1);if(!u)break;
+     if(u>=0xd800&&u<=0xdbff&&j+1<length){auto v=uint32_t(m.u8(data+(j+1)*2))<<8|m.u8(data+(j+1)*2+1);if(v>=0xdc00&&v<=0xdfff){u=0x10000+((u-0xd800)<<10)+(v-0xdc00);j++;}else return {};}
+     else if(u>=0xdc00&&u<=0xdfff)return {};
+     if(u<0x80)out+=char(u);else if(u<0x800){out+=char(0xc0|(u>>6));out+=char(0x80|(u&63));}else if(u<0x10000){out+=char(0xe0|(u>>12));out+=char(0x80|((u>>6)&63));out+=char(0x80|(u&63));}else{out+=char(0xf0|(u>>18));out+=char(0x80|((u>>12)&63));out+=char(0x80|((u>>6)&63));out+=char(0x80|(u&63));}
+    }
+   }return clean_text(out);
+  }
+  std::vector<Menu> menus(const Memory& m) {
+   std::vector<Menu> out;
+   for(auto movie:movies_){
+    if(m.u32(movie.p+0x20)!=movie.index||m.u32(movie.p+0x34)!=movie.cls)continue;
+    // GFxMoviePlayer.bMovieIsOpen is the high bit of its reflected boolean word.
+    if(!(m.u32(movie.p+0xc8)&0x80000000))continue;
+    std::unordered_set<uint32_t> seen;
+    for(auto field:{0x180u,0x17cu}){
+     auto gfx=m.u32(movie.p+field);if(!gfx||m.u32(gfx+0x40)!=0x48)continue;
+     auto handle=m.u32(gfx+0x44),root=m.u32(handle+4);
+     std::vector<uint32_t> todo{root};
+     while(!todo.empty()&&seen.size()<3000){
+      auto c=todo.back();todo.pop_back();if(!c||!seen.insert(c).second||m.u32(c)!=sprite_vtable||!visible(m,c))continue;
+      auto fields=members(m,m.u32(c+0x1c8));auto cur=get(fields,"m_cursor"),items=get(fields,"m_items");
+      auto details=get(fields,"m_details"),input=get(fields,"m_input");
+      if(details&&details->type==6&&cur&&(cur->type==3||cur->type==4)&&input&&input->type==2&&input->boolean&&visible(m,c)){
+       auto ptr=m.u32(details->pointer+0x38),count=m.u32(details->pointer+0x3c);
+       if(count&&count<128&&std::isfinite(cur->number)&&cur->number>=0&&cur->number<count&&std::floor(cur->number)==cur->number){
+        Menu settings;settings.movie=movie.p;settings.selector=c;settings.cursor=int(cur->number);settings.settings=true;
+        auto path=character_name(m,c);settings.heading=path.substr(path.find_last_of('.')+1);if(settings.heading.starts_with("mcInst_"))settings.heading.erase(0,7);if(settings.heading.starts_with("Mark2"))settings.heading.erase(0,5);
+        auto kids=children(m,c);auto findChild=[&](const std::string& name){for(auto child:kids){auto p=character_name(m,child);if(p.ends_with("."+name))return child;}return uint32_t(0);};
+        auto headingText=text(m,findChild("mcInst_Title"));if(headingText.size()==1)settings.heading=headingText.front();
+        for(uint32_t i=0;i<count;i++){
+         auto record=m.u32(ptr+i*4);if(m.u8(record)!=6){settings.items.clear();break;}auto row=members(m,m.u32(record+4));Item item;
+         auto title=findChild(value_text(m,get(row,"Title"))),control=findChild(value_text(m,get(row,"Sel")));for(auto& label:text(m,title)){if(!item.label.empty())item.label+=" ";item.label+=label;}
+         auto literal=value_text(m,get(row,"Title"));if(item.label.empty()&&!literal.starts_with("mcInst_"))item.label=literal;
+         if(item.label.empty())if(auto instanceName=get(row,"InstName");instanceName&&instanceName->type==5){
+          auto name=value_text(m,instanceName);uint32_t container=c;if(auto selector=get(fields,"m_instSelector");selector&&selector->type==7)container=m.u32(selector->pointer+4);
+          for(auto child:children(m,container))if(character_name(m,child).ends_with("."+name)){for(auto& label:text(m,child)){if(!item.label.empty())item.label+=" ";item.label+=label;}break;}
+         }
+         auto controlFields=members(m,m.u32(control+0x1c8));auto value=get(controlFields,"m_param");std::string valueLabel;
+         if(get(controlFields,"m_move")){if(item.label.find('%')==std::string::npos)valueLabel=value_text(m,value);}else{
+          std::vector<std::string> choices;for(auto suffix:{"mcInst_ChoiceL","mcInst_ChoiceR"})for(auto child:children(m,control))if(character_name(m,child).ends_with(std::string(".")+suffix)){std::string option;for(auto& t:text(m,child)){if(!option.empty())option+=' ';option+=t;}choices.push_back(option);}
+          if(value&&(value->type==3||value->type==4)&&value->number>=0&&value->number<choices.size()&&std::floor(value->number)==value->number)valueLabel=choices[size_t(value->number)];
+          if(valueLabel.empty())valueLabel=value_text(m,value);
+         }
+         if(!valueLabel.empty())item.label+=", "+valueLabel;item.help=value_text(m,get(row,"HelpText"));settings.items.push_back(std::move(item));
+        }
+        if(settings.items.size()==count&&!settings.items[settings.cursor].label.empty())out.push_back(std::move(settings));
+       }
+      }
+      auto info=get(fields,"m_info"),param=get(fields,"m_param");
+      if(info&&param&&info->type==6&&param->type==6&&visible(m,c)){
+       auto data=members(m,info->pointer),selected=members(m,param->pointer);auto list=get(data,"m_items"),owned=get(selected,"Get");
+       if(list&&list->type==6&&owned&&owned->type==2){
+        auto count=m.u32(list->pointer+0x3c);if(count&&count<1000){
+         Menu detail;detail.movie=movie.p;detail.selector=c;detail.cursor=0;detail.collection=true;
+         if(auto title=get(fields,"m_instTitle");title&&title->type==7){for(const auto& s:text(m,m.u32(title->pointer+4))){if(!detail.heading.empty())detail.heading+=" ";detail.heading+=s;}}
+         auto total=get(data,"m_getItemNum");if(total&&total->type==3)detail.acquired=std::to_string(int(total->number))+"/"+std::to_string(count);
+         Item item;item.enabled=owned->boolean;item.label=value_text(m,get(selected,"Title"));item.help=value_text(m,get(selected,"Text"));
+         if(!item.label.empty()||!item.help.empty()){detail.items.push_back(std::move(item));out.push_back(std::move(detail));}
+        }
+       }
+      }
+      auto opened=get(fields,"tl_opend");
+      if(opened&&opened->type==2&&opened->boolean&&visible(m,c)){
+       std::string body;for(auto line:text(m,c)){if(line.find_first_not_of(". ")==std::string::npos)continue;while(!line.empty()&&line.back()=='.')line.pop_back();if(!body.empty())body+=". ";body+=line;}
+       if(!body.empty()){Menu dialog;dialog.movie=movie.p;dialog.selector=c;dialog.cursor=0;dialog.message=true;dialog.modal=true;auto type=get(fields,"tl_type");dialog.pending=type&&(type->type==3||type->type==4)&&type->number==2;dialog.items.push_back({body,"",true});out.push_back(std::move(dialog));}
+      }
+      if(cur&&(cur->type==3||cur->type==4)&&std::isfinite(cur->number)&&items&&items->type==6&&visible(m,c)){
+       auto a=items->pointer,ptr=m.u32(a+0x38),count=m.u32(a+0x3c),cap=m.u32(a+0x40);
+       if(count&&count<=256&&count<=cap&&cap<=1024&&cur->number>=0&&cur->number<count&&std::floor(cur->number)==cur->number){
+        Menu menu;menu.movie=movie.p;menu.selector=c;menu.cursor=int(cur->number);menu.path=character_name(m,c);menu.heading=heading(class_name(m,movie.p));
+        for(uint32_t i=0;i<count;i++){
+         auto v=m.u32(ptr+i*4);if(m.u8(v)!=6){menu.items.clear();break;}
+         auto itemFields=members(m,m.u32(v+4));Item item;item.help=value_text(m,get(itemFields,"Help"));if(item.help.empty())item.help=value_text(m,get(itemFields,"HelpText"));
+         if(auto enabled=get(itemFields,"bActive");enabled&&enabled->type==2)item.enabled=enabled->boolean;
+         if(auto inst=get(itemFields,"Inst");inst&&inst->type==7){auto labels=text(m,m.u32(inst->pointer+4));for(const auto& label:labels){if(!item.label.empty())item.label+=", ";item.label+=label;}}
+         if(item.label.empty()){for(auto key:{"Text","Label","Name","m_text","_text"}){item.label=value_text(m,get(itemFields,key));if(!item.label.empty())break;}}
+         menu.items.push_back(std::move(item));
+        }
+        if(menu.items.size()==count&&!menu.items[menu.cursor].label.empty()&&m.u32(a+0x38)==ptr&&m.u32(a+0x3c)==count)out.push_back(std::move(menu));
+       }
+      }
+      auto kids=children(m,c);todo.insert(todo.end(),kids.rbegin(),kids.rend());
+     }
+    }
+   }
+   std::set<std::pair<uint32_t,uint32_t>> seen;std::erase_if(out,[&](const Menu& menu){return !seen.insert({menu.movie,menu.selector}).second;});
+   if(std::any_of(out.begin(),out.end(),[](const Menu& menu){return menu.modal;})){
+    for(auto& dialog:out)if(dialog.modal&&dialog.message){
+     for(const auto& choice:out){
+      if(choice.modal||choice.movie!=dialog.movie||choice.items.empty()||std::any_of(choice.items.begin(),choice.items.end(),[](const Item& item){return item.label.empty();}))continue;
+      bool descendant=false;std::set<uint32_t> ancestors;for(auto c=choice.selector;c&&ancestors.insert(c).second&&ancestors.size()<64;c=m.u32(c+0x20))if(c==dialog.selector){descendant=true;break;}
+      if(!descendant)continue;
+      std::vector<std::string> promptLines;std::vector<uint32_t> nodes{dialog.selector};std::set<uint32_t> visited;
+      while(!nodes.empty()&&visited.size()<256){auto c=nodes.back();nodes.pop_back();if(!visited.insert(c).second||!visible(m,c))continue;if(character_name(m,c).ends_with(".mcInst_MainText")){auto lines=text(m,c);promptLines.insert(promptLines.end(),lines.begin(),lines.end());continue;}auto kids=children(m,c);nodes.insert(nodes.end(),kids.begin(),kids.end());}
+      if(promptLines.empty())promptLines=text(m,dialog.selector);
+      std::string prompt;for(auto line:promptLines){
+       if(line.find_first_not_of(". ")==std::string::npos||std::any_of(choice.items.begin(),choice.items.end(),[&](const Item& item){return item.label==line;}))continue;
+       while(!line.empty()&&line.back()=='.')line.pop_back();if(!prompt.empty())prompt+=". ";prompt+=line;
+      }
+      if(prompt.empty())for(auto line:text(m,dialog.selector)){
+       if(line.find_first_not_of(". ")==std::string::npos||std::any_of(choice.items.begin(),choice.items.end(),[&](const Item& item){return item.label==line;}))continue;
+       while(!line.empty()&&line.back()=='.')line.pop_back();if(!prompt.empty()){if(prompt.back()!='?'&&prompt.back()!='!'&&prompt.back()!='.')prompt+='.';prompt+=' ';}prompt+=line;
+      }
+      dialog.heading=prompt;dialog.items=choice.items;dialog.cursor=choice.cursor;dialog.message=false;dialog.pending=false;break;
+     }
+    }
+    std::erase_if(out,[](const Menu& menu){return !menu.modal;});return out;
+   }
+   if(std::any_of(out.begin(),out.end(),[](const Menu& menu){return menu.collection;})){std::erase_if(out,[](const Menu& menu){return !menu.collection;});return out;}
+   if(std::any_of(out.begin(),out.end(),[](const Menu& menu){return menu.settings;})){
+    for(auto& panel:out)if(panel.settings)for(const auto& parent:out)if(parent.movie==panel.movie&&!parent.settings&&!parent.collection&&!parent.message&&parent.cursor>=0&&size_t(parent.cursor)<parent.items.size()){panel.heading=parent.items[parent.cursor].label;break;}
+    std::erase_if(out,[](const Menu& menu){return !menu.settings;});return out;
+   }
+   if(out.empty()){for(auto movie:movies_){
+    if(m.u32(movie.p+0x20)!=movie.index||!(m.u32(movie.p+0xc8)&0x80000000))continue;
+    if(class_name(m,movie.p)!="BCGFxUI_TitleMenu")continue;
+    auto gfx=m.u32(movie.p+0x180);if(m.u32(gfx+0x40)!=0x48)continue;auto root=m.u32(m.u32(gfx+0x44)+4);auto lines=text(m,root);std::string message;
+    for(const auto& line:lines){if(line.find("CAPCOM")!=std::string::npos||line.find("RIGHTS RESERVED")!=std::string::npos)continue;if(!message.empty())message+=". ";message+=line;}
+    if(class_name(m,movie.p)=="BCGFxUI_TitleMenu"&&m.u8(movie.p+0x1f1)==4)message="Checking downloadable content.";
+    if(!message.empty()){Menu status;status.movie=movie.p;status.selector=root;status.cursor=0;status.message=true;status.items.push_back({message,"",true});out.push_back(std::move(status));}
+   }}return out;
+  }
+  void diagnostic(const Memory& m,std::ostream& out) {
+   out<<"Unreal ready="<<ready(m)<<" movies="<<movies_.size()<<"\n";
+   for(auto movie:movies_){
+    out<<"MOVIE "<<std::hex<<movie.p<<" "<<class_name(m,movie.p)<<" flags="<<m.u32(movie.p+0xc8)<<std::dec<<"\n";
+    if(!(m.u32(movie.p+0xc8)&0x80000000))continue;
+    std::set<uint32_t> seen;std::vector<std::pair<uint32_t,int>> todo;
+    for(auto f:{0x17cu,0x180u}){auto gfx=m.u32(movie.p+f);out<<" gfx="<<std::hex<<gfx<<" type="<<m.u32(gfx+0x40)<<std::dec<<"\n";if(gfx)todo.push_back({m.u32(m.u32(gfx+0x44)+4),0});}
+    while(!todo.empty()&&seen.size()<3000){auto [c,depth]=todo.back();todo.pop_back();if(!c||!seen.insert(c).second||m.u32(c)!=sprite_vtable)continue;
+     auto object=m.u32(c+0x1c8);out<<"CHAR "<<std::hex<<c<<" AS "<<object<<std::dec<<" "<<character_name(m,c)<<"\n";
+     dump_members(m,object,out,0);
+     for(auto child:children(m,c))todo.push_back({child,depth+1});
+    }
+   }
+  }
+  void dump_members(const Memory& m,uint32_t object,std::ostream& out,int depth) const {
+   if(depth>2)return;for(const auto& [key,v]:members(m,object)){
+    if(key=="__proto__"||key=="constructor"||key=="__constructor__"||v.type==8||v.type==10)continue;
+    out<<std::string(depth*2,' ')<<key<<" type="<<int(v.type)<<" ptr="<<std::hex<<v.pointer<<std::dec;
+    if(v.type==3)out<<" number="<<v.number;if(v.type==2)out<<" bool="<<v.boolean;if(v.type==5)out<<" text="<<value_text(m,v);out<<"\n";
+    if(v.type==6&&v.pointer&&v.pointer!=object){dump_members(m,v.pointer,out,depth+1);if(key=="m_items"||key=="m_details"){auto p=m.u32(v.pointer+0x38),n=m.u32(v.pointer+0x3c);out<<" ARRAY count="<<n<<"\n";if(n<40)for(uint32_t i=0;i<n;i++){auto val=m.u32(p+i*4);out<<" ITEM "<<i<<" type="<<int(m.u8(val))<<"\n";dump_members(m,m.u32(val+4),out,depth+1);}}}
+   }
+  }
+  static std::string heading(std::string cls){const std::string prefix="BCGFxUI_";if(cls.starts_with(prefix))cls.erase(0,prefix.size());std::string out;for(size_t i=0;i<cls.size();i++){if(cls[i]=='_'){out+=' ';continue;}if(i&&cls[i]>='A'&&cls[i]<='Z'&&cls[i-1]>='a'&&cls[i-1]<='z')out+=' ';out+=cls[i];}return out;}
+ private:
+  struct Movie {uint32_t p,index,cls;};std::vector<Movie> movies_;std::unordered_map<uint32_t,std::string> names_;std::unordered_map<uint32_t,bool> menu_classes_;
+  uint32_t discovered_count_{},discovered_table_{};
+};
+inline void append_phrase(std::string& text,const std::string& phrase){if(phrase.empty())return;if(!text.empty()){if(text.back()!='.'&&text.back()!='?'&&text.back()!='!')text+='.';text+=' ';}text+=phrase;}
+inline std::string describe(const Menu& menu,bool heading,bool help) {
+ if(menu.pending)return {};
+ if(menu.cursor<0||size_t(menu.cursor)>=menu.items.size())return {};
+ const auto& item=menu.items[menu.cursor];std::string s=heading?menu.heading+". ":"";s+=item.label;
+ if(menu.message)return item.label;
+ if(menu.modal){std::string prompt=heading?menu.heading:"";if(!prompt.empty()){if(prompt.back()!='.'&&prompt.back()!='?'&&prompt.back()!='!')prompt+='.';prompt+=' ';}return prompt+item.label;}
+ if(menu.collection){
+  s.clear();if(heading){append_phrase(s,menu.heading);if(!menu.acquired.empty())append_phrase(s,"Acquired: "+menu.acquired);}
+  std::string selected;if(item.enabled){selected=item.label;if(help&&!item.help.empty())selected+=": "+item.help;}else{if(item.label!="???")append_phrase(selected,item.label);append_phrase(selected,"Locked");if(!item.help.empty()){auto requirement=item.help;while(!requirement.empty()&&requirement.back()=='.')requirement.pop_back();selected+=": "+requirement;}}append_phrase(s,selected);return s;
+ }
+ if(!item.enabled)s+=". Unavailable";s+=". "+std::to_string(menu.cursor+1)+" of "+std::to_string(menu.items.size());
+ if(help&&!item.help.empty())s+=". "+item.help;return s;
+}
+}
