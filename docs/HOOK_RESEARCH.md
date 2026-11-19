@@ -17,6 +17,14 @@ Other observed entry points:
 | `0x82886e18` | Reflected GFxObject SetText wrapper; calls `0x8289d868` |
 | `0x82a4a7f0` | Common named-member assignment; host RVA `0x029b5050` |
 | `0x82a6e5f8` | Secondary ActionScript interface slot `0x28`; calls display-specific handling then raw assignment `0x82a4ac48` (host RVA `0x045f72b0`) |
+| `0x82898fe8` | Movie Start virtual method; host RVA `0x01a647d0` |
+| `0x82899528` | Movie Close implementation; host RVA `0x0212c6c0` |
+| `0x82acee78` | Native text field's shared text-update implementation; host RVA `0x03b841c0` |
+| `0x82a36778` | Recomputes display flag bit 2 from the display transform, which the existing reader uses to exclude hidden panels; host RVA `0x02b146b0` |
+| `0x8224ddc0` | Generic Unreal script assignment handler, VM table opcode `0x0f`; host RVA `0x0040ce60`. Observes the known title status byte only when the title movie is the assignment target. |
+| `0x82a86f50` | Scaleform movie root update, vtable `0x82028c10` slot `0x94`; host RVA `0x008071c0`. Flushes only the display objects changed since the previous boundary. |
+| `0x82a3f1a8` | Native visibility setter, flag bit 0; host RVA `0x0164bd00` |
+| `0x82ae30b8` | Sprite visibility override, flag bit 0; host RVA `0x01ce3ce0` |
 
 These addresses are build-specific observations, not portable APIs. No game instructions, generated source, binaries, or captured memory are included here. Offline research tools and captures remain ignored.
 
@@ -29,7 +37,13 @@ The executable's static registration records associate each guest address with i
 - Allocation-free shared ActionScript assignment observations: filter narrated semantic fields, look up the existing hash member, and compare normalized typed values after assignment. Synthetic tests cover integer cursors, double values, unchanged values, padding, irrelevant animation counters, and cyclic hash chains.
 - `build.ps1 -Test -NoInstall` builds and runs offline tests without invoking the installer. This option still writes build outputs under `dist`; use it only when those outputs are not loaded by the game.
 
-The running DLL does not yet use the new foundation. Full event-source integration and live validation remain required; no performance or coverage claim follows from these unit tests alone.
+The experimental DLL now uses ten shared native hooks. The movie-update callback only flushes queued display mutations; it does not run the reader or scan the UI every frame. Display flags toggled and restored before the boundary produce no event. The speech worker uses Windows event/message waits, foreground notifications, and registered shortcuts. Relevant mutations request a read after a short coalescing delay, followed by bounded confirmation checks. Full discovery follows movie lifecycle changes, initial capture, foreground return, and explicit diagnostics; cursor/value changes reuse validated movie handles. A menu clearing is delayed to avoid treating transient panel construction as a final empty screen.
+
+Hook storage and trampolines have process lifetime. Shutdown stops capture and speech, retaining the pass-through hooks because an already-running callback may still be using its trampoline. Reinitialization reuses them. The injected DLL must remain loaded until process exit.
+
+Synthetic end-to-end tests exercise each hook's notification path, unchanged values/text, irrelevant display bits, temporary flag toggles, title status changes, original return-register behavior, and capture shutdown. An isolated mapping of the actual executable also accepted creation, enable, disable, and removal of all ten detours; no game functions were executed for that check.
+
+The first live pass confirmed Press Start, DLC status, title navigation, dialog prompts/choices, Extras entry, and Gauges selections. It exposed excessive intermediate display events, a choice selector narrated before its dialog opened, and silent Extras returns. Corrections now coalesce display events and honor explicit visibility (bit 0) in addition to the degenerate transform flag (bit 1). Closed dialog choice selectors remain pending until their prompt opens. These corrections pass synthetic and captured-state regressions and require another live pass. Overall coverage and idle overhead are not yet proven.
 
 ## Required before replacing polling
 

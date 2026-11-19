@@ -19,7 +19,7 @@ int main(int argc,char** argv){try{
  put(0x500+0xbc,0x600);put(0x608,0x700);put(0x70c,0x800);put(0x710,1);put(0x714,1);put(0x800,0x900);put(0x900,0xa00);put(0x904,3);put(0x908,3);
  data[0xa00]=0;data[0xa01]='O';data[0xa02]=0;data[0xa03]='K';
  check(reader.native_text(fake,0x500)=="OK","native UTF-16 text paragraph");put(0x904,4097);check(reader.native_text(fake,0x500).empty(),"reject corrupt native text length");
- put(0xb00+0x20,0xc00);put(0xc00+0xa0,2);check(!reader.visible(fake,0xb00),"hidden ancestor excludes selector");put(0xc00+0xa0,0);check(reader.visible(fake,0xb00),"visible ancestor chain");
+ put(0xb00+0x20,0xc00);put(0xb00+0xa0,1);put(0xc00+0xa0,3);check(!reader.visible(fake,0xb00),"degenerate ancestor excludes selector");put(0xc00+0xa0,1);check(reader.visible(fake,0xb00),"visible ancestor chain");put(0xc00+0xa0,0);check(!reader.visible(fake,0xb00),"explicitly invisible ancestor excludes selector");put(0xc00+0xa0,1);
  Menu status;status.message=true;status.cursor=0;status.items.push_back({"Press Start","",true});check(describe(status,true,true)=="Press Start","screen messages have no menu numbering");
  Menu confirmation;confirmation.modal=true;confirmation.heading="Restart the game now?";confirmation.cursor=1;confirmation.items={{"Yes","",true},{"No","",true}};
  check(describe(confirmation,true,true)=="Restart the game now? No","confirmation includes prompt and selected answer on entry");confirmation.cursor=0;
@@ -77,6 +77,15 @@ int main(int argc,char** argv){try{
      }
     }auto kids=r.children(memory,c);todo.insert(todo.end(),kids.begin(),kids.end());
    }check(tested,"integer-cursor regression exercised");
+  }
+  if(menus.back().modal&&!menus.back().message){
+   auto object=memory.u32(menus.back().selector+0x1c8),table=memory.u32(object+0x1c),mask=memory.u32(table+4);bool exercised=false;
+   for(uint32_t i=0;i<=mask&&mask<4096;i++){
+    auto entry=table+8+i*32;if(memory.u32(entry)==0xfffffffe||memory.string(memory.u32(memory.u32(entry+8)))!="tl_opend"||uint64_t(entry)+32>low.size())continue;
+    char saved=low[entry+20];low[entry+20]=0;auto opening=r.menus(memory);low[entry+20]=saved;
+    check(!opening.empty()&&opening.back().pending,"dialog choices remain pending before the dialog opens");exercised=true;break;
+   }
+   check(exercised,"opening-dialog regression exercised");
   }
   for(const auto& m:menus){std::cout<<describe(m,true,true)<<"\n";for(const auto& i:m.items)std::cout<<"  "<<(i.enabled?"":"[disabled] ")<<i.label<<"\n";}
  }

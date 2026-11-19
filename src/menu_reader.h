@@ -126,7 +126,7 @@ class Reader {
     auto kids=children(m,c);todo.insert(todo.end(),kids.rbegin(),kids.rend());
    }return out;
   }
-  bool visible(const Memory& m,uint32_t c) const {std::set<uint32_t> seen;while(c&&seen.insert(c).second&&seen.size()<64){if(m.u32(c+0xa0)&2)return false;c=m.u32(c+0x20);}return c==0;}
+  bool visible(const Memory& m,uint32_t c) const {std::set<uint32_t> seen;while(c&&seen.insert(c).second&&seen.size()<64){auto flags=m.u32(c+0xa0);if(!(flags&1)||(flags&2))return false;c=m.u32(c+0x20);}return c==0;}
   std::string native_text(const Memory& m,uint32_t field) const {
    auto view=m.u32(field+0xbc),styled=m.u32(view+8),paragraphs=m.u32(styled+0xc),count=m.u32(styled+0x10),capacity=m.u32(styled+0x14);
    if(!view||!styled||!paragraphs||count>128||count>capacity||capacity>512)return {};
@@ -219,6 +219,16 @@ class Reader {
     }
    }
    std::set<std::pair<uint32_t,uint32_t>> seen;std::erase_if(out,[&](const Menu& menu){return !seen.insert({menu.movie,menu.selector}).second;});
+   if(std::none_of(out.begin(),out.end(),[](const Menu& menu){return menu.modal;})){
+    for(const auto& menu:out){
+     if(menu.message||menu.settings||menu.collection)continue;
+     std::set<uint32_t> ancestors;
+     for(auto c=menu.selector;c&&ancestors.insert(c).second&&ancestors.size()<64;c=m.u32(c+0x20)){
+      auto fields=members(m,m.u32(c+0x1c8));auto opened=get(fields,"tl_opend");
+      if(opened&&opened->type==2){Menu pending;pending.movie=menu.movie;pending.selector=c;pending.modal=true;pending.pending=true;return {pending};}
+     }
+    }
+   }
    if(std::any_of(out.begin(),out.end(),[](const Menu& menu){return menu.modal;})){
     for(auto& dialog:out)if(dialog.modal&&dialog.message){
      for(const auto& choice:out){
@@ -236,6 +246,7 @@ class Reader {
        if(line.find_first_not_of(". ")==std::string::npos||std::any_of(choice.items.begin(),choice.items.end(),[&](const Item& item){return item.label==line;}))continue;
        while(!line.empty()&&line.back()=='.')line.pop_back();if(!prompt.empty()){if(prompt.back()!='?'&&prompt.back()!='!'&&prompt.back()!='.')prompt+='.';prompt+=' ';}prompt+=line;
       }
+      if(prompt.empty()){dialog.pending=true;continue;}
       dialog.heading=prompt;dialog.items=choice.items;dialog.cursor=choice.cursor;dialog.message=false;dialog.pending=false;break;
      }
     }

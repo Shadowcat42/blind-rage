@@ -21,7 +21,9 @@ try {
  if($LASTEXITCODE){throw 'Hook test compilation failed'}
  & $compiler @common 'tests/ui_changes_test.cpp' '-o' 'build/hooks/ui_changes_test.exe'
  if($LASTEXITCODE){throw 'UI change test compilation failed'}
- & $compiler @common '-shared' 'src/dll.cpp' '-o' 'dist/asura_accessibility.dll' '-lbcrypt' '-lole32' '-luser32'
+ & $compiler @common "-I$hookRoot/include" 'tests/ui_hook_source_test.cpp' @hookObjects '-o' 'build/hooks/ui_hook_source_test.exe' '-luser32'
+ if($LASTEXITCODE){throw 'UI hook source test compilation failed'}
+ & $compiler @common "-I$hookRoot/include" '-shared' 'src/dll.cpp' @hookObjects '-o' 'dist/asura_accessibility.dll' '-lbcrypt' '-lole32' '-luser32'
  if($LASTEXITCODE){throw 'DLL compilation failed'}
  & $compiler @common '-municode' 'src/launcher.cpp' '-o' 'dist/AsurasWrathAccessible.exe' '-lbcrypt' '-luser32'
  if($LASTEXITCODE){throw 'Launcher compilation failed'}
@@ -41,6 +43,7 @@ try {
   & ./dist/reader_test.exe; if($LASTEXITCODE){throw 'Reader tests failed'}
   & ./build/hooks/hook_test.exe; if($LASTEXITCODE){throw 'Hook tests failed'}
   & ./build/hooks/ui_changes_test.exe; if($LASTEXITCODE){throw 'UI change tests failed'}
+  & ./build/hooks/ui_hook_source_test.exe; if($LASTEXITCODE){throw 'UI hook source tests failed'}
  }
  if(!$NoInstall){
   if(!$InstallTo -and (Test-Path -LiteralPath ../../bin_disc/asura_wrath_recomp.exe)){$InstallTo=(Resolve-Path ../..).Path}

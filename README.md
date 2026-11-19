@@ -26,13 +26,13 @@ The existing `AsurasWrathAccessible.exe` launcher remains usable in the developm
 | Ctrl+Alt+F5 | Toggle narration |
 | Ctrl+Alt+F8 | Save local UI diagnostics |
 
-Configure virtual-key codes in `mods/accessibility/dist/accessibility.ini`; 0 disables a chord. Restart to reload the file. Chords are observed, not consumed, so the game may also receive the function key.
+Configure virtual-key codes in `mods/accessibility/dist/accessibility.ini`; 0 disables a chord. Restart to reload the file. On this experimental branch, Windows hotkeys are registered while the game has focus and released when it loses focus. A conflicting shortcut may be unavailable; named launcher commands remain usable.
 
 ## Current behavior
 
 One shared reader handles live Scaleform menus, settings rows, collection entries and common dialogs. It reads actual selection state, labels, values, effect descriptions, and unlock requirements. Confirmations should announce the prompt and starting choice, then only the selected choice when navigating. Acquired collection totals are entry-only.
 
-The prototype reads bounded guest-memory snapshots and polls for changes; it does not count navigation keys. It currently checks menu state about 30 times per second and refreshes object discovery once per second. Shared event hooks are a future investigation.
+This experimental branch replaces recurring menu and registry polling with shared native hooks for ActionScript assignment, movie open/close, text changes, display flag changes, and title status assignments. Windows notifications handle foreground changes and shortcuts. The speech worker waits between events; a mutation starts bounded settling checks before narration. It reads bounded guest-memory snapshots and does not count navigation keys. Live event coverage is still being validated; see [hook research](docs/HOOK_RESEARCH.md).
 
 The latest initial-selection fix passes synthetic and private snapshot tests and still needs live confirmation. Coverage remains under active testing. Custom key binding, pause menus, QTEs, and combat are not claimed as fully accessible. See the [roadmap](docs/ROADMAP.md) for planned gameplay work.
 
@@ -44,7 +44,7 @@ The latest initial-selection fix passes synthetic and private snapshot tests and
 ./package.ps1
 ```
 
-Bootstrap downloads only checksum-pinned official LLVM-MinGW and Prism dependencies. A standalone checkout needs no game files and writes output inside itself. CI runs synthetic tests without game data.
+Bootstrap downloads checksum-pinned official LLVM-MinGW, Prism, and MinHook dependencies. A standalone checkout needs no game files and writes output inside itself. CI runs synthetic tests without game data. `./build.ps1 -Test -NoInstall` skips the installer; it still replaces files in the local `dist` directory, so close any game using those files first.
 
 Install a locally built mod with:
 
