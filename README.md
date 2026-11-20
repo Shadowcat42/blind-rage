@@ -55,6 +55,8 @@ This build has offline validation and is ready for the first user-led gameplay t
 
 ## Build from source
 
+Run `./format.ps1` to format the mod's C++ source and tests, or `./format.ps1 -Check` for a non-editing check. The repository's clang-format style uses the formatter already supplied by the pinned compiler toolchain. CI checks formatting; dependencies and private research are excluded.
+
 For the repeating lock-on sound investigation, see [bounded trace instructions](docs/LOCK_TRACE.md). Diagnostics and the candidate stable-cone repair default to off; the repair is gated on live evidence.
 
 ```powershell

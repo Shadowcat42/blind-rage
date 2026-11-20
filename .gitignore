@@ -16,6 +16,8 @@
 !/tests/
 !/docs/
 !/scripts/
+!/.clang-format
+!/format.ps1
 !/.github/
 **/*.exe
 **/*.dll
@@ -33,6 +35,8 @@
 **/*.pages
 **/*.DAT
 **/*.log
+**/*.pyc
+**/__pycache__/
 **/.env*
 **/userdata/
 **/research/

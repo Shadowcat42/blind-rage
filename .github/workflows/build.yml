@@ -10,6 +10,9 @@ jobs:
       - name: Fetch pinned dependencies
         shell: pwsh
         run: ./bootstrap.ps1
+      - name: Check C++ formatting
+        shell: pwsh
+        run: ./format.ps1 -Check
       - name: Build and run synthetic tests
         shell: pwsh
         run: ./build.ps1 -Test
