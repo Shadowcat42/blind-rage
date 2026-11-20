@@ -44,6 +44,8 @@ try {
  if($LASTEXITCODE){throw 'Gameplay hook test compilation failed'}
  & $compiler @common "-I$hookRoot/include" 'tests/presentation_hooks_test.cpp' @hookObjects '-o' 'build/hooks/presentation_hooks_test.exe' '-luser32'
  if($LASTEXITCODE){throw 'Presentation hook test compilation failed'}
+ & $compiler @common '-municode' 'tests/restart_test.cpp' '-o' 'build/hooks/restart_test.exe' '-lshell32' '-lbcrypt'
+ if($LASTEXITCODE){throw 'Restart test compilation failed'}
  & $compiler @common "-I$hookRoot/include" '-shared' 'src/dll.cpp' @hookObjects '-o' 'dist/asura_accessibility.dll' '-lbcrypt' '-lole32' '-luser32'
  if($LASTEXITCODE){throw 'DLL compilation failed'}
  & $compiler @common '-municode' 'src/launcher.cpp' '-o' 'dist/BlindRage.exe' '-lbcrypt' '-luser32'
@@ -73,6 +75,7 @@ try {
   & ./build/hooks/synchronic_reader_test.exe; if($LASTEXITCODE){throw 'Synchronic reader tests failed'}
   & ./build/hooks/gameplay_hooks_test.exe; if($LASTEXITCODE){throw 'Gameplay hook tests failed'}
   & ./build/hooks/presentation_hooks_test.exe; if($LASTEXITCODE){throw 'Presentation hook tests failed'}
+  & ./build/hooks/restart_test.exe; if($LASTEXITCODE){throw 'Restart tests failed'}
  }
  if(!$NoInstall){
   if(!$InstallTo -and ((Test-Path -LiteralPath ../../bin_disc/asura_wrath_recomp.exe) -or (Test-Path -LiteralPath ../../bin/asura_wrath_recomp.exe))){$InstallTo=(Resolve-Path ../..).Path}

@@ -22,6 +22,8 @@ Use `BlindRage.exe --build disc` or `BlindRage.exe --build updated` to choose ex
 
 The old `AsurasWrathAccessible.exe` compatibility launcher can be deleted. Current builds and installations provide only `BlindRage.exe`. The recomp updater can change binaries and make the mod incompatible; Blind Rage does not update or replace them.
 
+When an option asks to restart the game, an active Blind Rage session now restarts through the mod launcher automatically. It preserves the selected disc/title-update build and game arguments, waits for the old process to exit, and applies the normal compatibility checks before loading the mod again. This requires the current DLL and launcher together. A game already started without the mod still needs to be launched through Blind Rage once.
+
 | Shortcut while the game has focus | Action |
 | --- | --- |
 | Ctrl+Alt+F1 | Test speech |

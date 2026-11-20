@@ -10,6 +10,7 @@
 #include "gameplay_status.h"
 #include "gameplay_hooks.h"
 #include "synchronic_reader.h"
+#include "restart_hook.h"
 #include <atomic>
 #include <mutex>
 #include <objbase.h>
@@ -23,6 +24,7 @@ struct Page {std::array<unsigned char,4096> bytes{};bool valid{};};
 struct CaptureGuard {UiHookSource& source;~CaptureGuard(){source.capture(false);}};
 struct PresentationGuard {PresentationHooks& source;~PresentationGuard(){source.capture(false);}};
 struct GameplayGuard {GameplayHooks& source;~GameplayGuard(){source.capture(false);}};
+struct RestartGuard {RestartHook& source;~RestartGuard(){source.capture(false);}};
 static DWORD WINAPI run(void*) {
  try {
   auto dir=module_path(self).parent_path();auto bin=module_path().parent_path();auto logs=bin.parent_path()/L"userdata"/L"accessibility";fs::create_directories(logs);
@@ -45,6 +47,9 @@ static DWORD WINAPI run(void*) {
   auto& gameHooks=GameplayHooks::instance();bool nativeGameplay=gameHooks.install(reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr)),*profile);
   if(!nativeGameplay)write("Gameplay state hooks unavailable; QTEs and shooting aid not started");
   GameplayGuard gameplayGuard{gameHooks};
+  auto& restart=RestartHook::instance();RestartGuard restartGuard{restart};
+  bool restartReady=restart.install(reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr)),*profile,bin.parent_path()/L"BlindRage.exe",module_path());
+  restart.capture(restartReady);write(restartReady?"Settings restart redirect installed":"Settings restart redirect unavailable; restart through BlindRage.exe manually");
   auto co=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);Speech speech(write);bool speaking=speech.init(dir);if(speaking)speech.speak("Blind Rage ready.");
   std::vector<std::wstring> commands={L"test",L"repeat",L"stop",L"mute",L"dump",L"shutdown",L"status"};std::vector<HANDLE> events;
   for(auto& c:commands)events.push_back(CreateEventW(nullptr,FALSE,FALSE,event_name(GetCurrentProcessId(),c).c_str()));
