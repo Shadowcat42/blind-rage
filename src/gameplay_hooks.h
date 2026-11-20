@@ -11,7 +11,7 @@ namespace a11y {
 class GameplayHooks {
  public:
   using Function=void(*)(void*,uint8_t*);
-  static constexpr std::array<const char*,15> function_names{"RequestInputJudge","RequestButtonIcon","UpdateButtonIcon","CheckActivate","Update","Deactivated","EndJudge","DestroyRequest","CheckLockOnShotTarget","StartSynchronicTime","UpdateNormal","UpdateBarrage","EndSynchronicTime","InitTracks","HandleButtonInput_Back"};
+  static constexpr std::array<const char*,16> function_names{"RequestInputJudge","RequestButtonIcon","UpdateButtonIcon","CheckActivate","Update","Deactivated","EndJudge","DestroyRequest","CheckLockOnShotTarget","StartSynchronicTime","UpdateNormal","UpdateBarrage","EndSynchronicTime","InitTracks","HandleButtonInput_Back","FilterButtonInput"};
   static GameplayHooks& instance(){static auto* value=new GameplayHooks;return *value;}
   bool install(uintptr_t executable,const BuildProfile& profile){
    if(installed_)return profile_==&profile;profile_=&profile;names_global_=profile.layout.names_global;
@@ -40,7 +40,7 @@ class GameplayHooks {
   uint64_t widenings() const{return widenings_.load();}
   uint64_t failures() const{return failures_.load();}
  private:
-  enum class Route {ignore,qte_bind,qte_update,judge_update,aim,timing_start,timing_update,timing_end,timing_reset,animation_cross,animation_mash,animation_hold,status_button};
+  enum class Route {ignore,qte_bind,qte_update,judge_update,aim,timing_start,timing_update,timing_end,timing_reset,animation_cross,animation_mash,animation_hold,status_button,results_repeat};
   struct Binding {uint32_t source{},index{},pc{},cls{};QteSchema schema=QteSchema::divergence;uint64_t generation{},observed_revision{};bool published{};QteGroup last;};
   struct TimingBinding {uint32_t source{},index{},track{};uint64_t generation{};bool published{};TimingState last;};
   struct TimingScope {TimingScope* previous{};uint32_t source{},frame{};int32_t track{};bool window{};};
@@ -67,6 +67,7 @@ class GameplayHooks {
    else if(cls=="BCInputJudgeSystem"&&(function=="Update"||function=="EndJudge"||function=="DestroyRequest"))route=Route::judge_update;
    else if(cls=="BCPlayerController_HeavyShoot"&&function=="CheckLockOnShotTarget")route=Route::aim;
    else if(cls=="BCPlayerInput"&&function=="HandleButtonInput_Back")route=Route::status_button;
+   else if(cls=="GFxMoviePlayer"&&function=="FilterButtonInput")route=Route::results_repeat;
    else if(function=="RequestButtonIcon"||function=="CheckActivate"||function=="Update"||function=="Deactivated"){
     if(cls=="BCSeqAct_AnimCrossFadeButtonRep")route=Route::animation_cross;
     else if(cls=="BCSeqAct_AnimFadeByButtonRep")route=Route::animation_mash;
@@ -124,6 +125,15 @@ class GameplayHooks {
    Memory memory(Read{base});auto route=self.classify(memory,base,node,name,state);
    if(route==Route::ignore){self.original_[0](context,base);return;}
    auto source=ui_argument(context,3),locals=memory.u32(frame+0x1c);
+   if(route==Route::results_repeat){
+    // UE3's existing movie input event: XboxTypeS_X is physical Square/X.
+    // Observe only IE_Pressed (0), never repeats/releases or gameplay input.
+    uint8_t inputEvent=255;auto index=memory.u32(source+0x20),cls=memory.u32(source+0x34);
+    bool repeat=locals&&memory.copy(locals+0xc,&inputEvent,1)&&inputEvent==0&&index&&(memory.u32(source+0xc8)&0x80000000)&&memory.u32(locals+8)==0&&state.reader.name(memory,memory.u32(locals+4))=="XboxTypeS_X"&&subclass(memory,state.reader,source,"BCGFxUI_ResultMenu");
+    self.original_[0](context,base);
+    if(repeat&&self.enabled_.load()&&epoch==self.epoch_.load()&&memory.u32(source+0x20)==index&&memory.u32(source+0x34)==cls&&(memory.u32(source+0xc8)&0x80000000)){GameplayEvent event;event.results_repeat=true;event.repeat_movie=source;event.repeat_index=index;self.publish(event);}
+    return;
+   }
    if(route==Route::status_button){
     uint8_t buttonEvent=255;
     auto before=self.status_button_.load()&&locals&&memory.copy(locals,&buttonEvent,1)&&buttonEvent==0?capture_status_context(memory,source):std::nullopt;

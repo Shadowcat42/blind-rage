@@ -437,4 +437,8 @@ inline std::string describe(const Menu& menu,bool heading,bool help) {
  if(!item.enabled)s+=". Unavailable";s+=". "+std::to_string(menu.cursor+1)+" of "+std::to_string(menu.items.size());
  if(help&&!item.help.empty())s+=". "+item.help;return s;
 }
+inline std::string results_repeat_text(const std::vector<Menu>& menus,uint32_t movie){
+ for(auto it=menus.rbegin();it!=menus.rend();++it)if(it->movie==movie&&(it->readout||!it->summary.empty()))return describe(*it,true,true);
+ return {};
+}
 }

@@ -55,6 +55,14 @@ int main(int argc,char** argv){try{
  auto firstLocked=describe(lockedGrid,false,true);lockedGrid.collection_position=1;
  check(firstLocked=="Locked. 1 of 45"&&describe(lockedGrid,false,true)=="Locked. 2 of 45","identical locked grid entries remain distinguishable on movement");
  int snapshotArg=1;const BuildProfile* selectedProfile=&disc_profile;
+ Menu result;result.movie=50;result.selector=51;result.heading="Results";result.summary="Overall rank B. Battle points: 6000 points. Rank A.";result.cursor=0;result.items={{"Next","Continue",true},{"Return","",true}};
+ check(results_repeat_text({result},50)==describe(result,true,true),"result repeat includes summary and selected choice");
+ result.cursor=1;check(results_repeat_text({result},50).find("Overall rank B")!=std::string::npos&&results_repeat_text({result},50).find("Return")!=std::string::npos,"result repeat retains scores after selector navigation");
+ result.pending=true;check(results_repeat_text({result},50).empty(),"result repeat waits for finished scores");result.pending=false;
+ Menu breakdown;breakdown.movie=50;breakdown.selector=52;breakdown.message=breakdown.readout=true;breakdown.cursor=0;breakdown.items={{"Battle point breakdown. Shots: 10, 50 points.","",true}};
+ check(results_repeat_text({breakdown},50)==breakdown.items[0].label,"detail repeat reads the currently active breakdown");
+ check(results_repeat_text({menu},50).empty()&&results_repeat_text({result},999).empty(),"repeat does not narrate another screen or movie");
+ auto ordinary=menu;ordinary.movie=50;check(results_repeat_text({ordinary},50).empty(),"ordinary menus in the same movie do not acquire a results repeat action");
  if(argc>1&&std::string_view(argv[1]).starts_with("--profile=")){selectedProfile=profile_named(std::string_view(argv[1]).substr(10));check(selectedProfile!=nullptr,"known snapshot profile");snapshotArg++;}
  if(argc>snapshotArg){
   std::string root=argv[snapshotArg];auto load=[](const std::string& p){std::ifstream in(p,std::ios::binary);if(!in)throw std::runtime_error("Missing snapshot "+p);return std::vector<char>(std::istreambuf_iterator<char>(in),{});};

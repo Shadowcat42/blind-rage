@@ -62,6 +62,14 @@ int main(){try{
  source.options(false,0,false);context[0]=input;call_script(context.data(),base);check(source.take(overflow).empty(),"contextual status button can be disabled without changing native input");source.options(false,0,true);
  word(base,owner+0x2c,7);context[0]=input;call_script(context.data(),base);check(source.take(overflow).empty(),"debug camera Back is not a gameplay status shortcut");
  Memory unreadable([](uint32_t,void*,size_t){return false;});check(!capture_status_context(unreadable,input),"unreadable context fails closed");
+ name(8,"GFxMoviePlayer");name(9,"BCGFxUI_ResultMenu");name(10,"XboxTypeS_X");name(11,"XboxTypeS_Y");
+ word(base,owner+0x2c,8);word(base,node+0x2c,indices[15]);word(base,actor+0x34,0x1d000);word(base,0x1d000+0x2c,9);word(base,0x1d000+0x40,0x1d100);word(base,0x1d100+0x2c,8);word(base,actor+0xc8,0x80000000);word(base,frame+0x14,actor);word(base,locals+4,10);word(base,locals+8,0);base[locals+0xc]=0;
+ context[0]=actor;originalCalls=calls;call_script(context.data(),base);events=source.take(overflow);
+ check(calls==originalCalls+1&&context[0]==0xfeed&&events.size()==1&&events[0].results_repeat&&events[0].repeat_movie==actor&&events[0].repeat_index==7,"Square/X on results requests repeat without changing original input or requiring QTE narration");
+ for(uint8_t inputEvent:{uint8_t(1),uint8_t(2),uint8_t(3)}){base[locals+0xc]=inputEvent;context[0]=actor;call_script(context.data(),base);check(source.take(overflow).empty(),"release/repeat/double-click do not flood result narration");}base[locals+0xc]=0;
+ word(base,locals+4,11);context[0]=actor;call_script(context.data(),base);check(source.take(overflow).empty(),"other face buttons do not repeat results");word(base,locals+4,10);
+ word(base,actor+0xc8,0);context[0]=actor;call_script(context.data(),base);check(source.take(overflow).empty(),"closed results movie cannot request a repeat");word(base,actor+0xc8,0x80000000);
+ word(base,actor+0x34,0x1d100);context[0]=actor;call_script(context.data(),base);check(source.take(overflow).empty(),"Square/X outside results remains native input only");
  source.capture(false);context[0]=track;call_script(context.data(),base);check(source.take(overflow).empty()&&context[0]==0xfeed,"capture shutdown retains original execution without notifications");VirtualFree(base,0,MEM_RELEASE);
  std::cout<<"Gameplay native hook, QTE, timing and scoped acquisition tests passed.\n";return 0;
 }catch(const std::exception& e){std::cerr<<e.what()<<"\n";return 1;}}

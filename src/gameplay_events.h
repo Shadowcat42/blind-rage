@@ -40,7 +40,7 @@ inline bool capture_timing(const Memory& m,uint32_t source,int32_t track,bool wi
  if(track>0)state.active=state.active&&(m.u32(rows+uint32_t(track-1)*24+20)&0x80000000);
  state.mash=row[0]==1;state.window=state.active&&window;return true;
 }
-struct GameplayEvent {bool timing{},status_request{};QteGroup group;TimingState sync;StatusContext status;uint64_t tick{},order{};};
+struct GameplayEvent {bool timing{},status_request{},results_repeat{};uint32_t repeat_movie{},repeat_index{};QteGroup group;TimingState sync;StatusContext status;uint64_t tick{},order{};};
 class GameplayQueue {
  public:
   void push(const GameplayEvent& event){std::lock_guard lock(mutex_);if(count_==events_.size()){overflow_=true;return;}events_[count_++]=event;}
