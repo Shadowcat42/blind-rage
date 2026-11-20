@@ -53,8 +53,9 @@ int main(){try{
  Memory memory([&](uint32_t at,void* out,size_t size){if(uint64_t(at)+size>0x21000)return false;std::memcpy(out,base+at,size);return true;});
  check(capture_status_context(memory,input)==capturedStatus,"delivery revalidates the captured gameplay context");
  word(base,gauge+0x20,43);check(capture_status_context(memory,input)!=capturedStatus,"reused gauge cannot authorize an old status request");word(base,gauge+0x20,42);
- for(const auto& guard:std::array<std::array<uint32_t,3>,7>{{{pc+0x378,0x8000,0},{world+0x368,1,0},{hud+0x44c,0x10000000,0},{manager+0x98,1,0},{gauge+0xc8,0,0x80000000},{gauge+0x1e0,0,0x80000000},{pawn+0x1e4,0,pc}}}){
-  word(base,guard[0],guard[1]);context[0]=input;originalCalls=calls;call_script(context.data(),base);check(calls==originalCalls+1&&source.take(overflow).empty(),"cinematic/paused/menu/hidden/no-pawn Back always reaches original without status");word(base,guard[0],guard[2]);
+ word(base,gauge+0x1e0,0);context[0]=input;call_script(context.data(),base);events=source.take(overflow);check(events.size()==1&&events[0].status_request,"hidden gauge display must not disable gameplay status button");
+ for(const auto& guard:std::array<std::array<uint32_t,3>,6>{{{pc+0x378,0x8000,0},{world+0x368,1,0},{hud+0x44c,0x10000000,0},{manager+0x98,1,0},{gauge+0xc8,0,0x80000000},{pawn+0x1e4,0,pc}}}){
+  word(base,guard[0],guard[1]);context[0]=input;originalCalls=calls;call_script(context.data(),base);check(calls==originalCalls+1&&source.take(overflow).empty(),"cinematic/paused/menu/closed/no-pawn Back always reaches original without status");word(base,guard[0],guard[2]);
  }
  base[locals]=1;context[0]=input;call_script(context.data(),base);check(source.take(overflow).empty(),"Back release/held event does not repeat status");base[locals]=0;
  enterCinematic=true;context[0]=input;call_script(context.data(),base);check(source.take(overflow).empty(),"transition into a cinematic inside the original handler cancels status");enterCinematic=false;word(base,pc+0x378,0);

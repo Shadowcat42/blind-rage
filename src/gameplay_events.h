@@ -9,7 +9,8 @@ struct StatusContext {
  bool operator==(const StatusContext&) const=default;
 };
 // Mirror the Back handler's pawn/controller relationship, then require an
-// unpaused, noncinematic game with a visible gauge and no active menu scene.
+// unpaused, noncinematic game with an open gauge and no active menu scene.
+// The game keeps updating gauge values even when its display is hidden.
 // Called only on a button press and before delivery, never on a timer.
 inline std::optional<StatusContext> capture_status_context(const Memory& m,uint32_t input){
  auto word=[&](uint32_t object,uint32_t offset,uint32_t& out){std::array<uint8_t,4> bytes{};if(!object||uint64_t(object)+offset+4>0x100000000ull||!m.copy(object+offset,bytes.data(),4))return false;out=cue_word(bytes.data());return true;};
@@ -21,7 +22,7 @@ inline std::optional<StatusContext> capture_status_context(const Memory& m,uint3
     !word(value.controller,0x3c8,hud)||!word(hud,0x44c,flags)||(flags&0x10000000)||!word(hud,0x478,manager))return {};
  if(manager&&(!word(manager,0x98,scene)||scene))return {};
  if(!word(hud,0x488,value.gauge)||!word(value.gauge,0x20,value.gauge_index)||!value.gauge_index||
-    !word(value.gauge,0xc8,flags)||!(flags&0x80000000)||!word(value.gauge,0x1e0,flags)||!(flags&0x80000000))return {};
+    !word(value.gauge,0xc8,flags)||!(flags&0x80000000))return {};
  return value;
 }
 struct TimingState {

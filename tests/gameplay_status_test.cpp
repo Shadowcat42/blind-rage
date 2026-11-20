@@ -8,7 +8,7 @@ static PresentationEvent event(PresentationKind kind,float value=0,bool flag=tru
 int main(){try{
  GameplayStatus status([](std::string_view button){return controller_button(button,PromptDevice::playstation);});
  status.apply(event(PresentationKind::health,1,false));status.apply(event(PresentationKind::burst,.5f,false));
- check(status.status().find("not available")!=std::string::npos,"hidden gauges cannot report active health");
+ check(status.status()=="Health 100 percent. Burst 50 percent."&&status.status({100,10})==status.status()&&status.take().empty(),"hidden but live gauges answer explicit requests without automatic chatter");
  status.apply(event(PresentationKind::gauge_visible,0,true));
  check(status.status()=="Health 100 percent. Burst 50 percent.","status combines current gauge values without automatic percentage chatter");
  check(status.status({100,10})==status.status()&&status.status({100,11}).empty()&&status.status({101,10}).empty(),"contextual status requires the exact active gauge identity");
