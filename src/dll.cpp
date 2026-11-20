@@ -70,6 +70,17 @@ static DWORD WINAPI run(void*) {
   bool interruptText=setting(L"interrupt",0);
   bool qteEnabled=setting(L"qtes",1),interruptQte=setting(L"qte_interrupt",1);int shootingDegrees=std::clamp<int>(GetPrivateProfileIntW(L"gameplay",L"shooting_cone_degrees",45,ini.c_str()),1,89);
   gameHooks.options(textHooks&&qteEnabled,setting(L"shooting_assist",1)?float(shootingDegrees):0.f,setting(L"status_button",1));
+  bool lockTraceEnabled=GetPrivateProfileIntW(L"diagnostics",L"lock_trace",0,ini.c_str())!=0;
+  bool stableCone=setting(L"stable_lock_cone",0);gameHooks.lock_diagnostics(lockTraceEnabled,stableCone);
+  std::optional<LockTraceWriter> lockWriter;if(lockTraceEnabled){lockWriter.emplace(logs/L"lock-trace.jsonl",profile->id,setting(L"shooting_assist",1)?shootingDegrees:0,stableCone,GetCurrentProcessId());if(!lockWriter->valid()){write("LOCK_TRACE cannot open diagnostic file");gameHooks.lock_diagnostics(false,stableCone);}}
+  write("LOCK_DIAGNOSTICS trace="+std::to_string(lockTraceEnabled)+" stable_cone="+std::to_string(stableCone));
+  auto drain_lock_trace=[&]{
+   if(!lockWriter||lockWriter->finished())return;
+   auto runtimeInstance=instance();auto base=runtimeInstance?membase(runtimeInstance):nullptr;
+   Memory memory([&](uint32_t at,void* out,size_t n){SIZE_T got{};return base&&ReadProcessMemory(GetCurrentProcess(),base+at,out,n,&got)&&got==n;});
+   lockWriter->drain(gameHooks.take_lock_trace(),[&](CueName value){if(!value.index)return std::string{};auto name=reader.name(memory,value.index);if(value.number&&!name.empty())name+="_"+std::to_string(value.number-1);return name;});
+   if(lockWriter->finished())gameHooks.stop_lock_trace();
+  };
   QteReader qtes([&](std::string_view tag){return prompts.button(tag);},[&](std::string_view tag){return prompts.gesture(tag);});
   SynchronicReader timing([&](std::string_view tag){return prompts.button(tag);});
   if(textHooks){events.push_back(presentations.event());presentations.capture(true);write("Gameplay text observer started (prototype)");}
@@ -175,6 +186,7 @@ static DWORD WINAPI run(void*) {
     auto index=wait-WAIT_OBJECT_0;
     if(index==commands.size())changed();
     else if(index>commands.size()){
+     drain_lock_trace();
      bool overflow=false,nativeOverflow=false;auto batch=presentations.take(overflow);auto native=gameHooks.take(nativeOverflow);
      auto now=GetTickCount64();bool stale=std::any_of(batch.begin(),batch.end(),[&](const PresentationEvent& event){return now-event.tick>2000;})||std::any_of(native.begin(),native.end(),[&](const GameplayEvent& event){return now-event.tick>200;});
      if(overflow||nativeOverflow||stale){gameplay.reset();status.reset();qtes.reset();timing.reset();if(textHooks)presentations.capture(true);if(nativeGameplay)gameHooks.capture(true);write("GAME_CUE_RESET discarded stale/overflowed batch; resynchronizing producers");}
@@ -217,7 +229,7 @@ static DWORD WINAPI run(void*) {
     }
    }else{write("Event wait failed: "+std::to_string(GetLastError()));break;}
   }
-  gameHooks.capture(false);presentations.capture(false);source.capture(false);speech.stop();speech.close();for(size_t i=0;i<commands.size();i++)CloseHandle(events[i]);if(SUCCEEDED(co))CoUninitialize();write("Accessibility stopped");
+  gameHooks.capture(false);drain_lock_trace();presentations.capture(false);source.capture(false);speech.stop();speech.close();for(size_t i=0;i<commands.size();i++)CloseHandle(events[i]);if(SUCCEEDED(co))CoUninitialize();write("Accessibility stopped");
  }catch(...){OutputDebugStringA("Blind Rage worker failed\n");return 3;}return 0;
 }
 extern "C" __declspec(dllexport) DWORD WINAPI A11yInitialize(void*){std::lock_guard lock(lifecycle);if(worker&&WaitForSingleObject(worker,0)==WAIT_TIMEOUT)return 1;if(worker)CloseHandle(worker);stopping=false;worker=CreateThread(nullptr,0,run,nullptr,0,nullptr);return worker?1:0;}

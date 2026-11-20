@@ -4,11 +4,13 @@
 using namespace a11y;
 static void check(bool pass,const char* message){if(!pass)throw std::runtime_error(message);}
 static unsigned calls{};static bool driveWindow{},windowResult=true,judgeAfterInput{},aimObserved{},changeAim{},enterCinematic{};
+static std::function<void(void*,uint8_t*)> traceOriginal;
 static void word(uint8_t* base,uint32_t at,uint32_t value){for(unsigned i=0;i<4;++i)base[at+i]=uint8_t(value>>(24-8*i));}
 extern "C" __declspec(noinline) void window_target(void* context,uint8_t* base){word(base,ui_argument(context,5),windowResult?1:0);static_cast<uint64_t*>(context)[0]=0x999;}
 static GameplayHooks::Function volatile call_window=window_target;
 extern "C" __declspec(noinline) void script_target(void* context,uint8_t* base){
  ++calls;auto source=ui_argument(context,3);
+ if(traceOriginal){traceOriginal(context,base);static_cast<uint64_t*>(context)[0]=0xfeed;return;}
  if(driveWindow){call_window(context,base);if(judgeAfterInput)word(base,0x18000+20,0xc0000000);}
  else{aimObserved=std::bit_cast<float>(cue_word(base+source+0x7d4))==45.f;if(changeAim)word(base,source+0x7d4,std::bit_cast<uint32_t>(60.f));}
  if(enterCinematic)word(base,0x3000+0x378,0x8000);
@@ -18,7 +20,7 @@ int main(){try{
  auto* base=static_cast<uint8_t*>(VirtualAlloc(nullptr,0x100000000ull,MEM_RESERVE,PAGE_NOACCESS));check(base,"reserve synthetic guest address space");
  check(VirtualAlloc(base+0x1000,0x20000,MEM_COMMIT,PAGE_READWRITE),"commit synthetic data");check(VirtualAlloc(base+0x832a9000,0x2000,MEM_COMMIT,PAGE_READWRITE),"commit synthetic globals");
  const uint32_t names=0x10000,entries=0x11000,node=0x8000,owner=0x9000,frame=0xa000,locals=0xb000,actor=0x1000,pc=0x3000,judge=0x4000,row=0x5000,requests=0x6000,buttons=0x7000,info=0xc000,track=0x2000;
- word(base,disc_profile.layout.names_global,names);word(base,disc_profile.layout.names_global+4,32);
+ word(base,disc_profile.layout.names_global,names);word(base,disc_profile.layout.names_global+4,64);
  auto name=[&](unsigned index,const char* text){word(base,names+index*4,entries+index*0x80);std::memcpy(base+entries+index*0x80+8,text,std::strlen(text)+1);};
  name(0,"None");name(1,"ByteProperty");name(2,"BCSeqAct_InputDivergence");name(3,"BCPlayerController_HeavyShoot");name(4,"BCInterpTrackSynchronic");name(5,"BCSeqAct_AnimFadeByButtonRep");
  std::array<uint32_t,GameplayHooks::function_names.size()> indices{};for(unsigned i=0;i<indices.size();++i){indices[i]=i+14;name(i+14,GameplayHooks::function_names[i]);}
@@ -70,6 +72,28 @@ int main(){try{
  word(base,locals+4,11);context[0]=actor;call_script(context.data(),base);check(source.take(overflow).empty(),"other face buttons do not repeat results");word(base,locals+4,10);
  word(base,actor+0xc8,0);context[0]=actor;call_script(context.data(),base);check(source.take(overflow).empty(),"closed results movie cannot request a repeat");word(base,actor+0xc8,0x80000000);
  word(base,actor+0x34,0x1d100);context[0]=actor;call_script(context.data(),base);check(source.take(overflow).empty(),"Square/X outside results remains native input only");
+ name(37,"BCGFxUI_Hud");name(38,"Camera");name(39,"BCGFxMoviePlayer");name(40,"SE_UI_lockon1_Cue");word(base,pc+0x34,0x1d000);word(base,0x1d000+0x2c,3);word(base,pc+0x370,0x1b000);word(base,0x1b000+0x324,std::bit_cast<uint32_t>(70.f));word(base,0x19000+0x2c,40);word(base,0x19000+0x20,90);
+ word(base,0x1b000+0x34,0x1d200);word(base,0x1d200+0x20,101);word(base,0x1d200+0x2c,38);word(base,0x1d200+0x44,0x1d300);word(base,0x1d300+0x28,0x1d200);word(base,0x1d300+0x2c,indices[18]);word(base,0x1d300+0x88,0x82260d78);
+ word(base,pc+0x7d4,std::bit_cast<uint32_t>(3.6f));word(base,pc+0x7d8,std::bit_cast<uint32_t>(50.f));
+ std::function<void(unsigned,uint32_t)> invoke;
+ invoke=[&](unsigned kind,uint32_t object){uint32_t nf=0x14000+kind*0x40,nn=0x1e000+kind*0x40,no=0x1f000+kind*0x40,nl=0x15000+kind*0x100;
+  word(base,nf+0x10,nn);word(base,nf+0x14,object);word(base,nf+0x1c,nl);word(base,nn+0x28,no);word(base,nn+0x2c,indices[kind]);word(base,no+0x2c,kind==18?38:kind==19||kind==20?37:kind==21?39:3);
+  if(kind==8){word(base,nl+4,gauge);for(unsigned off:{8u,12u,16u,24u,28u})word(base,nl+off,0);word(base,nl+20,std::bit_cast<uint32_t>(1.f));}
+  if(kind==17)word(base,nl,gauge);if(kind==19)word(base,nl+4,gauge);if(kind==20)word(base,nl+12,1);if(kind==21)word(base,nl,0x19000);
+  std::array<uint64_t,40> ctx{};ctx[0]=object;ctx[4]=nf;ctx[5]=0x18000+kind*8;call_script(ctx.data(),base);check(ctx[0]==0xfeed,"diagnostic observer preserves original return context");
+ };
+ traceOriginal=[&](void* ctx,uint8_t*){auto nf=ui_argument(ctx,4),nl=cue_word(base+nf+0x1c),nn=cue_word(base+nf+0x10),kind=cue_word(base+nn+0x2c)-14;
+  if(kind==16){invoke(8,pc);if(cue_word(base+0x15000+8*0x100+0x34)){invoke(19,actor);invoke(17,pc);}}
+  if(kind==8){bool accepted=std::bit_cast<float>(cue_word(base+pc+0x7d8))>45;word(base,nl+0x24,accepted?1:0);word(base,nl+0x34,accepted?gauge:0);word(base,nl+0x50,std::bit_cast<uint32_t>(45.f));word(base,nl+0x54,std::bit_cast<uint32_t>(1.f));word(base,nl+0x58,std::bit_cast<uint32_t>(.7071068f));word(base,nl+0x5c,std::bit_cast<uint32_t>(.7071068f));}
+  if(kind==19){invoke(20,actor);invoke(21,actor);}
+  if(kind==17){invoke(18,0x1b000);word(base,ui_argument(ctx,5),1);word(base,nl+0xc,std::bit_cast<uint32_t>(.7071068f));word(base,nl+0x10,std::bit_cast<uint32_t>(.7071068f));word(base,nl+0x18,std::bit_cast<uint32_t>(1.f));}
+ };
+ source.options(false,20);source.lock_diagnostics(true,false);invoke(16,pc);invoke(16,pc);auto lockBatch=source.take_lock_trace();
+ check(lockBatch.records.size()==10&&source.take(overflow).empty(),"nested native lock trace uses a separate queue with no narration traffic");
+ check(lockBatch.records[1].kind==LockTraceKind::acquire&&lockBatch.records[1].result&&lockBatch.records[1].accepted&&lockBatch.records[2].kind==LockTraceKind::marker_add&&lockBatch.records[3].kind==LockTraceKind::sound&&lockBatch.records[3].sound_name.index==40&&lockBatch.records[4].kind==LockTraceKind::remove&&lockBatch.records[4].angular&&lockBatch.records[4].result&&lockBatch.records[4].angle>lockBatch.records[4].limit,"trace preserves acquisition, actual sound request and angular removal in frame order");
+ check(lockBatch.records[0].frame+1==lockBatch.records[5].frame,"successive shooting ticks have distinct frame identities");
+ source.lock_diagnostics(true,true);invoke(16,pc);lockBatch=source.take_lock_trace();check(lockBatch.records.size()==2&&!lockBatch.records[1].accepted&&std::abs(lockBatch.records[1].effective_max-37)<.001f,"opt-in stable cap acts before the simulated native marker/sound side effects");
+ check(std::bit_cast<float>(cue_word(base+pc+0x7d8))==50,"native observer restores Episode 1 angle after capped acquisition");source.lock_diagnostics(false,false);traceOriginal={};
  source.capture(false);context[0]=track;call_script(context.data(),base);check(source.take(overflow).empty()&&context[0]==0xfeed,"capture shutdown retains original execution without notifications");VirtualFree(base,0,MEM_RELEASE);
  std::cout<<"Gameplay native hook, QTE, timing and scoped acquisition tests passed.\n";return 0;
 }catch(const std::exception& e){std::cerr<<e.what()<<"\n";return 1;}}

@@ -13,3 +13,6 @@ jobs:
       - name: Build and run synthetic tests
         shell: pwsh
         run: ./build.ps1 -Test
+      - name: Verify lock trace analysis
+        shell: pwsh
+        run: python tests/lock_trace_analysis_test.py

@@ -8,10 +8,10 @@ static void require(bool pass,const char* message){if(!pass){std::fprintf(stderr
 int main(){
  auto dir=module_path().parent_path();auto root=dir/(L"cleanup-test-"+std::to_wstring(GetCurrentProcessId()));
  fs::create_directories(root/L"dump-9.pages");
- for(auto name:{L"accessibility.log",L"dump-1.txt",L"dump-2.pages",L"notes.txt",L"dump-custom.txt"})std::ofstream(root/name)<<"fixture";
+ for(auto name:{L"accessibility.log",L"lock-trace.jsonl",L"dump-1.txt",L"dump-2.pages",L"notes.txt",L"dump-custom.txt"})std::ofstream(root/name)<<"fixture";
  std::ofstream(root/L"dump-9.pages"/L"keep.txt")<<"fixture";
  auto cleanup=clear_previous_diagnostics(root);
- require(cleanup.removed==3&&!cleanup.failed,"clear only owned diagnostic files");
+ require(cleanup.removed==4&&!cleanup.failed,"clear only owned diagnostic files, including bounded lock trace");
  require(fs::exists(root/L"notes.txt")&&fs::exists(root/L"dump-custom.txt")&&fs::exists(root/L"dump-9.pages"/L"keep.txt"),"retain unrelated files and nested directories");
  require(clear_previous_diagnostics(root).removed==0,"cleanup is idempotent");
  require(!diagnostic_filename(L"dump-.txt")&&!diagnostic_filename(L"dump-1.exe"),"restrict cleanup filenames");

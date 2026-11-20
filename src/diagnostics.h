@@ -3,7 +3,7 @@
 #include <string_view>
 namespace a11y {
 inline bool diagnostic_filename(std::wstring_view name){
- if(name==L"accessibility.log")return true;
+ if(name==L"accessibility.log"||name==L"lock-trace.jsonl")return true;
  if(!name.starts_with(L"dump-"))return false;
  auto end=name.ends_with(L".pages")?name.size()-6:name.ends_with(L".txt")?name.size()-4:0;
  if(end<=5)return false;

@@ -55,6 +55,8 @@ This build has offline validation and is ready for the first user-led gameplay t
 
 ## Build from source
 
+For the repeating lock-on sound investigation, see [bounded trace instructions](docs/LOCK_TRACE.md). Diagnostics and the candidate stable-cone repair default to off; the repair is gated on live evidence.
+
 ```powershell
 ./bootstrap.ps1
 ./build.ps1 -Test
