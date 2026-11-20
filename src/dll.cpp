@@ -73,7 +73,9 @@ static DWORD WINAPI run(void*) {
     scheduled=false;
     if(current!=last){bool entered=lastContext!=context;lastContext=context;last=current;
      if(!menus.empty()){lastSpeech=describe(menus.back(),entered,true);write("MENU "+lastSpeech);}
-     else{lastSpeech.clear();spoken.clear();speech.stop();}
+     // Losing a menu clears our narration state, but must not cancel NVDA
+     // speech that may belong to another application or notification.
+     else{lastSpeech.clear();spoken.clear();}
     }
     if(notifications.focused()&&!muted&&speaking&&!current.empty()&&(spoken!=current||forceContext)){
      if(forceContext)lastSpeech=describe(menus.back(),true,true);
