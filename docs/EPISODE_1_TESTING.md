@@ -7,7 +7,7 @@ This build is ready for the first user-led test after offline implementation che
 1. Start NVDA, then launch `BlindRage.exe` before entering gameplay. Disc and title-update profiles are both supported; automatic selection follows the existing installation setting.
 2. Keep the recomp's preferred button-icon setting. Blind Rage follows its effective Xbox, PlayStation or keyboard display. Controller icon changes which require a recomp restart still require that restart.
 3. Default gameplay options are enabled: subtitles, tutorials, QTEs, health warnings and wider shooting acquisition. Existing INI files use defaults for missing keys. Edit `mods/accessibility/dist/accessibility.ini` and restart to change them.
-4. Ctrl+Alt+F2 repeats the current menu, otherwise an active QTE/timing cue, otherwise current text. Ctrl+Alt+F3 explicitly stops speech; Ctrl+Alt+F5 toggles narration. Back/Select retains the game's cinematic-skip behavior.
+4. Ctrl+Alt+F2 repeats the current menu, otherwise an active QTE/timing cue, otherwise current text. Ctrl+Alt+F3 explicitly stops speech; Ctrl+Alt+F5 toggles narration. Back/Select reads Health/Burst during gameplay and retains the game's cinematic-skip behavior. Keyboard users use the recomp's Back binding (default Tab). Holding or releasing it should not repeat the readout. It should stay silent in cutscenes and pause/menu screens; the original game action still runs. Set `[gameplay] status_button=0` to disable the added readout.
 
 ## Short calibration, then an independent attempt
 
@@ -15,7 +15,7 @@ First confirm that a real subtitle/tutorial reads and its button label matches t
 
 For stick prompts, expect an explicit stick and direction on a controller. Simultaneous opposing tilts should be spoken as one combined request. Keyboard mode should name the bound keys; mouse-enabled rotation uses the mouse, while mouse-disabled rotation gives a circular key sequence. A release-required timed hold should explicitly say to release; an animation-controlled hold says to keep holding.
 
-During rail shooting, use the game's normal lock/acquisition and firing controls. The aid expands its acquisition cone and retains the game's own locking sounds, timing and caps. It does not fire or aim the controller for the player. Ctrl+Alt+F4 reads the current displayed Health/Burst percentages. A full Burst meter alone is not a readiness announcement; the native usable Burst button triggers that notice.
+During rail shooting, use the game's normal lock/acquisition and firing controls. The aid expands its acquisition cone and retains the game's own locking sounds, timing and caps. It does not fire or aim the controller for the player. Back/Select reads the current displayed Health/Burst percentages; Ctrl+Alt+F4 remains an alternative. A full Burst meter alone is not a readiness announcement; the native usable Burst button triggers that notice.
 
 After these first checks, attempt the episode independently if the cues are usable. The intended first-test success is progress without live button coaching, not a perfect rank or first-try completion. There is no need to stop at every prompt for the agent. The user controls the game throughout; the agent can inspect saved logs afterward.
 

@@ -48,6 +48,7 @@ class GameplayStatus {
    if(!visible_||!health_||!burst_)return "Health and Burst status is not available.";
    return "Health "+std::to_string(*health_)+" percent. Burst "+std::to_string(*burst_)+" percent."+(ready_.available()?" Burst ready.":"");
   }
+  std::string status(Movie movie) const {return movie==gauge_&&visible_&&health_&&burst_?status():std::string{};}
   std::vector<Movie> movies() const {std::vector<Movie> out;if(gauge_.pointer)out.push_back(gauge_);if(ready_.movie.pointer&&ready_.movie!=gauge_)out.push_back(ready_.movie);return out;}
   void closed(Movie movie){if(gauge_==movie){gauge_={};health_.reset();burst_.reset();visible_=false;lowAnnounced_=false;}if(ready_.movie==movie)ready_={};}
   std::vector<std::string> take(){

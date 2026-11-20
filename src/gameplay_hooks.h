@@ -11,7 +11,7 @@ namespace a11y {
 class GameplayHooks {
  public:
   using Function=void(*)(void*,uint8_t*);
-  static constexpr std::array<const char*,14> function_names{"RequestInputJudge","RequestButtonIcon","UpdateButtonIcon","CheckActivate","Update","Deactivated","EndJudge","DestroyRequest","CheckLockOnShotTarget","StartSynchronicTime","UpdateNormal","UpdateBarrage","EndSynchronicTime","InitTracks"};
+  static constexpr std::array<const char*,15> function_names{"RequestInputJudge","RequestButtonIcon","UpdateButtonIcon","CheckActivate","Update","Deactivated","EndJudge","DestroyRequest","CheckLockOnShotTarget","StartSynchronicTime","UpdateNormal","UpdateBarrage","EndSynchronicTime","InitTracks","HandleButtonInput_Back"};
   static GameplayHooks& instance(){static auto* value=new GameplayHooks;return *value;}
   bool install(uintptr_t executable,const BuildProfile& profile){
    if(installed_)return profile_==&profile;profile_=&profile;names_global_=profile.layout.names_global;
@@ -32,7 +32,7 @@ class GameplayHooks {
    configure_indices(indices);return true;
   }
   void configure_indices(const std::array<uint32_t,function_names.size()>& indices){configured_=false;for(size_t i=0;i<indices.size();++i)indices_[i]=indices[i];configured_=true;}
-  void options(bool qtes,float shootingDegrees){qtes_=qtes;angle_=shootingDegrees;}
+  void options(bool qtes,float shootingDegrees,bool statusButton=true){qtes_=qtes;angle_=shootingDegrees;status_button_=statusButton;}
   void capture(bool enabled){enabled_=false;++epoch_;queue_.clear();enabled_=enabled;}
   HANDLE event() const{return event_;}
   std::vector<GameplayEvent> take(bool& overflow){return queue_.take(overflow);}
@@ -40,7 +40,7 @@ class GameplayHooks {
   uint64_t widenings() const{return widenings_.load();}
   uint64_t failures() const{return failures_.load();}
  private:
-  enum class Route {ignore,qte_bind,qte_update,judge_update,aim,timing_start,timing_update,timing_end,timing_reset,animation_cross,animation_mash,animation_hold};
+  enum class Route {ignore,qte_bind,qte_update,judge_update,aim,timing_start,timing_update,timing_end,timing_reset,animation_cross,animation_mash,animation_hold,status_button};
   struct Binding {uint32_t source{},index{},pc{},cls{};QteSchema schema=QteSchema::divergence;uint64_t generation{},observed_revision{};bool published{};QteGroup last;};
   struct TimingBinding {uint32_t source{},index{},track{};uint64_t generation{};bool published{};TimingState last;};
   struct TimingScope {TimingScope* previous{};uint32_t source{},frame{};int32_t track{};bool window{};};
@@ -66,6 +66,7 @@ class GameplayHooks {
    else if((cls=="BCSeqAct_InputDivergence"&&(function=="RequestButtonIcon"||function=="UpdateButtonIcon"))||((cls=="BCSeqAct_InputDivergenceBase"||cls=="BCSeqAct_ButtonDivergence")&&(function=="CheckActivate"||function=="Deactivated")))route=Route::qte_update;
    else if(cls=="BCInputJudgeSystem"&&(function=="Update"||function=="EndJudge"||function=="DestroyRequest"))route=Route::judge_update;
    else if(cls=="BCPlayerController_HeavyShoot"&&function=="CheckLockOnShotTarget")route=Route::aim;
+   else if(cls=="BCPlayerInput"&&function=="HandleButtonInput_Back")route=Route::status_button;
    else if(function=="RequestButtonIcon"||function=="CheckActivate"||function=="Update"||function=="Deactivated"){
     if(cls=="BCSeqAct_AnimCrossFadeButtonRep")route=Route::animation_cross;
     else if(cls=="BCSeqAct_AnimFadeByButtonRep")route=Route::animation_mash;
@@ -123,6 +124,14 @@ class GameplayHooks {
    Memory memory(Read{base});auto route=self.classify(memory,base,node,name,state);
    if(route==Route::ignore){self.original_[0](context,base);return;}
    auto source=ui_argument(context,3),locals=memory.u32(frame+0x1c);
+   if(route==Route::status_button){
+    uint8_t buttonEvent=255;
+    auto before=self.status_button_.load()&&locals&&memory.copy(locals,&buttonEvent,1)&&buttonEvent==0?capture_status_context(memory,source):std::nullopt;
+    // Always execute the original, including all cinematic-skip behavior.
+    self.original_[0](context,base);
+    if(before&&self.enabled_.load()&&epoch==self.epoch_.load()&&capture_status_context(memory,source)==before){GameplayEvent event;event.status_request=true;event.status=*before;self.publish(event);}
+    return;
+   }
    if(route==Route::aim){
     AcquisitionScope scope(memory,[&](uint32_t at,const void* bytes,size_t n){SIZE_T wrote{};return WriteProcessMemory(GetCurrentProcess(),base+at,bytes,n,&wrote)&&wrote==n;},source,self.angle_.load());
     if(scope.changed())++self.widenings_;self.original_[0](context,base);return;
@@ -153,7 +162,7 @@ class GameplayHooks {
   }
   GameplayHooks():event_(CreateEventW(nullptr,FALSE,FALSE,nullptr)){for(auto& index:indices_)index=UINT32_MAX;}
   NativeHooks hooks_;const BuildProfile* profile_{};std::array<Function,2> original_{};std::array<std::atomic<uint32_t>,function_names.size()> indices_{};
-  HANDLE event_{};uint32_t names_global_=disc_profile.layout.names_global;bool installed_{};std::atomic<bool> configured_{},enabled_{},qtes_{true};std::atomic<float> angle_{};
+  HANDLE event_{};uint32_t names_global_=disc_profile.layout.names_global;bool installed_{};std::atomic<bool> configured_{},enabled_{},qtes_{true},status_button_{true};std::atomic<float> angle_{};
   std::atomic<uint64_t> epoch_{},captured_{},failures_{},widenings_{},generation_{};GameplayQueue queue_;
 };
 }

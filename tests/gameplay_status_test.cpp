@@ -11,6 +11,7 @@ int main(){try{
  check(status.status().find("not available")!=std::string::npos,"hidden gauges cannot report active health");
  status.apply(event(PresentationKind::gauge_visible,0,true));
  check(status.status()=="Health 100 percent. Burst 50 percent.","status combines current gauge values without automatic percentage chatter");
+ check(status.status({100,10})==status.status()&&status.status({100,11}).empty()&&status.status({101,10}).empty(),"contextual status requires the exact active gauge identity");
  check(status.take().empty(),"ordinary meter updates are quiet");
  status.apply(event(PresentationKind::health,.24f));auto lines=status.take();check(lines.size()==1&&lines[0]=="Low health. 24 percent.","one low-health warning");
  status.apply(event(PresentationKind::health,.23f));status.apply(event(PresentationKind::health,.28f));status.apply(event(PresentationKind::health,.2f));check(status.take().empty(),"hysteresis suppresses repeated health warnings");

@@ -62,7 +62,7 @@ static DWORD WINAPI run(void*) {
   bool statusWarnings=setting(L"status_warnings",1);
   bool interruptText=setting(L"interrupt",0);
   bool qteEnabled=setting(L"qtes",1),interruptQte=setting(L"qte_interrupt",1);int shootingDegrees=std::clamp<int>(GetPrivateProfileIntW(L"gameplay",L"shooting_cone_degrees",45,(dir/L"accessibility.ini").c_str()),1,89);
-  gameHooks.options(textHooks&&qteEnabled,setting(L"shooting_assist",1)?float(shootingDegrees):0.f);
+  gameHooks.options(textHooks&&qteEnabled,setting(L"shooting_assist",1)?float(shootingDegrees):0.f,setting(L"status_button",1));
   QteReader qtes([&](std::string_view tag){return prompts.button(tag);},[&](std::string_view tag){return prompts.gesture(tag);});
   SynchronicReader timing([&](std::string_view tag){return prompts.button(tag);});
   if(textHooks){events.push_back(presentations.event());presentations.capture(true);write("Gameplay text observer started (prototype)");}
@@ -174,17 +174,24 @@ static DWORD WINAPI run(void*) {
      else{
       auto runtimeInstance=instance();auto base=runtimeInstance?membase(runtimeInstance):nullptr;Memory memory([&](uint32_t at,void* out,size_t n){SIZE_T got{};return base&&ReadProcessMemory(GetCurrentProcess(),base+at,out,n,&got)&&got==n;});
       auto name=[&](CueName value){auto text=reader.name(memory,value.index);if(value.number&&!text.empty())text+="_"+std::to_string(value.number-1);return text;};
+      std::optional<StatusContext> statusRequest;
       struct Ordered {uint64_t order;bool native;size_t index;};std::vector<Ordered> order;for(size_t i=0;i<batch.size();++i)order.push_back({batch[i].order,false,i});for(size_t i=0;i<native.size();++i)order.push_back({native[i].order,true,i});
       std::sort(order.begin(),order.end(),[](const Ordered& left,const Ordered& right){return left.order<right.order;});
       for(const auto& item:order){
        if(!item.native){const auto& event=batch[item.index];gameplay.apply(event);status.apply(event);qtes.apply(event);timing.apply(event);
         if(event.kind==PresentationKind::button_create)write("QTE_ICON tag="+event.tag.utf8()+" input="+event.type.utf8()+" revision="+std::to_string(event.revision));
        }else{const auto& event=native[item.index];
-        if(event.timing){timing.apply(event.sync,event.order,name);write("TIMING_STATE source="+std::to_string(event.sync.source)+" track="+std::to_string(event.sync.track)+" active="+std::to_string(event.sync.active)+" window="+std::to_string(event.sync.window));}
+        if(event.status_request)statusRequest=event.status;
+        else if(event.timing){timing.apply(event.sync,event.order,name);write("TIMING_STATE source="+std::to_string(event.sync.source)+" track="+std::to_string(event.sync.track)+" active="+std::to_string(event.sync.active)+" window="+std::to_string(event.sync.window));}
         else{qtes.apply(event.group,event.order,name);unsigned visible=0;for(unsigned i=0;i<event.group.count;++i)visible+=event.group.commands[i].visible;write("QTE_STATE source="+std::to_string(event.group.source)+" active="+std::to_string(event.group.active)+" mode="+std::to_string(event.group.mode)+" visible="+std::to_string(visible)+" required="+std::to_string(event.group.required));}
        }
       }
-      validate_status(memory);validate_qtes(memory);narrate_text();narrate_status();narrate_qtes();if(!gameplay.boxes().empty())changed();
+      validate_status(memory);validate_qtes(memory);narrate_text();narrate_status();
+      if(statusRequest&&capture_status_context(memory,statusRequest->input)==statusRequest&&movie_class(memory,statusRequest->input,"BCPlayerInput")&&movie_class(memory,statusRequest->controller,"BCPlayerController")){
+       auto text=status.status({statusRequest->gauge,statusRequest->gauge_index});
+       if(!text.empty()){write("GAME_STATUS_REQUEST Back "+text);if(notifications.focused()&&!muted&&speaking)speech.speak(text,false);}
+      }
+      narrate_qtes();if(!gameplay.boxes().empty())changed();
      }
     }else command(index);
    }else if(wait==WAIT_OBJECT_0+events.size()){
