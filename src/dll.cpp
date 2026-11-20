@@ -154,6 +154,17 @@ static DWORD WINAPI run(void *) {
         if (!prompts.initialize(runtime, reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr)),
                                 *profile))
             write("Recomp prompt labels unavailable");
+        reader.button_labels([&](std::string_view token) {
+            if (token == "LS" || token == "RS" || token == "R3") {
+                if (prompts.device() == PromptDevice::keyboard ||
+                    prompts.device() == PromptDevice::unknown)
+                    return std::string{};
+                return std::string(token == "LS"   ? "Left stick"
+                                   : token == "RS" ? "Right stick"
+                                                   : "Right stick press");
+            }
+            return prompts.button(token);
+        });
         GameplayText gameplay({setting(L"subtitles", 1), setting(L"tutorials", 1)},
                               [&](std::string_view tag) { return prompts.button(tag); });
         GameplayStatus status(
@@ -556,7 +567,7 @@ static DWORD WINAPI run(void *) {
                             return text;
                         };
                         std::optional<StatusContext> statusRequest;
-                        std::optional<std::pair<uint32_t, uint32_t>> resultsRepeat;
+                        std::optional<std::pair<uint32_t, uint32_t>> menuRepeat;
                         struct Ordered {
                             uint64_t order;
                             bool native;
@@ -584,8 +595,8 @@ static DWORD WINAPI run(void *) {
                                           " revision=" + std::to_string(event.revision));
                             } else {
                                 const auto &event = native[item.index];
-                                if (event.results_repeat)
-                                    resultsRepeat = {{event.repeat_movie, event.repeat_index}};
+                                if (event.menu_repeat)
+                                    menuRepeat = {{event.repeat_movie, event.repeat_index}};
                                 else if (event.status_request)
                                     statusRequest = event.status;
                                 else if (event.timing) {
@@ -624,14 +635,15 @@ static DWORD WINAPI run(void *) {
                                     speech.speak(text, false);
                             }
                         }
-                        if (resultsRepeat) {
-                            auto [movie, index] = *resultsRepeat;
+                        if (menuRepeat) {
+                            auto [movie, index] = *menuRepeat;
                             if (memory.u32(movie + 0x20) == index &&
                                 (memory.u32(movie + 0xc8) & 0x80000000) &&
-                                movie_class(memory, movie, "BCGFxUI_ResultMenu")) {
-                                auto text = results_repeat_text(reader.menus(memory), movie);
+                                (movie_class(memory, movie, "BCGFxUI_ResultMenu") ||
+                                 movie_class(memory, movie, "BCGFxUI_ChapterMenu"))) {
+                                auto text = menu_repeat_text(reader.menus(memory), movie);
                                 if (!text.empty()) {
-                                    write("RESULTS_REPEAT " + text);
+                                    write("MENU_REPEAT " + text);
                                     if (notifications.focused() && !muted && speaking)
                                         speech.speak(text);
                                 }

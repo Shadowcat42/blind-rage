@@ -354,7 +354,7 @@ int main() {
         events = source.take(overflow);
         check(
             calls == originalCalls + 1 && context[0] == 0xfeed && events.size() == 1 &&
-                events[0].results_repeat && events[0].repeat_movie == actor &&
+                events[0].menu_repeat && events[0].repeat_movie == actor &&
                 events[0].repeat_index == 7,
             "Square/X on results requests repeat without changing original input or requiring QTE narration");
         for (uint8_t inputEvent : {uint8_t(1), uint8_t(2), uint8_t(3)}) {
@@ -379,6 +379,17 @@ int main() {
         context[0] = actor;
         call_script(context.data(), base);
         check(source.take(overflow).empty(), "Square/X outside results remains native input only");
+        name(41, "BCGFxUI_ChapterMenu");
+        word(base, 0x1d400 + 0x2c, 41);
+        word(base, 0x1d400 + 0x40, 0x1d100);
+        word(base, actor + 0x34, 0x1d400);
+        context[0] = actor;
+        originalCalls = calls;
+        call_script(context.data(), base);
+        events = source.take(overflow);
+        check(calls == originalCalls + 1 && context[0] == 0xfeed && events.size() == 1 &&
+                  events[0].menu_repeat && events[0].repeat_movie == actor,
+              "episode intro repeat shares the input observer and preserves native input");
         name(37, "BCGFxUI_Hud");
         name(38, "Camera");
         name(39, "BCGFxMoviePlayer");
@@ -433,6 +444,7 @@ int main() {
             call_script(ctx.data(), base);
             check(ctx[0] == 0xfeed, "diagnostic observer preserves original return context");
         };
+        bool allowAcquisition = false;
         traceOriginal = [&](void *ctx, uint8_t *) {
             auto nf = ui_argument(ctx, 4), nl = cue_word(base + nf + 0x1c),
                  nn = cue_word(base + nf + 0x10), kind = cue_word(base + nn + 0x2c) - 14;
@@ -444,7 +456,8 @@ int main() {
                 }
             }
             if (kind == 8) {
-                bool accepted = std::bit_cast<float>(cue_word(base + pc + 0x7d8)) > 45;
+                bool accepted =
+                    allowAcquisition && std::bit_cast<float>(cue_word(base + pc + 0x7d8)) > 45;
                 word(base, nl + 0x24, accepted ? 1 : 0);
                 word(base, nl + 0x34, accepted ? gauge : 0);
                 word(base, nl + 0x50, std::bit_cast<uint32_t>(45.f));
@@ -466,6 +479,12 @@ int main() {
         };
         source.options(false, 20);
         source.lock_diagnostics(true, false);
+        for (unsigned i = 0; i < 100; ++i)
+            invoke(16, pc);
+        auto waiting = source.take_lock_trace();
+        check(waiting.records.empty() && waiting.started == 0 && waiting.attempted == 0,
+              "opening rejected searches do not start or spend the baseline capture");
+        allowAcquisition = true;
         invoke(16, pc);
         invoke(16, pc);
         auto lockBatch = source.take_lock_trace();

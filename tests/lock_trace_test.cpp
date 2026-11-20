@@ -79,13 +79,14 @@ int main() {
         LockTrace trace;
         LockTraceRecord record;
         record.kind = LockTraceKind::acquire;
+        record.result = record.accepted = true;
         trace.configure(false);
         check(!trace.begin(1000), "disabled trace never starts");
         trace.push(record, 1001);
         check(trace.take().records.empty(), "disabled callbacks do not record");
         trace.configure(true);
         check(!trace.begin(500, false) && trace.take().started == 0,
-              "idle shooting ticks cannot spend the capture window before any candidate check");
+              "idle shooting ticks cannot spend the capture window before a real lock");
         check(trace.begin(1000), "active shooting starts capture");
         for (unsigned i = 0; i < 600; i++)
             trace.push(record, 1001 + i);
@@ -103,6 +104,27 @@ int main() {
               "total record budget stops producer");
         trace.configure(true);
         trace.begin(1000);
+        auto failed = record;
+        failed.result = failed.accepted = false;
+        for (unsigned i = 0; i < 10000; ++i)
+            trace.push(failed, 1001);
+        batch = trace.take();
+        check(batch.records.empty() && batch.attempted == 0 && batch.filtered == 10000 &&
+                  trace.armed(),
+              "rejected search candidates cannot consume the record budget");
+        failed.cap_applied = true;
+        for (unsigned i = 0; i < 1000; ++i)
+            trace.push(failed, 1002);
+        check(trace.take().records.size() == 1, "capped rejection is sampled per identity");
+        failed.kind = LockTraceKind::remove;
+        failed.cap_applied = false;
+        for (unsigned i = 0; i < 1000; ++i)
+            trace.push(failed, 1003);
+        check(trace.take().records.size() == 1, "retained targets are sampled separately");
+        failed.result = true;
+        trace.push(failed, 1004);
+        trace.push(failed, 1004);
+        check(trace.take().records.size() == 2, "actual removals are never coalesced");
         check(!trace.begin(31000), "wall-clock capture expires without a polling timer");
         batch = trace.take();
         check(batch.done && std::string(batch.reason) == "time_limit", "time limit is explicit");

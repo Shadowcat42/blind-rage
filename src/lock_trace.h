@@ -80,7 +80,7 @@ struct LockTraceRecord {
 };
 struct LockTraceBatch {
     std::vector<LockTraceRecord> records;
-    uint64_t started{}, attempted{}, dropped{};
+    uint64_t started{}, attempted{}, dropped{}, filtered{};
     bool done{};
     const char *reason = "waiting";
 };
@@ -91,6 +91,8 @@ class LockTrace {
         std::lock_guard lock(mutex_);
         enabled_ = enabled;
         started_ = attempted_ = dropped_ = sequence_ = 0;
+        filtered_ = 0;
+        samples_ = {};
         count_ = 0;
         done_ = false;
         reason_ = enabled ? "waiting" : "disabled";
@@ -114,6 +116,40 @@ class LockTrace {
         std::lock_guard lock(mutex_);
         if (!enabled_ || !started_ || done_ || !check(now))
             return;
+        const bool acquireCheck =
+            record.kind == LockTraceKind::acquire && !(record.accepted && record.result);
+        const bool retainCheck = record.kind == LockTraceKind::remove && !record.result;
+        if (acquireCheck || retainCheck) {
+            if (acquireCheck && !record.cap_applied) {
+                ++filtered_;
+                return;
+            }
+            // Keep one diagnostic sample per identity and kind each second.
+            // Real acquisitions, removals and sounds are always recorded.
+            Sample *slot = &samples_[0];
+            for (auto &sample : samples_) {
+                if (sample.valid && sample.controller == record.controller &&
+                    sample.controller_index == record.controller_index &&
+                    sample.target == record.target && sample.target_index == record.target_index &&
+                    sample.kind == record.kind) {
+                    if (now - sample.tick < 1000) {
+                        ++filtered_;
+                        return;
+                    }
+                    slot = &sample;
+                    break;
+                }
+                if (!sample.valid || sample.tick < slot->tick)
+                    slot = &sample;
+            }
+            *slot = {record.controller,
+                     record.controller_index,
+                     record.target,
+                     record.target_index,
+                     record.kind,
+                     now,
+                     true};
+        }
         ++attempted_;
         record.sequence = ++sequence_;
         record.tick = now - started_;
@@ -147,6 +183,7 @@ class LockTrace {
         batch.started = started_;
         batch.attempted = attempted_;
         batch.dropped = dropped_;
+        batch.filtered = filtered_;
         batch.done = done_;
         batch.reason = reason_;
         return batch;
@@ -166,7 +203,14 @@ class LockTrace {
     std::mutex mutex_;
     std::array<LockTraceRecord, 512> records_{};
     size_t count_{};
-    uint64_t started_{}, attempted_{}, dropped_{}, sequence_{};
+    struct Sample {
+        uint32_t controller{}, controller_index{}, target{}, target_index{};
+        LockTraceKind kind{};
+        uint64_t tick{};
+        bool valid{};
+    };
+    std::array<Sample, 64> samples_{};
+    uint64_t started_{}, attempted_{}, dropped_{}, sequence_{}, filtered_{};
     bool done_{};
     const char *reason_ = "disabled";
 };
@@ -265,7 +309,7 @@ class LockTraceWriter {
             return;
         stream_ << "{\"event\":\"end\",\"reason\":\"" << reason
                 << "\",\"attempted\":" << batch.attempted << ",\"dropped\":" << batch.dropped
-                << "}\n";
+                << ",\"filtered_checks\":" << batch.filtered << "}\n";
         ended_ = true;
         stream_.flush();
     }

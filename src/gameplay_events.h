@@ -72,7 +72,7 @@ inline bool capture_timing(const Memory &m, uint32_t source, int32_t track, bool
     return true;
 }
 struct GameplayEvent {
-    bool timing{}, status_request{}, results_repeat{};
+    bool timing{}, status_request{}, menu_repeat{};
     uint32_t repeat_movie{}, repeat_index{};
     QteGroup group;
     TimingState sync;

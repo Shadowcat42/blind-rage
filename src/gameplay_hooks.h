@@ -148,7 +148,7 @@ class GameplayHooks {
         animation_mash,
         animation_hold,
         status_button,
-        results_repeat,
+        menu_repeat,
         shoot_tick,
         remove,
         view,
@@ -273,7 +273,7 @@ class GameplayHooks {
         else if (cls == "BCPlayerInput" && function == "HandleButtonInput_Back")
             route = Route::status_button;
         else if (cls == "GFxMoviePlayer" && function == "FilterButtonInput")
-            route = Route::results_repeat;
+            route = Route::menu_repeat;
         else if (function == "PlayerTick")
             route = Route::shoot_tick;
         else if (cls == "BCPlayerController_HeavyShoot" && function == "CheckRemoveLockOnTarget")
@@ -545,11 +545,7 @@ class GameplayHooks {
             return true;
         }
         if (route == Route::aim) {
-            if (state.locks && state.locks->active && !state.locks->tracing && trace_.armed()) {
-                state.locks->tracing = trace_.begin(GetTickCount64());
-                trace_record(lock_record(memory, state, LockTraceKind::frame), state);
-            }
-            if (!stable_cone_.load() && !(state.locks && state.locks->tracing)) {
+            if (!stable_cone_.load() && !(state.locks && state.locks->active && trace_.armed())) {
                 AcquisitionScope scope(
                     memory,
                     [&](uint32_t at, const void *bytes, size_t n) {
@@ -612,6 +608,15 @@ class GameplayHooks {
                         std::clamp(record.effective_min +
                                        (record.effective_max - record.effective_min) * distance,
                                    record.effective_min, record.effective_max);
+            }
+            // Wait for a real new lock instead of spending the capture on the
+            // thousands of rejected targets searched during the opening shot.
+            // A capped candidate is also useful evidence when the candidate fix
+            // prevents every lock; its repeated failures are sampled by LockTrace.
+            if (state.locks && state.locks->active && !state.locks->tracing &&
+                ((record.accepted && record.result) || record.cap_applied)) {
+                state.locks->tracing = trace_.begin(GetTickCount64());
+                trace_record(lock_record(memory, state, LockTraceKind::frame), state);
             }
             trace_record(record, state);
             return true;
@@ -722,7 +727,7 @@ class GameplayHooks {
         auto source = ui_argument(context, 3), locals = memory.u32(frame + 0x1c);
         if (self.observe_lock(route, context, base, memory, state, source, locals))
             return;
-        if (route == Route::results_repeat) {
+        if (route == Route::menu_repeat) {
             // UE3's existing movie input event: XboxTypeS_X is physical Square/X.
             // Observe only IE_Pressed (0), never repeats/releases or gameplay input.
             uint8_t inputEvent = 255;
@@ -731,13 +736,14 @@ class GameplayHooks {
                           index && (memory.u32(source + 0xc8) & 0x80000000) &&
                           memory.u32(locals + 8) == 0 &&
                           state.reader.name(memory, memory.u32(locals + 4)) == "XboxTypeS_X" &&
-                          subclass(memory, state.reader, source, "BCGFxUI_ResultMenu");
+                          (subclass(memory, state.reader, source, "BCGFxUI_ResultMenu") ||
+                           subclass(memory, state.reader, source, "BCGFxUI_ChapterMenu"));
             self.original_[0](context, base);
             if (repeat && self.enabled_.load() && epoch == self.epoch_.load() &&
                 memory.u32(source + 0x20) == index && memory.u32(source + 0x34) == cls &&
                 (memory.u32(source + 0xc8) & 0x80000000)) {
                 GameplayEvent event;
-                event.results_repeat = true;
+                event.menu_repeat = true;
                 event.repeat_movie = source;
                 event.repeat_index = index;
                 self.publish(event);

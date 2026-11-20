@@ -116,6 +116,24 @@ int main(int argc, char **argv) {
         put(0x8000, 2);
         check(reader.selector_input_active(fake, 0x4000),
               "dialog choices retain their own pending lifecycle during handoff");
+        put(0x8028, 0xfffffffe);
+        put(0x8000, 1);
+        memcpy(data.data() + 0x9120, "m_decide", 9);
+        check(!reader.selector_input_active(fake, 0x4000),
+              "confirmed action cannot revive its retained child selector");
+        data[0x813c] = 0;
+        check(reader.selector_input_active(fake, 0x4000),
+              "cancelled decision restores delegated menu input");
+        memcpy(data.data() + 0x9120, "m_closeOperation", 17);
+        put(0x9030, 0x9160);
+        memcpy(data.data() + 0x9160, "m_proc", 7);
+        boolSlot(0x8148, 0x9030, false);
+        put(0x8100, 3);
+        check(!reader.selector_input_active(fake, 0x4000),
+              "disabled pause owner suppresses child speech during exit");
+        data[0x811c] = 1;
+        check(reader.selector_input_active(fake, 0x4000),
+              "reactivated pause owner allows normal return announcements");
         Menu status;
         status.message = true;
         status.cursor = 0;
@@ -213,14 +231,14 @@ int main(int argc, char **argv) {
         result.summary = "Overall rank B. Battle points: 6000 points. Rank A.";
         result.cursor = 0;
         result.items = {{"Next", "Continue", true}, {"Return", "", true}};
-        check(results_repeat_text({result}, 50) == describe(result, true, true),
+        check(menu_repeat_text({result}, 50) == describe(result, true, true),
               "result repeat includes summary and selected choice");
         result.cursor = 1;
-        check(results_repeat_text({result}, 50).find("Overall rank B") != std::string::npos &&
-                  results_repeat_text({result}, 50).find("Return") != std::string::npos,
+        check(menu_repeat_text({result}, 50).find("Overall rank B") != std::string::npos &&
+                  menu_repeat_text({result}, 50).find("Return") != std::string::npos,
               "result repeat retains scores after selector navigation");
         result.pending = true;
-        check(results_repeat_text({result}, 50).empty(), "result repeat waits for finished scores");
+        check(menu_repeat_text({result}, 50).empty(), "result repeat waits for finished scores");
         result.pending = false;
         Menu breakdown;
         breakdown.movie = 50;
@@ -228,14 +246,23 @@ int main(int argc, char **argv) {
         breakdown.message = breakdown.readout = true;
         breakdown.cursor = 0;
         breakdown.items = {{"Battle point breakdown. Shots: 10, 50 points.", "", true}};
-        check(results_repeat_text({breakdown}, 50) == breakdown.items[0].label,
+        check(menu_repeat_text({breakdown}, 50) == breakdown.items[0].label,
               "detail repeat reads the currently active breakdown");
-        check(results_repeat_text({menu}, 50).empty() && results_repeat_text({result}, 999).empty(),
+        check(menu_repeat_text({menu}, 50).empty() && menu_repeat_text({result}, 999).empty(),
               "repeat does not narrate another screen or movie");
         auto ordinary = menu;
         ordinary.movie = 50;
-        check(results_repeat_text({ordinary}, 50).empty(),
+        check(menu_repeat_text({ordinary}, 50).empty(),
               "ordinary menus in the same movie do not acquire a results repeat action");
+        Menu episode = result;
+        episode.summary = "An episode introduction.";
+        episode.repeat_text = episode.summary;
+        episode.items = {{"Play", "Start episode.", true}, {"Record", "View ranks.", true}};
+        check(menu_repeat_text({episode}, 50) == episode.summary,
+              "episode repeat reads the introduction separately from the selected action");
+        episode.pending = true;
+        check(menu_repeat_text({episode}, 50).empty(),
+              "episode repeat stays silent during an unfinished transition");
         if (argc > 1 && std::string_view(argv[1]).starts_with("--profile=")) {
             selectedProfile = profile_named(std::string_view(argv[1]).substr(10));
             check(selectedProfile != nullptr, "known snapshot profile");

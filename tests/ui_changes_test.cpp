@@ -49,7 +49,9 @@ int main() {
     require(!assignment.relevant, "ignore animation repeat counter");
     require(!a11y::ui_after_assignment(read, assignment), "irrelevant mutation stays quiet");
     require(a11y::narrated_member("tl_opend") && a11y::narrated_member("m_param") &&
-                a11y::narrated_member("m_pageNow") && a11y::narrated_member("m_gameDiffHelp"),
+                a11y::narrated_member("m_pageNow") && a11y::narrated_member("m_gameDiffHelp") &&
+                a11y::narrated_member("m2on") && a11y::narrated_member("m2rows") &&
+                a11y::narrated_member("m2active") && a11y::narrated_member("m2type"),
             "dialog, collection, page-change, and prompt-phase fields");
     memory[0x1018] = 3;
     word(0x1020, 0x3ff00000);

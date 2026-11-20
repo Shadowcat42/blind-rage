@@ -24,7 +24,8 @@ inline bool narrated_member(std::string_view name) noexcept {
         "m_pageItemMax",  "m_gameDiffHelp", "tl_opend",     "tl_type",  "Title",    "Text",
         "Label",          "Name",           "Help",         "HelpText", "Locked",   "Get",
         "bActive",        "Inst",           "InstName",     "Sel",      "_visible", "text",
-        "htmlText"};
+        "htmlText",       "m2on",           "m2rows",       "m2active", "m2type",   "m2hoverHelp",
+        "m_data",         "m_select",       "m_epCursor",   "m_state",  "m_proc",   "m_decide"};
     for (auto field : fields)
         if (field == name)
             return true;

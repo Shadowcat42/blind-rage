@@ -4,6 +4,7 @@
 #include <array>
 #include <bit>
 #include <cmath>
+#include <cctype>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -134,7 +135,7 @@ struct Menu {
     bool settings = false, pending = false;
     uint32_t selection_key{}, collection_count{};
     int collection_position = -1;
-    std::string summary;
+    std::string summary, repeat_text;
     bool readout = false;
     bool operator==(const Menu &) const = default;
 };
@@ -185,6 +186,9 @@ inline int collection_grid_index(const Value *cursor, const Value *page, const V
 class Reader {
   public:
     explicit Reader(ReaderLayout layout = disc_profile.layout) : layout_(layout) {}
+    void button_labels(std::function<std::string(std::string_view)> labels) {
+        button_labels_ = std::move(labels);
+    }
     const ReaderLayout &layout() const {
         return layout_;
     }
@@ -386,6 +390,16 @@ class Reader {
             // difficulty/confirmation handoff. Its help phase explicitly owns input;
             // ordinary m_input flags alone are unreliable on delegated controllers.
             auto help = get(fields, "m_gameDiffHelp"), input = get(fields, "m_input");
+            // These owners gate their entire input handler on m_input. Their
+            // retained child selectors must not revive while the owner exits.
+            const bool gatedOwner = (get(fields, "m_closeOperation") && get(fields, "m_proc")) ||
+                                    (get(fields, "m_instBar") && get(fields, "m_data"));
+            if (gatedOwner && input && input->type == 2 && !input->boolean)
+                blocked = true;
+            auto decided = get(fields, "m_decide");
+            if (decided && decided->type == 2 && decided->boolean && input && input->type == 2 &&
+                !input->boolean)
+                blocked = true;
             if (help && help->type == 2 && help->boolean && input && input->type == 2 &&
                 !input->boolean)
                 blocked = true;
@@ -604,11 +618,124 @@ class Reader {
                         !visible(m, c))
                         continue;
                     auto fields = members(m, m.u32(c + 0x1c8));
+                    auto controlsActive = get(fields, "m2active"),
+                         controlsForm = get(fields, "m2op");
+                    if (controlsActive && controlsActive->type == 2 && controlsActive->boolean &&
+                        controlsForm && controlsForm->type == 2 && controlsForm->boolean) {
+                        Menu controls;
+                        controls.movie = movie.p;
+                        controls.selector = c;
+                        controls.cursor = 0;
+                        controls.message = controls.readout = true;
+                        std::string description = "Controls.";
+                        auto type = get(fields, "m2type");
+                        if (type && (type->type == 3 || type->type == 4) &&
+                            std::isfinite(type->number) && type->number >= 0 && type->number <= 3 &&
+                            std::floor(type->number) == type->number) {
+                            constexpr const char *types[]{"Type A.", "Type B.", "Type C.",
+                                                          "Custom."};
+                            description += std::string(" ") + types[size_t(type->number)];
+                        }
+                        unsigned rows = 0;
+                        for (auto child : children(m, c)) {
+                            auto path = character_name(m, child);
+                            auto suffix = path.substr(path.find_last_of('.') + 1);
+                            if (!suffix.starts_with("mcInst_"))
+                                continue;
+                            auto token = suffix.substr(7);
+                            if (token == "Start" || token == "Back")
+                                std::transform(
+                                    token.begin(), token.end(), token.begin(),
+                                    [](unsigned char ch) { return char(std::toupper(ch)); });
+                            if (token != "A" && token != "B" && token != "X" && token != "Y" &&
+                                token != "LB" && token != "RB" && token != "LT" && token != "RT" &&
+                                token != "LS" && token != "RS" && token != "R3" &&
+                                token != "START" && token != "BACK")
+                                continue;
+                            auto labels = text(m, child);
+                            if (labels.empty())
+                                continue;
+                            auto button = button_labels_ ? button_labels_(token) : token;
+                            description += " ";
+                            if (!button.empty())
+                                description += button + ": ";
+                            for (const auto &label : labels)
+                                description += label + ". ";
+                            ++rows;
+                        }
+                        if (rows) {
+                            controls.items.push_back({clean_text(description), "", true});
+                            out.push_back(std::move(controls));
+                        }
+                    }
                     auto cur = get(fields, "m_cursor"), items = get(fields, "m_items");
+                    auto data = get(fields, "m_data"), bar = get(fields, "m_instBar");
+                    auto phase = get(fields, "m_state"), ownerInput = get(fields, "m_input");
+                    if (data && data->type == 6 && bar && bar->type == 7 && ownerInput &&
+                        ownerInput->type == 2 && ownerInput->boolean && phase &&
+                        (phase->type == 3 || phase->type == 4) && phase->number == 0) {
+                        auto selector = m.u32(bar->pointer + 4);
+                        auto barFields = members(m, m.u32(selector + 0x1c8));
+                        auto selection = get(barFields, "m_select"),
+                             cursor = get(barFields, "m_cursor");
+                        if (selection && selection->type == 6 && cursor &&
+                            (cursor->type == 3 || cursor->type == 4)) {
+                            auto count = m.u32(selection->pointer + 0x3c);
+                            auto records = m.u32(data->pointer + 0x3c);
+                            if (count && count <= 256 && records && records <= 256 &&
+                                std::isfinite(cursor->number) && cursor->number >= 0 &&
+                                cursor->number < count &&
+                                std::floor(cursor->number) == cursor->number) {
+                                Menu episodes;
+                                episodes.movie = movie.p;
+                                episodes.selector = selector;
+                                episodes.heading = "Episode Menu";
+                                episodes.cursor = int(cursor->number);
+                                auto indexes = m.u32(selection->pointer + 0x38);
+                                auto entries = m.u32(data->pointer + 0x38);
+                                for (uint32_t i = 0; i < count; ++i) {
+                                    auto value = m.u32(indexes + i * 4);
+                                    auto type = m.u8(value);
+                                    double index = type == 4
+                                                       ? double(int32_t(m.u32(value + 8)))
+                                                       : std::bit_cast<double>(
+                                                             (uint64_t(m.u32(value + 8)) << 32) |
+                                                             m.u32(value + 12));
+                                    if ((type != 3 && type != 4) || !std::isfinite(index) ||
+                                        index < 0 || index >= records || std::floor(index) != index)
+                                        break;
+                                    auto record = m.u32(entries + uint32_t(index) * 4);
+                                    if (m.u8(record) != 6)
+                                        break;
+                                    auto row = members(m, m.u32(record + 4));
+                                    Item item;
+                                    item.label = value_text(m, get(row, "No"));
+                                    auto title = value_text(m, get(row, "Title"));
+                                    if (item.label.empty() || title.empty())
+                                        break;
+                                    item.label += ": " + title;
+                                    auto rank = value_text(m, get(row, "Rank"));
+                                    std::erase(rank, '-');
+                                    if (!rank.empty())
+                                        item.help = "Rank " + rank;
+                                    if (auto open = get(row, "Open"); open && open->type == 2)
+                                        item.enabled = open->boolean;
+                                    episodes.items.push_back(std::move(item));
+                                }
+                                if (episodes.items.size() == count && visible(m, selector))
+                                    out.push_back(std::move(episodes));
+                            }
+                        }
+                    }
                     auto details = get(fields, "m_details"), input = get(fields, "m_input");
+                    auto customActive = get(fields, "m2on"), customRows = get(fields, "m2rows");
+                    const bool customSettings = customActive && customActive->type == 2 &&
+                                                customActive->boolean && customRows &&
+                                                customRows->type == 6;
                     if (details && details->type == 6 && cur &&
-                        (cur->type == 3 || cur->type == 4) && input && input->type == 2 &&
-                        input->boolean && visible(m, c)) {
+                        (cur->type == 3 || cur->type == 4) &&
+                        (customSettings || (input && input->type == 2 && input->boolean)) &&
+                        visible(m, c)) {
                         auto ptr = m.u32(details->pointer + 0x38),
                              count = m.u32(details->pointer + 0x3c);
                         if (count && count < 128 && std::isfinite(cur->number) &&
@@ -625,6 +752,10 @@ class Reader {
                                 settings.heading.erase(0, 7);
                             if (settings.heading.starts_with("Mark2"))
                                 settings.heading.erase(0, 5);
+                            if (settings.heading == "Snd")
+                                settings.heading = "Sound";
+                            if (settings.heading == "Gfx")
+                                settings.heading = "Graphics";
                             auto kids = children(m, c);
                             auto findChild = [&](const std::string &name) {
                                 for (auto child : kids) {
@@ -647,6 +778,22 @@ class Reader {
                                 Item item;
                                 auto title = findChild(value_text(m, get(row, "Title"))),
                                      control = findChild(value_text(m, get(row, "Sel")));
+                                // Recomp settings forms keep their display rows separately from
+                                // the native help records. The title includes the current value.
+                                if (customSettings && m.u32(customRows->pointer + 0x3c) == count) {
+                                    auto rows = m.u32(customRows->pointer + 0x38);
+                                    auto entry = m.u32(rows + i * 4);
+                                    if (m.u8(entry) == 6) {
+                                        auto display = get(members(m, m.u32(entry + 4)), "row");
+                                        if (display && display->type == 7) {
+                                            auto container = m.u32(display->pointer + 4);
+                                            for (auto child : children(m, container))
+                                                if (character_name(m, child).ends_with(
+                                                        ".mcInst_Title"))
+                                                    title = child;
+                                        }
+                                    }
+                                }
                                 for (auto &label : text(m, title)) {
                                     if (!item.label.empty())
                                         item.label += " ";
@@ -703,6 +850,8 @@ class Reader {
                                 if (!valueLabel.empty())
                                     item.label += ", " + valueLabel;
                                 item.help = value_text(m, get(row, "HelpText"));
+                                if (item.help.empty())
+                                    item.help = value_text(m, get(row, "Help"));
                                 settings.items.push_back(std::move(item));
                             }
                             if (settings.items.size() == count &&
@@ -826,6 +975,19 @@ class Reader {
                                 menu.cursor = int(cur->number);
                                 menu.path = character_name(m, c);
                                 menu.heading = heading(class_name(m, movie.p));
+                                if (auto missions = get(fields, "m_missions");
+                                    missions && missions->type == 6) {
+                                    for (auto container : children(m, c))
+                                        for (auto child : children(m, container))
+                                            if (character_name(m, child).ends_with(
+                                                    ".mcInst_Summary"))
+                                                for (const auto &line : text(m, child)) {
+                                                    if (!menu.summary.empty())
+                                                        menu.summary += ' ';
+                                                    menu.summary += line;
+                                                }
+                                    menu.repeat_text = menu.summary;
+                                }
                                 for (uint32_t i = 0; i < count; i++) {
                                     auto v = m.u32(ptr + i * 4);
                                     if (m.u8(v) != 6) {
@@ -1129,6 +1291,8 @@ class Reader {
         const std::string prefix = "BCGFxUI_";
         if (cls.starts_with(prefix))
             cls.erase(0, prefix.size());
+        if (cls == "ChapterMenu")
+            return "Episode Menu";
         std::string out;
         for (size_t i = 0; i < cls.size(); i++) {
             if (cls[i] == '_') {
@@ -1144,6 +1308,7 @@ class Reader {
 
   private:
     ReaderLayout layout_;
+    std::function<std::string(std::string_view)> button_labels_;
     struct Movie {
         uint32_t p, index, cls;
     };
@@ -1165,7 +1330,7 @@ inline void append_phrase(std::string &text, const std::string &phrase) {
 inline std::string menu_context(const Menu &menu) {
     auto key = std::to_string(menu.movie) + ":" + std::to_string(menu.selector);
     if (!menu.summary.empty())
-        key += "|results:" + menu.summary;
+        key += "|summary:" + menu.summary;
     // A single dialog object is reused for different questions. Selection changes
     // share context; a new question must announce its prompt again.
     if (menu.modal && !menu.message)
@@ -1235,10 +1400,13 @@ inline std::string describe(const Menu &menu, bool heading, bool help) {
         s += ". " + item.help;
     return s;
 }
-inline std::string results_repeat_text(const std::vector<Menu> &menus, uint32_t movie) {
+inline std::string menu_repeat_text(const std::vector<Menu> &menus, uint32_t movie) {
     for (auto it = menus.rbegin(); it != menus.rend(); ++it)
-        if (it->movie == movie && (it->readout || !it->summary.empty()))
-            return describe(*it, true, true);
+        if (it->movie == movie && (it->readout || !it->summary.empty())) {
+            if (it->pending)
+                return {};
+            return it->repeat_text.empty() ? describe(*it, true, true) : it->repeat_text;
+        }
     return {};
 }
 }

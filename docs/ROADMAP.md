@@ -17,3 +17,5 @@
 - Add versioned adapters and fingerprints for additional recomp versions.
 
 Full gameplay accessibility remains a project goal; the text reader is a preliminary implementation. Keep source, builds, and releases independent of game/recomp distribution.
+
+- Standardize mod-only controller commands on Select/Back plus another button. Keep the current contextual buttons until that input scheme is implemented and tested.

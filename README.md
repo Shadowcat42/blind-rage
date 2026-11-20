@@ -29,6 +29,7 @@ When an option asks to restart the game, an active Blind Rage session now restar
 | Ctrl+Alt+F1 | Test speech |
 | Back/Select during gameplay | Read Health/Burst status; cutscene skipping is preserved |
 | Square (PlayStation) / X (Xbox), on results | Repeat the current results summary or battle-point breakdown |
+| Square (PlayStation) / X (Xbox), on episode Play/Record | Repeat the episode introduction |
 | Ctrl+Alt+F2 | Repeat current item |
 | Ctrl+Alt+F3 | Stop speech |
 | Ctrl+Alt+F4 | Read current Health/Burst status (gameplay prototype) |
