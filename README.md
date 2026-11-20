@@ -27,6 +27,7 @@ The old `AsurasWrathAccessible.exe` compatibility launcher can be deleted. Curre
 | Ctrl+Alt+F1 | Test speech |
 | Ctrl+Alt+F2 | Repeat current item |
 | Ctrl+Alt+F3 | Stop speech |
+| Ctrl+Alt+F4 | Read current Health/Burst status (gameplay prototype) |
 | Ctrl+Alt+F5 | Toggle narration |
 | Ctrl+Alt+F8 | Save local UI diagnostics |
 
@@ -42,9 +43,11 @@ This experimental branch replaces recurring menu and registry polling with share
 
 The menu implementation has passed synthetic, private replay, and user-led live checks. Custom key binding, pause menus, QTEs, and combat are not claimed as fully accessible. See the [roadmap](docs/ROADMAP.md) for planned gameplay work.
 
-The `experiment/gameplay-text-reader` branch adds a preliminary subtitle/tutorial reader. It observes resolved text delivery and tutorial show/clear calls, preserving remapped button names. Subtitle and tutorial narration default to enabled, including existing installations without new settings. Add `[gameplay]` settings `subtitles=0` or `tutorials=0` to `mods/accessibility/dist/accessibility.ini` to disable either. Gameplay speech queues by default (`interrupt=0`); it does not stop NVDA when text disappears. Menu selection announcements retain their existing behavior.
+The `experiment/gameplay-text-reader` branch adds subtitle/tutorial narration and the first Episode 1 gameplay prototype. It follows the recomp's effective Xbox, PlayStation or keyboard display and current remapped button labels. Subtitle and tutorial narration default to enabled, including existing installations without new settings. Add `[gameplay]` settings `subtitles=0` or `tutorials=0` to `mods/accessibility/dist/accessibility.ini` to disable either. Text and status speech queue by default (`interrupt=0`); urgent new QTE instructions may interrupt (`qte_interrupt=1`). Disappearing cues do not stop NVDA.
 
-This first gameplay-text build has offline validation only. Text rendered as images, icon-only QTEs, and separate conversation/interlude presentation routes are not covered. See [prototype behavior and limits](docs/GAMEPLAY_TEXT_READER.md) and [QTE research](docs/QTE_INPUT_RESEARCH.md). No gameplay test is required to install this preliminary build.
+Shared QTE readers cover resolved presses, mashes, holds, grouped stick commands and rotations, plus the separate Synchronic input window. Health/Burst status is available on request, with low-health warnings and native Burst-button readiness. The optional shooting aid widens the game's acquisition cone while retaining its eligibility, range, occlusion, lock limits, homing and manual firing. Defaults are `qtes=1`, `status_warnings=1`, `shooting_assist=1` and `shooting_cone_degrees=45`; changes take effect after restarting the mod/game.
+
+This build has offline validation and is ready for the first user-led gameplay test. Live coverage, speech latency and complete Episode 1 playability have not yet been established. Start the mod before entering gameplay. See the [test instructions](docs/EPISODE_1_TESTING.md), [implementation/evidence](docs/EPISODE_1_GROUNDWORK.md), [text-reader limits](docs/GAMEPLAY_TEXT_READER.md) and [QTE research](docs/QTE_INPUT_RESEARCH.md). Image-only text, other conversation/interlude routes, later combat assistance and encounter-specific exceptions remain future work.
 
 ## Build from source
 

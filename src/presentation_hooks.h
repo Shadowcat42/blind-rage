@@ -30,6 +30,13 @@ class PresentationHooks {
    uint8_t* base;
    bool operator()(uint32_t at,void* out,size_t n) const {if(!at||uint64_t(at)+n>0x100000000ull)return false;SIZE_T got{};return ReadProcessMemory(GetCurrentProcess(),base+at,out,n,&got)&&got==n;}
   };
+  struct Staged {PresentationQueue queue;uint64_t epoch{};};
+  static Staged& staged(){static thread_local Staged value;return value;}
+  static void flush(void* context){
+   auto& self=*static_cast<PresentationHooks*>(context);auto& local=staged();bool overflow=false;auto events=local.queue.take(overflow);
+   if(!self.enabled_.load()||local.epoch!=self.epoch_.load())return;
+   for(const auto& event:events)self.queue_.push(event);if(overflow)self.queue_.mark_overflow();if(overflow||!events.empty())SetEvent(self.event_);
+  }
   template<class Read> static bool name(Read&& read,uint32_t globals,uint32_t index,std::array<char,64>& text){
    const auto names=ui_word(read,globals),count=ui_word(read,globals+4);if(!names||index>=count||count>250000)return false;
    const auto entry=ui_word(read,names+index*4);if(!entry||!read(entry+8,text.data(),text.size()))return false;
@@ -53,7 +60,13 @@ class PresentationHooks {
    auto epoch=self.epoch_.load();Read read{base};auto frame=ui_argument(context,4);
    PresentationEvent event;bool captured=capture_presentation(read,frame,self.classify(read,frame),event);event.tick=GetTickCount64();
    self.original_[I](context,base);
-   if(captured&&self.enabled_.load()&&epoch==self.epoch_.load()){self.queue_.push(event);++self.captured_;SetEvent(self.event_);}
+   static thread_local PresentationFilter filter;
+   if(captured&&self.enabled_.load()&&epoch==self.epoch_.load()&&filter.changed(event,epoch)){
+    event.order=++cue_order;if(event.kind>=PresentationKind::button_create&&event.kind<=PresentationKind::button_end)event.revision=++button_revision;
+    ++self.captured_;
+    if(cue_transaction.depth){auto& local=staged();if(local.epoch!=epoch){local.queue.clear();local.epoch=epoch;}local.queue.push(event);defer_cue_flush(flush,&self);}
+    else{self.queue_.push(event);SetEvent(self.event_);}
+   }
   }
   static void object_call(void* c,uint8_t* b){observe<0>(c,b);}
   static void movie_call(void* c,uint8_t* b){observe<1>(c,b);}

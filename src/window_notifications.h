@@ -29,8 +29,8 @@ class WindowNotifications {
   static void CALLBACK focus(HWINEVENTHOOK,DWORD,HWND,LONG,LONG,DWORD,DWORD){auto thread=thread_.load();if(thread)PostThreadMessageW(thread,focus_message,0,0);}
   inline static std::atomic<DWORD> thread_{};
   HWINEVENTHOOK hook_{};
-  std::array<int,6> keys_{};
-  std::array<bool,6> registered_{};
+  std::array<int,7> keys_{};
+  std::array<bool,7> registered_{};
   bool focused_{};
 };
 }

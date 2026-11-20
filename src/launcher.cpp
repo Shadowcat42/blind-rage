@@ -11,7 +11,7 @@ int wmain(int argc,wchar_t** argv){try{
   else if(arg==L"--command"&&i+1<argc)command=argv[++i];
   else if(arg==L"--check")checkOnly=true;
   else if(arg==L"--build"&&i+1<argc){auto name=utf8(argv[++i]);requested=name=="auto"?nullptr:profile_named(name);if(name!="auto"&&!requested)throw std::runtime_error("Unknown build; choose auto, disc, or updated");}
-  else throw std::runtime_error("Usage: BlindRage.exe [--build auto|disc|updated] [--check] [--attach PID] [--command test|repeat|stop|mute|dump|shutdown]");
+  else throw std::runtime_error("Usage: BlindRage.exe [--build auto|disc|updated] [--check] [--attach PID] [--command test|repeat|stop|mute|dump|shutdown|status]");
  }
  auto installation_build=[&](const fs::path& path)->const BuildProfile*{for(auto profile:build_profiles){auto expected=root/profile->directory/L"asura_wrath_recomp.exe";if(fs::exists(expected)&&fs::equivalent(path,expected))return profile;}return nullptr;};
  if(pid){auto module=remote_module(pid,L"asura_wrath_recomp.exe");if(module.path.empty()||!(selected=installation_build(module.path)))throw std::runtime_error("Target is not a game process from this installation");bin=module.path.parent_path();}

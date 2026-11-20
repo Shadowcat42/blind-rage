@@ -12,9 +12,9 @@ int main(){try{
  check(VirtualAlloc(base+0x1000,0x10000,MEM_COMMIT,PAGE_READWRITE),"commit fixture low pages");
  check(VirtualAlloc(base+0x832a9000,0x2000,MEM_COMMIT,PAGE_READWRITE),"commit fixture globals");
  auto word=[&](uint32_t at,uint32_t value){for(unsigned i=0;i<4;i++)base[at+i]=uint8_t(value>>(24-8*i));};
- word(disc_profile.layout.names_global,0x4000);word(disc_profile.layout.names_global+4,4);
- const char* names[]={"None","Function","CallStartText","BCGFxMovieText"};
- for(unsigned i=0;i<4;i++){word(0x4000+i*4,0x5000+i*0x100);std::memcpy(base+0x5008+i*0x100,names[i],std::strlen(names[i])+1);}
+ word(disc_profile.layout.names_global,0x4000);word(disc_profile.layout.names_global+4,6);
+ const char* names[]={"None","Function","CallStartText","BCGFxMovieText","CallSetNextHealth","BCGFxUI_Gauge"};
+ for(unsigned i=0;i<6;i++){word(0x4000+i*4,0x5000+i*0x100);std::memcpy(base+0x5008+i*0x100,names[i],std::strlen(names[i])+1);}
  word(0x1028,0x1100);word(0x102c,2);word(0x112c,3);
  word(0x2010,0x1000);word(0x2014,0x3000);word(0x201c,0x6000);word(0x30c8,0x80000000);word(0x3020,5);
  auto string=[&](uint32_t header,uint32_t at,const char* text){auto n=uint32_t(std::strlen(text));word(header,at);word(header+4,n+1);word(header+8,n+1);for(unsigned i=0;i<n;i++)base[at+i*2+1]=uint8_t(text[i]);};
@@ -30,6 +30,13 @@ int main(){try{
  call_movie(context.data(),base);check(context[0]==0x888&&source.take(overflow).size()==1,"movie-player boundary shares capture behavior");
  word(0x102c,1);call_object(context.data(),base);check(source.take(overflow).empty(),"metadata identity changes invalidate cached classification");
  word(0x102c,2);source.capture(false);call_object(context.data(),base);check(source.take(overflow).empty()&&context[0]==0x777,"disabled capture preserves original behavior");
- source.capture(true);check(source.take(overflow).empty(),"reinitialization starts with an empty queue");source.capture(false);VirtualFree(base,0,MEM_RELEASE);
+ source.capture(true);check(source.take(overflow).empty(),"reinitialization starts with an empty queue");
+ word(0x102c,4);word(0x112c,5);word(0x31e0,0x80000000);word(0x6000,std::bit_cast<uint32_t>(.5f));
+ for(unsigned i=0;i<1000;++i)call_object(context.data(),base);
+ batch=source.take(overflow);check(!overflow&&batch.size()==1&&batch[0].kind==PresentationKind::health&&batch[0].value==.5f&&batch[0].flag,"actual detour coalesces unchanged gauge calls before queueing");
+ source.capture(true);call_object(context.data(),base);check(source.take(overflow).size()==1,"resynchronization republishes unchanged current gauge state");
+ source.capture(true);{CueTransaction transaction;call_object(context.data(),base);check(source.take(overflow).empty(),"action transaction keeps intermediate presentation private");}check(source.take(overflow).size()==1,"action return commits its presentation batch");
+ source.capture(true);{CueTransaction transaction;call_object(context.data(),base);source.capture(false);}check(source.take(overflow).empty(),"shutdown discards staged events from the old capture epoch");
+ source.capture(false);VirtualFree(base,0,MEM_RELEASE);
  std::cout<<"Presentation hook integration tests passed.\n";return 0;
 }catch(const std::exception& e){std::cerr<<e.what()<<"\n";return 1;}}

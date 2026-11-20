@@ -32,6 +32,16 @@ try {
  if($LASTEXITCODE){throw 'Build profile test compilation failed'}
  & $compiler @common 'tests/gameplay_text_test.cpp' '-o' 'build/hooks/gameplay_text_test.exe'
  if($LASTEXITCODE){throw 'Gameplay text test compilation failed'}
+ & $compiler @common 'tests/recomp_prompts_test.cpp' '-o' 'build/hooks/recomp_prompts_test.exe'
+ if($LASTEXITCODE){throw 'Recomp prompt test compilation failed'}
+ & $compiler @common 'tests/gameplay_status_test.cpp' '-o' 'build/hooks/gameplay_status_test.exe'
+ if($LASTEXITCODE){throw 'Gameplay status test compilation failed'}
+ & $compiler @common 'tests/qte_reader_test.cpp' '-o' 'build/hooks/qte_reader_test.exe'
+ if($LASTEXITCODE){throw 'QTE reader test compilation failed'}
+ & $compiler @common 'tests/synchronic_reader_test.cpp' '-o' 'build/hooks/synchronic_reader_test.exe'
+ if($LASTEXITCODE){throw 'Synchronic reader test compilation failed'}
+ & $compiler @common "-I$hookRoot/include" 'tests/gameplay_hooks_test.cpp' @hookObjects '-o' 'build/hooks/gameplay_hooks_test.exe'
+ if($LASTEXITCODE){throw 'Gameplay hook test compilation failed'}
  & $compiler @common "-I$hookRoot/include" 'tests/presentation_hooks_test.cpp' @hookObjects '-o' 'build/hooks/presentation_hooks_test.exe' '-luser32'
  if($LASTEXITCODE){throw 'Presentation hook test compilation failed'}
  & $compiler @common "-I$hookRoot/include" '-shared' 'src/dll.cpp' @hookObjects '-o' 'dist/asura_accessibility.dll' '-lbcrypt' '-lole32' '-luser32'
@@ -57,6 +67,11 @@ try {
   & ./build/speech/diagnostics_test.exe; if($LASTEXITCODE){throw 'Diagnostic tests failed'}
   & ./build/hooks/build_profile_test.exe; if($LASTEXITCODE){throw 'Build profile tests failed'}
   & ./build/hooks/gameplay_text_test.exe; if($LASTEXITCODE){throw 'Gameplay text tests failed'}
+  & ./build/hooks/recomp_prompts_test.exe; if($LASTEXITCODE){throw 'Recomp prompt tests failed'}
+  & ./build/hooks/gameplay_status_test.exe; if($LASTEXITCODE){throw 'Gameplay status tests failed'}
+  & ./build/hooks/qte_reader_test.exe; if($LASTEXITCODE){throw 'QTE reader tests failed'}
+  & ./build/hooks/synchronic_reader_test.exe; if($LASTEXITCODE){throw 'Synchronic reader tests failed'}
+  & ./build/hooks/gameplay_hooks_test.exe; if($LASTEXITCODE){throw 'Gameplay hook tests failed'}
   & ./build/hooks/presentation_hooks_test.exe; if($LASTEXITCODE){throw 'Presentation hook tests failed'}
  }
  if(!$NoInstall){

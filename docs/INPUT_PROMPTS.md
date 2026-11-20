@@ -1,0 +1,21 @@
+# Following the recomp's displayed inputs
+
+The gameplay text reader now resolves button glyphs through a shared label adapter. It reads the applied Xbox/PlayStation choice and the effective keyboard-prompt flag in the fingerprinted executable. It does not infer the device from Windows input or independently choose a controller type. Both supported Mark2 executables place these flags at host RVAs `0x04e83cb1` and `0x04e83cc8`, respectively.
+
+Offline native inspection traced the first flag from the recomp's startup controller-icon selection to its movie/icon replacement paths. The second is the value published by the keyboard-prompt rendering path after evaluating `buttons`, `show_keys`, keyboard/mouse availability, the most recent input device and temporary prompt forcing. Reading the flag preserves the recomp's actual behavior when a setting needs a restart. Reading the INI alone would not establish which icons were applied.
+
+For keyboard prompts, the adapter calls the runtime's exported `rex::input::mnk::PromptKeyName(int)`. This uses the current bindings and gameplay context, including the optional rail-shooting attack/fire swap. The adapter only expands abbreviations such as LMB and RMB for speech. It does not replace a user's bindings with a default table.
+
+The runtime's prompt-kind IDs differ from the game's command enums: A/B/X/Y are 1/2/3/4, LB/RB are 5/6, LT/RT are 7/8, Start is 12 and Back is 13. The physical ordering was cross-checked against the runtime's keyboard-to-XInput button construction. In particular, swapping X and Y or using the game's trigger/shoulder enum order here would give incorrect instructions.
+
+This mod and the runtime use different C++ standard-library ABIs. A small explicit 32-byte MSVC string representation receives the export's result; the runtime's exported string destructor releases it. No mod `std::string` crosses the library boundary. Isolated probes loaded each supported runtime in a separate process and successfully read and destroyed all thirteen prompt-kind results. Those probes did not launch the game, read a live game process, send input, focus a window or invoke speech.
+
+Keyboard stick directions use the runtime's exported `GetBindValue(std::string_view)` and the current directional bindings. The adapter uses an explicit 16-byte MSVC view representation, verified in isolated probes for both runtimes. Some unset default bindings are absent from this export's map; the adapter only reconstructs their defaults when the runtime itself reports the complete `WASD` or `ARROWS` default set. An empty custom binding does not invent a default.
+
+Controller rotations use the verified left/right stick and clockwise/counterclockwise meanings. Keyboard/mouse rotations follow the runtime's mouse-emulation setting/prompt; with mouse emulation disabled, narration supplies the full circular sequence of currently bound directional keys. The paired rotation path does not claim both stick channels must finish: its judge accepts a completed channel. Diagonal command 42 is left down-right and becomes a simultaneous key chord in keyboard mode.
+
+Tutorials retain configuration-neutral button tokens and resolve them when spoken or repeated. A prepared tutorial cannot retain an old Xbox label after the effective device changes. Cosmetic markup is normalized independently, preserving text deduplication. QTEs resolve the movie's final physical icon tags, so game action remapping is applied before the mod translates the device label. Synchronic explicitly uses physical Y, independently of the remapped Heavy Attack action.
+
+Synthetic tests cover effective keyboard precedence, PlayStation face/shoulder/trigger positions, fresh bindings, distinct X/Y prompt kinds, native string ownership, heap-backed labels, remapped direction/rotation sequences, invalid flags, deferred tutorial labels and cosmetic deduplication. Actual displayed icons, automatic switching and mouse/keyboard gesture behavior still need the planned user-led gameplay check.
+
+Back/Select is assigned to cinematic skipping by the game. It is a candidate for a contextual combat/shooting status request, not an unconditionally unused button. That binding must preserve cinematic and QTE input behavior.
