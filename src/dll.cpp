@@ -3,6 +3,7 @@
 #include "speech.h"
 #include "ui_hook_source.h"
 #include "window_notifications.h"
+#include "diagnostics.h"
 #include <atomic>
 #include <mutex>
 #include <objbase.h>
@@ -11,12 +12,15 @@ static HMODULE self;
 static std::mutex lifecycle;
 static HANDLE worker;
 static std::atomic<bool> stopping;
+static std::atomic<bool> diagnosticsStarted;
 struct Page {std::array<unsigned char,4096> bytes{};bool valid{};};
 struct CaptureGuard {UiHookSource& source;~CaptureGuard(){source.capture(false);}};
 static DWORD WINAPI run(void*) {
  try {
   auto dir=module_path(self).parent_path();auto bin=module_path().parent_path();auto logs=bin.parent_path()/L"userdata"/L"accessibility";fs::create_directories(logs);
+  DiagnosticCleanup cleanup;if(!diagnosticsStarted.exchange(true))cleanup=clear_previous_diagnostics(logs);
   std::ofstream log(logs/L"accessibility.log",std::ios::app);auto write=[&](const std::string& s){log<<GetTickCount64()<<" "<<s<<std::endl;};
+  write("SESSION pid="+std::to_string(GetCurrentProcessId())+" previous_diagnostics_removed="+std::to_string(cleanup.removed)+" cleanup_failures="+std::to_string(cleanup.failed));
   std::string error;if(!supported(bin,error)){write(error);return 1;}
   auto runtime=GetModuleHandleW(L"rexruntime.dll");
   auto instance=reinterpret_cast<void*(*)()>(GetProcAddress(runtime,"?instance@Runtime@rex@@SAPEAV12@XZ"));

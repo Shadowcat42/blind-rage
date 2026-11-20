@@ -23,9 +23,11 @@ class Speech {
    if(!backend_||s.empty())return false;
    auto err=prism_backend_speak_(backend_,s.c_str(),true);
    if(err==PRISM_ERROR_BACKEND_NOT_AVAILABLE){prism_backend_free_(backend_);backend_=prism_registry_create_best_(ctx_);if(backend_)err=prism_backend_speak_(backend_,s.c_str(),true);}
-   if(err!=PRISM_OK)log_(std::string("Speech failed: ")+prism_error_string_(err));return err==PRISM_OK;
+   if(err!=PRISM_OK)log_(std::string("Speech failed: ")+prism_error_string_(err)+"; text="+s);
+   else log_(std::string("SPEAK [")+prism_backend_name_(backend_)+"] "+s);
+   return err==PRISM_OK;
   }
-  void stop(){if(backend_)prism_backend_stop_(backend_);}
+  void stop(){if(backend_){auto result=prism_backend_stop_(backend_);log_(std::string("SPEECH_STOP [")+prism_backend_name_(backend_)+"] result="+std::to_string(result));}}
   void close(){if(backend_){prism_backend_free_(backend_);backend_=nullptr;}if(ctx_){prism_shutdown_(ctx_);ctx_=nullptr;}if(library_){FreeLibrary(library_);library_=nullptr;}}
   ~Speech(){close();}
  private:
