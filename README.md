@@ -6,7 +6,7 @@ This is an experimental, independently developed mod. **Users must obtain the re
 
 ## Compatibility
 
-Currently targets the **Mark2 disc build 2026.11.01.1627** of the [PC recompilation](https://github.com/omar2300/asuras-wrath-pc). The launcher verifies executable, runtime, and renderer fingerprints. Other builds need separate validation.
+Targets the **Mark2 2026.11.01.1627 disc and title-update builds** of the [PC recompilation](https://github.com/omar2300/asuras-wrath-pc). Both use one reader with verified build profiles. The launcher checks executable, runtime, and renderer fingerprints; the updated profile also checks the installed `game/default.xexp` patch. Other builds need separate validation.
 
 Windows x64 is required. Start NVDA before the mod to use its voice; [Prism](https://github.com/ethindp/prism) provides other speech backends and fallback engines.
 
@@ -16,7 +16,11 @@ Windows x64 is required. Start NVDA before the mod to use its voice; [Prism](htt
 2. Extract a Blind Rage mod package into the installation root. It adds `BlindRage.exe` and files under `mods/accessibility/dist`.
 3. Run **BlindRage.exe**. The ordinary recomp launcher does not load the mod.
 
-The existing `AsurasWrathAccessible.exe` launcher remains usable in the development installation. The recomp updater can change binaries and make the mod incompatible; Blind Rage does not update or replace them.
+Automatic mode attaches to a recognized game already running from this installation. Otherwise, it follows the installer's `userdata/install.txt`: an installed title update selects `bin`, and a disc-only installation selects `bin_disc`. An unsupported updated installation reports an error rather than silently using the disc build.
+
+Use `BlindRage.exe --build disc` or `BlindRage.exe --build updated` to choose explicitly. `BlindRage.exe --check` verifies automatic selection without launching or injecting; add `--build disc` or `--build updated` to check either profile. Close a running game before switching builds.
+
+The old `AsurasWrathAccessible.exe` compatibility launcher can be deleted. Current builds and installations provide only `BlindRage.exe`. The recomp updater can change binaries and make the mod incompatible; Blind Rage does not update or replace them.
 
 | Shortcut while the game has focus | Action |
 | --- | --- |
@@ -26,15 +30,17 @@ The existing `AsurasWrathAccessible.exe` launcher remains usable in the developm
 | Ctrl+Alt+F5 | Toggle narration |
 | Ctrl+Alt+F8 | Save local UI diagnostics |
 
-Configure virtual-key codes in `mods/accessibility/dist/accessibility.ini`; 0 disables a chord. Restart to reload the file. Chords are observed, not consumed, so the game may also receive the function key.
+Configure virtual-key codes in `mods/accessibility/dist/accessibility.ini`; 0 disables a chord. Restart to reload the file. On this experimental branch, Windows hotkeys are registered while the game has focus and released when it loses focus. A conflicting shortcut may be unavailable; named launcher commands remain usable.
 
 ## Current behavior
 
 One shared reader handles live Scaleform menus, settings rows, collection entries and common dialogs. It reads actual selection state, labels, values, effect descriptions, and unlock requirements. Confirmations should announce the prompt and starting choice, then only the selected choice when navigating. Acquired collection totals are entry-only.
 
-The prototype reads bounded guest-memory snapshots and polls for changes; it does not count navigation keys. It currently checks menu state about 30 times per second and refreshes object discovery once per second. Shared event hooks are a future investigation.
+Collection grids resolve their selected record from the list cursor and page, including Achievements, CG Art, Illustrations, and Interludes & Movies. Grid position distinguishes locked entries with identical hidden labels. Gauges retain their selected-name/effect narration without added position announcements.
 
-The latest initial-selection fix passes synthetic and private snapshot tests and still needs live confirmation. Coverage remains under active testing. Custom key binding, pause menus, QTEs, and combat are not claimed as fully accessible. See the [roadmap](docs/ROADMAP.md) for planned gameplay work.
+This experimental branch replaces recurring menu and registry polling with shared native hooks for ActionScript assignment, movie open/close, text changes, display flag changes, and title status assignments. Windows notifications handle foreground changes and shortcuts. The speech worker waits between events; a mutation starts bounded settling checks before narration. It reads bounded guest-memory snapshots and does not count navigation keys. Live event coverage is still being validated; see [hook research](docs/HOOK_RESEARCH.md).
+
+The current event-driven build passes synthetic and private snapshot tests. The paged Extras extension and New Game handoff polish still need a live pass. Coverage remains under active testing. Custom key binding, pause menus, QTEs, and combat are not claimed as fully accessible. See the [roadmap](docs/ROADMAP.md) for planned gameplay work.
 
 ## Build from source
 
@@ -44,7 +50,7 @@ The latest initial-selection fix passes synthetic and private snapshot tests and
 ./package.ps1
 ```
 
-Bootstrap downloads only checksum-pinned official LLVM-MinGW and Prism dependencies. A standalone checkout needs no game files and writes output inside itself. CI runs synthetic tests without game data.
+Bootstrap downloads checksum-pinned official LLVM-MinGW, Prism, and MinHook dependencies. A standalone checkout needs no game files and writes output inside itself. CI runs synthetic tests without game data. `./build.ps1 -Test -NoInstall` skips the installer; it still replaces files in the local `dist` directory, so close any game using those files first.
 
 Install a locally built mod with:
 
@@ -58,7 +64,11 @@ When developing directly in an installation's `mods/accessibility` folder, the b
 
 ## Diagnostics and contributions
 
-Logs and timestamped UI dumps stay locally under the installation's `userdata/accessibility`. Dumps can contain game memory and must not be committed or automatically uploaded. Optional private replay uses `dist/reader_test.exe research/snapshot-name`; snapshots are not required for CI and are excluded from Git.
+Logs and timestamped UI dumps stay locally under the installation's `userdata/accessibility`. Dumps can contain game memory and must not be committed or automatically uploaded. Optional private replay uses `dist/reader_test.exe research/snapshot-name`, or `dist/reader_test.exe --profile=updated research/snapshot-name` for title-update captures. Snapshots are not required for CI and are excluded from Git.
+
+Each game process starts with a fresh mod log and removes prior `dump-<number>.txt` and `.pages` captures from that directory. Copy captures you want to retain elsewhere before restarting. Restarting the mod worker within the same game process preserves its session files. Unrelated files and subdirectories are retained.
+
+`SPEAK [backend]` records every utterance accepted by Prism, including repeats, speech tests, and narration status messages. Failed requests include their text; stop requests are recorded too. This records Blind Rage's output, rather than NVDA speech from other applications, and cannot prove that an utterance finished before being interrupted.
 
 Keep new support in the shared reader and narration pipeline where possible. Add synthetic regressions for observed failures. Never include game/recomp code, extracted assets, saves, or memory captures in contributions.
 

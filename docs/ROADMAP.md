@@ -10,7 +10,7 @@
 ## Next work
 
 - Continue validating initial selections, menu entry/return transitions, tooltips, confirmations, and custom controls.
-- Investigate shared UI events to replace polling where verified hooks cover the behavior.
+- Validate the experimental shared event hooks against every currently supported menu, dialog, transition, and focus-return path, including idle overhead.
 - Expand into gameplay: investigate QTE prompts/timing, combat state, target/direction feedback, and actionable audio cues. Test each capability with blind players before claiming coverage.
 - Add versioned adapters and fingerprints for additional recomp versions.
 

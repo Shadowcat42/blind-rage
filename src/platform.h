@@ -9,6 +9,7 @@
 #include <string>
 #include <vector>
 #include <cstdint>
+#include "build_profile.h"
 namespace a11y {
 namespace fs=std::filesystem;
 inline fs::path module_path(HMODULE m=nullptr){std::wstring b(32768,L'\0');auto n=GetModuleFileNameW(m,b.data(),DWORD(b.size()));b.resize(n);return b;}
@@ -24,13 +25,16 @@ inline std::string sha256(const fs::path& file){
   BCryptDestroyHash(hash);
  }BCryptCloseAlgorithmProvider(alg,0);return result;
 }
-inline bool supported(const fs::path& bin,std::string& error){
- for(const auto& [name,hash]:std::vector<std::pair<const wchar_t*,const char*>>{
-  {L"asura_wrath_recomp.exe","35e6586c44f2972a9f0b8a289a671bc1699a83db83ab49fd55dee594bbe52bc9"},
-  {L"rexruntime.dll","f24da9895acea3799e5af26caafb751fa2463cc5267df549caa70289be19f321"},
-  {L"mark2_nr.dll","795aa1c041ac9c1d5a35b08deee9a6742936fcd6752aaba7a02478b925e594f2"}}){
-  auto actual=sha256(bin/name);if(actual!=hash){error="Unsupported or unreadable build: "+utf8(name)+". Expected Mark2 disc build 2026.11.01.1627. Accessibility was not loaded.";return false;}
- }return true;
+inline const BuildProfile* identify_build(const fs::path& bin,std::string& error){
+ std::array<std::string,3> hashes{sha256(bin/L"asura_wrath_recomp.exe"),sha256(bin/L"rexruntime.dll"),sha256(bin/L"mark2_nr.dll")};
+ auto profile=profile_fingerprints(hashes);
+ if(!profile)error="Unsupported or unreadable recomp files. Expected a verified Mark2 disc or title-update build 2026.11.01.1627. Accessibility was not loaded.";
+ return profile;
+}
+inline bool supported(const fs::path& bin,std::string& error){return identify_build(bin,error)!=nullptr;}
+inline bool supported_game_data(const fs::path& root,const BuildProfile& profile,std::string& error){
+ if(profile.patch_fingerprint&&sha256(root/L"game"/L"default.xexp")!=profile.patch_fingerprint){error="The installed title-update patch does not match the verified update. Reinstall the supported title update or select --build disc.";return false;}
+ return true;
 }
 struct Module {uintptr_t base{};fs::path path;};
 inline Module remote_module(DWORD pid,const wchar_t* name){

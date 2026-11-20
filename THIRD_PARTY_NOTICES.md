@@ -19,6 +19,13 @@ The build downloads the official LLVM-MinGW 20261117 toolchain, with a pinned SH
 - Project: https://github.com/mstorsjo/llvm-mingw
 - Release: https://github.com/mstorsjo/llvm-mingw/releases/tag/20261117
 
+## MinHook v1.3.4 (experimental hook work)
+
+The experimental branch downloads the official MinHook source with a pinned SHA-256 digest. MinHook uses the BSD 2-Clause license; its bundled HDE components retain their own BSD notices. Its upstream LICENSE.txt is copied into packaged notices. Downloaded source remains outside Git.
+
+- Project and matching source: https://github.com/TsudaKageyu/minhook/tree/v1.3.4
+- License: https://github.com/TsudaKageyu/minhook/blob/v1.3.4/LICENSE.txt
+
 ## External game and recompilation
 
 Users must obtain the supported recomp separately and provide their own game data. Neither is downloaded by Blind Rage's bootstrap script, included in this repository, or included in mod packages.
