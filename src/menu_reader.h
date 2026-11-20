@@ -50,8 +50,21 @@ using Members=std::map<std::string,Value>;
 struct Item { std::string label,help;bool enabled=true;bool operator==(const Item&) const=default; };
 struct Menu {
  uint32_t movie{},selector{};std::string heading,path;int cursor=-1;std::vector<Item> items;bool message=false,modal=false,collection=false;std::string acquired;bool settings=false,pending=false;
+ uint32_t selection_key{},collection_count{};int collection_position=-1;
  bool operator==(const Menu&) const = default;
 };
+
+inline int collection_grid_index(const Value* cursor,const Value* page,const Value* perPage,uint32_t count){
+ // The array spans the category; the nested grid cursor addresses its page.
+ auto integer=[](const Value* value,int maximum){return value&&(value->type==3||value->type==4)&&std::isfinite(value->number)&&value->number>=0&&value->number<=maximum&&std::floor(value->number)==value->number;};
+ if(!count||count>1000||!integer(cursor,999))return -1;
+ int index=int(cursor->number);
+ if(page||perPage){
+  if(!integer(page,999)||!integer(perPage,1000)||perPage->number<1||index>=perPage->number)return -1;
+  index+=int(page->number)*int(perPage->number);
+ }
+ return index<int(count)?index:-1;
+}
 
 class Reader {
  public:
@@ -127,6 +140,21 @@ class Reader {
    }return out;
   }
   bool visible(const Memory& m,uint32_t c) const {std::set<uint32_t> seen;while(c&&seen.insert(c).second&&seen.size()<64){auto flags=m.u32(c+0xa0);if(!(flags&1)||(flags&2))return false;c=m.u32(c+0x20);}return c==0;}
+  bool selector_input_active(const Memory& m,uint32_t c) const {
+   bool blocked=false;std::set<uint32_t> seen;
+   while(c&&seen.insert(c).second&&seen.size()<64){
+    auto fields=members(m,m.u32(c+0x1c8));
+    // Dialog choices follow their dialog's lifecycle, including pending entry.
+    if(auto dialog=get(fields,"tl_opend");dialog&&dialog->type==2)return true;
+    // The title controller keeps its child selector alive during New Game's
+    // difficulty/confirmation handoff. Its help phase explicitly owns input;
+    // ordinary m_input flags alone are unreliable on delegated controllers.
+    auto help=get(fields,"m_gameDiffHelp"),input=get(fields,"m_input");
+    if(help&&help->type==2&&help->boolean&&input&&input->type==2&&!input->boolean)blocked=true;
+    c=m.u32(c+0x20);
+   }
+   return !c&&!blocked;
+  }
   std::string native_text(const Memory& m,uint32_t field) const {
    auto view=m.u32(field+0xbc),styled=m.u32(view+8),paragraphs=m.u32(styled+0xc),count=m.u32(styled+0x10),capacity=m.u32(styled+0x14);
    if(!view||!styled||!paragraphs||count>128||count>capacity||capacity>512)return {};
@@ -141,7 +169,7 @@ class Reader {
    }return clean_text(out);
   }
   std::vector<Menu> menus(const Memory& m) {
-   std::vector<Menu> out;
+   std::vector<Menu> out;bool inactiveSelection=false;
    for(auto movie:movies_){
     if(m.u32(movie.p+0x20)!=movie.index||m.u32(movie.p+0x34)!=movie.cls)continue;
     // GFxMoviePlayer.bMovieIsOpen is the high bit of its reflected boolean word.
@@ -182,18 +210,30 @@ class Reader {
        }
       }
       auto info=get(fields,"m_info"),param=get(fields,"m_param");
-      if(info&&param&&info->type==6&&param->type==6&&visible(m,c)&&(!input||(input->type==2&&input->boolean))){
-       auto data=members(m,info->pointer),selected=members(m,param->pointer);auto list=get(data,"m_items"),owned=get(selected,"Get");
-       if(list&&list->type==6&&owned&&owned->type==2){
-        auto count=m.u32(list->pointer+0x3c);if(count&&count<1000){
-         Menu detail;detail.movie=movie.p;detail.selector=c;detail.cursor=0;detail.collection=true;
+      if(info&&info->type==6&&visible(m,c)&&(!input||(input->type==2&&input->boolean))){
+       auto data=members(m,info->pointer);auto list=get(data,"m_items");
+       if(list&&list->type==6){
+        auto array=m.u32(list->pointer+0x38),count=m.u32(list->pointer+0x3c),capacity=m.u32(list->pointer+0x40);
+        if(count&&count<1000&&count<=capacity&&capacity<=4096){
+         uint32_t record=param&&param->type==6?param->pointer:0;int position=-1;
+         // Resolve either an explicit selected record or the shared paged list.
+         if(!record)if(auto instance=get(fields,"m_instList");instance&&instance->type==7){
+          auto control=m.u32(instance->pointer+4);auto grid=members(m,m.u32(control+0x1c8));
+          auto cursor=get(grid,"m_cursor"),page=get(grid,"m_pageNow"),perPage=get(grid,"m_pageItemMax");
+          position=collection_grid_index(cursor?&*cursor:nullptr,page?&*page:nullptr,perPage?&*perPage:nullptr,count);
+          if(position>=0){auto value=m.u32(array+uint32_t(position)*4);if(m.u8(value)==6)record=m.u32(value+4);}
+         }
+         auto selected=members(m,record);auto owned=get(selected,"Get");
+         if(record&&owned&&owned->type==2){
+         Menu detail;detail.movie=movie.p;detail.selector=c;detail.cursor=0;detail.collection=true;detail.selection_key=record;detail.collection_count=count;detail.collection_position=position;
          if(auto title=get(fields,"m_instTitle");title&&title->type==7){
           auto root=m.u32(title->pointer+4);for(auto child:children(m,root))if(character_name(m,child).ends_with(".mcInst_Title")){root=child;break;}
           for(const auto& s:text(m,root)){if(!detail.heading.empty())detail.heading+=" ";detail.heading+=s;}
          }
          auto total=get(data,"m_getItemNum");if(total&&total->type==3)detail.acquired=std::to_string(int(total->number))+"/"+std::to_string(count);
-         Item item;item.enabled=owned->boolean;item.label=value_text(m,get(selected,"Title"));item.help=value_text(m,get(selected,"Text"));
+         Item item;item.enabled=owned->boolean;item.label=value_text(m,get(selected,"Title"));item.help=value_text(m,get(selected,"Text"));if(item.help=="???")item.help.clear();
          if(!item.label.empty()||!item.help.empty()){detail.items.push_back(std::move(item));out.push_back(std::move(detail));}
+         }
         }
        }
       }
@@ -205,6 +245,8 @@ class Reader {
       if(cur&&(cur->type==3||cur->type==4)&&std::isfinite(cur->number)&&items&&items->type==6&&visible(m,c)){
        auto a=items->pointer,ptr=m.u32(a+0x38),count=m.u32(a+0x3c),cap=m.u32(a+0x40);
        if(count&&count<=256&&count<=cap&&cap<=1024&&cur->number>=0&&cur->number<count&&std::floor(cur->number)==cur->number){
+        if(!selector_input_active(m,c))inactiveSelection=true;
+        else{
         Menu menu;menu.movie=movie.p;menu.selector=c;menu.cursor=int(cur->number);menu.path=character_name(m,c);menu.heading=heading(class_name(m,movie.p));
         for(uint32_t i=0;i<count;i++){
          auto v=m.u32(ptr+i*4);if(m.u8(v)!=6){menu.items.clear();break;}
@@ -215,6 +257,7 @@ class Reader {
          menu.items.push_back(std::move(item));
         }
         if(menu.items.size()==count&&!menu.items[menu.cursor].label.empty()&&m.u32(a+0x38)==ptr&&m.u32(a+0x3c)==count)out.push_back(std::move(menu));
+        }
        }
       }
       auto kids=children(m,c);todo.insert(todo.end(),kids.rbegin(),kids.rend());
@@ -260,7 +303,7 @@ class Reader {
     for(auto& panel:out)if(panel.settings)for(const auto& parent:out)if(parent.movie==panel.movie&&!parent.settings&&!parent.collection&&!parent.message&&parent.cursor>=0&&size_t(parent.cursor)<parent.items.size()){panel.heading=parent.items[parent.cursor].label;break;}
     std::erase_if(out,[](const Menu& menu){return !menu.settings;});return out;
    }
-   if(out.empty()){for(auto movie:movies_){
+   if(out.empty()&&!inactiveSelection){for(auto movie:movies_){
     if(m.u32(movie.p+0x20)!=movie.index||!(m.u32(movie.p+0xc8)&0x80000000))continue;
     if(class_name(m,movie.p)!="BCGFxUI_TitleMenu")continue;
     auto gfx=m.u32(movie.p+0x180);if(m.u32(gfx+0x40)!=0x48)continue;auto root=m.u32(m.u32(gfx+0x44)+4);auto lines=text(m,root);std::string message;
@@ -297,6 +340,13 @@ class Reader {
   uint32_t discovered_count_{},discovered_table_{};
 };
 inline void append_phrase(std::string& text,const std::string& phrase){if(phrase.empty())return;if(!text.empty()){if(text.back()!='.'&&text.back()!='?'&&text.back()!='!')text+='.';text+=' ';}text+=phrase;}
+inline std::string menu_context(const Menu& menu){
+ auto key=std::to_string(menu.movie)+":"+std::to_string(menu.selector);
+ // A single dialog object is reused for different questions. Selection changes
+ // share context; a new question must announce its prompt again.
+ if(menu.modal&&!menu.message)key+="|dialog:"+menu.heading;
+ return key;
+}
 inline std::string describe(const Menu& menu,bool heading,bool help) {
  if(menu.pending)return {};
  if(menu.cursor<0||size_t(menu.cursor)>=menu.items.size())return {};
@@ -305,7 +355,9 @@ inline std::string describe(const Menu& menu,bool heading,bool help) {
  if(menu.modal){std::string prompt=heading?menu.heading:"";if(!prompt.empty()){if(prompt.back()!='.'&&prompt.back()!='?'&&prompt.back()!='!')prompt+='.';prompt+=' ';}return prompt+item.label;}
  if(menu.collection){
   s.clear();if(heading){append_phrase(s,menu.heading);if(!menu.acquired.empty())append_phrase(s,"Acquired: "+menu.acquired);}
-  std::string selected;if(item.enabled){selected=item.label;if(help&&!item.help.empty())selected+=": "+item.help;}else{if(item.label!="???")append_phrase(selected,item.label);append_phrase(selected,"Locked");if(!item.help.empty()){auto requirement=item.help;while(!requirement.empty()&&requirement.back()=='.')requirement.pop_back();selected+=": "+requirement;}}append_phrase(s,selected);return s;
+  std::string selected;if(item.enabled){selected=item.label;if(help&&!item.help.empty()){if(!selected.empty())selected+=": ";selected+=item.help;}}else{if(item.label!="???")append_phrase(selected,item.label);append_phrase(selected,"Locked");if(!item.help.empty()){auto requirement=item.help;while(!requirement.empty()&&requirement.back()=='.')requirement.pop_back();selected+=": "+requirement;}}
+  if(menu.collection_position>=0&&menu.collection_count)append_phrase(selected,std::to_string(menu.collection_position+1)+" of "+std::to_string(menu.collection_count));
+  append_phrase(s,selected);return s;
  }
  if(!item.enabled)s+=". Unavailable";s+=". "+std::to_string(menu.cursor+1)+" of "+std::to_string(menu.items.size());
  if(help&&!item.help.empty())s+=". "+item.help;return s;

@@ -21,7 +21,7 @@ int main(){
  assignment=a11y::ui_before_assignment(read,context.data());
  require(!assignment.relevant,"ignore animation repeat counter");
  require(!a11y::ui_after_assignment(read,assignment),"irrelevant mutation stays quiet");
- require(a11y::narrated_member("tl_opend")&&a11y::narrated_member("m_param"),"dialog and collection fields");
+ require(a11y::narrated_member("tl_opend")&&a11y::narrated_member("m_param")&&a11y::narrated_member("m_pageNow")&&a11y::narrated_member("m_gameDiffHelp"),"dialog, collection, page-change, and prompt-phase fields");
  memory[0x1018]=3;word(0x1020,0x3ff00000);word(0x1024,0);
  auto value=a11y::ui_value(read,0x1018);
  require(value.type==3&&value.payload==0x3ff0000000000000ull,"double payload");

@@ -18,7 +18,7 @@ inline uint32_t ui_argument(const void* context,unsigned reg) noexcept {
 inline bool narrated_member(std::string_view name) noexcept {
  // Shared semantic fields, independent of individual menus and their paths.
  constexpr std::string_view fields[]={"m_cursor","m_items","m_details","m_param","m_info",
-  "m_input","m_instSelector","m_instTitle","m_getItemNum","m_text","_text",
+  "m_input","m_instSelector","m_instTitle","m_getItemNum","m_text","_text","m_pageNow","m_pageItemMax","m_gameDiffHelp",
   "tl_opend","tl_type","Title","Text","Label","Name","Help","HelpText",
   "Locked","Get","bActive","Inst","InstName","Sel","_visible","text","htmlText"};
  for(auto field:fields)if(field==name)return true;

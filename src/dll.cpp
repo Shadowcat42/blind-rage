@@ -64,7 +64,7 @@ static DWORD WINAPI run(void*) {
    auto menus=base?reader.menus(memory):std::vector<Menu>{};
    for(const auto& menu:menus)if(reader.class_name(memory,menu.movie)=="BCGFxUI_TitleMenu")source.watch_title(menu.movie);
    std::string current,context;bool incomplete=!menus.empty()&&menus.back().pending;
-   if(!menus.empty()&&!incomplete){auto& menu=menus.back();context=std::to_string(menu.movie)+":"+std::to_string(menu.selector);current=context+"|"+describe(menu,false,true);}
+   if(!menus.empty()&&!incomplete){auto& menu=menus.back();context=menu_context(menu);current=context+":"+std::to_string(menu.selection_key)+"|"+describe(menu,false,true);}
    if(current==pending)stable++;else{pending=current;stable=0;}
    if(!current.empty())emptySince=0;else if(!emptySince)emptySince=GetTickCount64();
    bool settled=!incomplete&&(current.empty()?GetTickCount64()-emptySince>=250:stable>=1);
