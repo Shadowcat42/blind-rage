@@ -54,25 +54,27 @@ int main(int argc,char** argv){try{
  Menu lockedGrid=collection;lockedGrid.items[0]={"???","",false};lockedGrid.collection_count=45;lockedGrid.collection_position=0;
  auto firstLocked=describe(lockedGrid,false,true);lockedGrid.collection_position=1;
  check(firstLocked=="Locked. 1 of 45"&&describe(lockedGrid,false,true)=="Locked. 2 of 45","identical locked grid entries remain distinguishable on movement");
- if(argc>=2){
-  std::string root=argv[1];auto load=[](const std::string& p){std::ifstream in(p,std::ios::binary);if(!in)throw std::runtime_error("Missing snapshot "+p);return std::vector<char>(std::istreambuf_iterator<char>(in),{});};
+ int snapshotArg=1;const BuildProfile* selectedProfile=&disc_profile;
+ if(argc>1&&std::string_view(argv[1]).starts_with("--profile=")){selectedProfile=profile_named(std::string_view(argv[1]).substr(10));check(selectedProfile!=nullptr,"known snapshot profile");snapshotArg++;}
+ if(argc>snapshotArg){
+  std::string root=argv[snapshotArg];auto load=[](const std::string& p){std::ifstream in(p,std::ios::binary);if(!in)throw std::runtime_error("Missing snapshot "+p);return std::vector<char>(std::istreambuf_iterator<char>(in),{});};
   auto low=load(root+"/heap-low.bin"),high=load(root+"/heap-high.bin"),image=load(root+"/guest-image.bin");
   std::ifstream globals(root+"/globals.bin",std::ios::binary);if(globals)globals.read(image.data()+0x12a9000,0x2000);
   uint64_t reads=0;Memory memory([&](uint32_t a,void* out,size_t n){reads++;for(auto [base,buffer]:std::array<std::pair<uint32_t,std::vector<char>*>,3>{{{0,&low},{0x40000000,&high},{0x82000000,&image}}}){if(a>=base&&uint64_t(a)-base+n<=buffer->size()){memcpy(out,buffer->data()+a-base,n);return true;}}return false;});
-  Reader r;check(r.ready(memory),"snapshot Unreal globals");r.discover(memory);std::ofstream diagnostic(root+"/diagnostic.txt");r.diagnostic(memory,diagnostic);diagnostic.close();auto menus=r.menus(memory);check(!menus.empty(),"snapshot has a readable active menu");
+  Reader r(selectedProfile->layout);check(r.ready(memory),"snapshot Unreal globals");r.discover(memory);std::ofstream diagnostic(root+"/diagnostic.txt");r.diagnostic(memory,diagnostic);diagnostic.close();auto menus=r.menus(memory);check(!menus.empty(),"snapshot has a readable active menu");
   {
-   auto movie=menus.back().movie;auto slot=memory.u32(Reader::objects_global)+memory.u32(movie+0x20)*4;
+   auto movie=menus.back().movie;auto slot=memory.u32(r.layout().objects_global)+memory.u32(movie+0x20)*4;
    if(uint64_t(slot)+4<=low.size()){
-    char saved[4];memcpy(saved,low.data()+slot,4);memset(low.data()+slot,0,4);Reader late;late.discover(memory);memcpy(low.data()+slot,saved,4);
+    char saved[4];memcpy(saved,low.data()+slot,4);memset(low.data()+slot,0,4);Reader late(selectedProfile->layout);late.discover(memory);memcpy(low.data()+slot,saved,4);
     late.discover(memory);auto published=late.menus(memory);check(std::any_of(published.begin(),published.end(),[&](const Menu& menu){return menu.movie==movie;}),"rediscover menu published in an existing object slot");
    }
   }
-  if(argc==3&&std::string(argv[2])=="--bench"){
+  if(argc-snapshotArg==2&&std::string(argv[snapshotArg+1])=="--bench"){
    reads=0;auto start=std::chrono::steady_clock::now();for(int i=0;i<40;i++){auto result=r.menus(memory);check(result==menus,"stable repeated snapshot result");}auto ms=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-start).count()/40;
    std::cout<<"POLL "<<ms<<" ms, "<<reads/40<<" reads\n";
    reads=0;start=std::chrono::steady_clock::now();for(int i=0;i<10;i++)r.discover(memory);ms=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-start).count()/10;
    std::cout<<"DISCOVER "<<ms<<" ms, "<<reads/10<<" reads\n";
-  }else if(argc==3)check(menus.back().items[menus.back().cursor].label==argv[2],"snapshot selected item matches expected label");
+  }else if(argc-snapshotArg==2)check(menus.back().items[menus.back().cursor].label==argv[snapshotArg+1],"snapshot selected item matches expected label");
   if(menus.back().collection){
    auto object=memory.u32(menus.back().selector+0x1c8),table=memory.u32(object+0x1c),mask=memory.u32(table+4);
    for(uint32_t i=0;i<=mask&&mask<4096;i++){
@@ -81,6 +83,14 @@ int main(int argc,char** argv){try{
     check(std::none_of(background.begin(),background.end(),[](const Menu& menu){return menu.collection;}),"inactive retained collection panel cannot override its parent menu");
     check(r.menus(memory)==menus,"reactivated collection panel restores its selection");break;
    }
+  }
+  if(r.class_name(memory,menus.back().movie)=="BCGFxUI_TitleMenu"&&!menus.back().message){
+   auto at=menus.back().movie+0x208;check(uint64_t(at)+4<=high.size()+0x40000000ull&&at>=0x40000000,"title readiness flags are captured");
+   auto offset=at-0x40000000;char saved=high[offset];high[offset]=char(uint8_t(saved)&~0x40u);
+   auto disabled=r.menus(memory);high[offset]=saved;
+   if(menus.back().modal)check(disabled==menus,"startup readiness gate preserves modal choices");
+   else check(std::none_of(disabled.begin(),disabled.end(),[&](const Menu& menu){return menu.movie==menus.back().movie&&!menu.modal;}),"startup cannot announce the title selector before native input is enabled");
+   check(r.menus(memory)==menus,"title readiness restores selection without navigation");
   }
   if(menus.back().modal&&!menus.back().message){
    check(!menus.back().heading.empty(),"confirmation retains the question as well as the selected button");

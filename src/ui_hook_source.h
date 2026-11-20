@@ -3,6 +3,7 @@
 #include "ui_changes.h"
 #include "display_changes.h"
 #include "assignment_changes.h"
+#include "build_profile.h"
 #include <atomic>
 #include <algorithm>
 #include <windows.h>
@@ -17,9 +18,10 @@ class UiHookSource {
   static constexpr unsigned hook_count=10;
   static UiHookSource& instance(){static auto* source=new UiHookSource;return *source;}
   HANDLE event() const{return event_;}
-  bool install(uintptr_t executable){
-   constexpr uintptr_t rvas[]={0x029b5050,0x045f72b0,0x01a647d0,0x0212c6c0,0x03b841c0,0x02b146b0,0x0040ce60,0x008071c0,0x0164bd00,0x01ce3ce0};
-   std::array<void*,hook_count> targets{};for(unsigned i=0;i<hook_count;i++)targets[i]=(void*)(executable+rvas[i]);
+  bool install(uintptr_t executable,const BuildProfile& profile){
+   if(installed_)return profile_==&profile;
+   profile_=&profile;layout_=profile.layout;
+   std::array<void*,hook_count> targets{};for(unsigned i=0;i<hook_count;i++)targets[i]=(void*)(executable+profile.hook_rvas[i]);
    return install_targets(targets);
   }
   bool install_targets(const std::array<void*,hook_count>& targets){
@@ -67,7 +69,7 @@ class UiHookSource {
    if(enabled){
     if constexpr(I==2){
      Read read{base};auto cls=ui_word(read,movie+0x34),index=ui_word(read,cls+0x2c);
-     auto names=ui_word(read,0x832a9c58),entry=ui_word(read,names+index*4);char name[32]{};
+     auto names=ui_word(read,self.layout_.names_global),entry=ui_word(read,names+index*4);char name[32]{};
      if(entry&&read(entry+8,name,sizeof(name))&&!std::memcmp(name,"BCGFxUI_TitleMenu",18))self.watch_title(movie);
     }else if(self.title_.load(std::memory_order_relaxed)==movie)self.watch_title(0);
     self.discovery_=true;self.calls_[I].fetch_add(1,std::memory_order_relaxed);self.changed(I);
@@ -129,11 +131,13 @@ class UiHookSource {
    auto& self=instance();const auto movie=ui_argument(context,3);
    if(!self.enabled_.load(std::memory_order_relaxed)||!movie||movie!=self.title_.load(std::memory_order_relaxed)){self.original_[6](context,base);return;}
    self.calls_[6].fetch_add(1,std::memory_order_relaxed);
-   Read read{base};uint8_t before{},after{};const bool valid=read(movie+0x1f1,&before,1);
+   Read read{base};uint8_t before{},after{};const bool valid=read(movie+self.layout_.title_process_offset,&before,1);
    self.original_[6](context,base);
-   if(valid&&read(movie+0x1f1,&after,1)&&before!=after)self.changed(6);
+   if(valid&&read(movie+self.layout_.title_process_offset,&after,1)&&before!=after)self.changed(6);
   }
   NativeHooks hooks_;
+  const BuildProfile* profile_{};
+  ReaderLayout layout_{};
   HANDLE event_{};
   bool installed_{};
   std::atomic<bool> enabled_{};

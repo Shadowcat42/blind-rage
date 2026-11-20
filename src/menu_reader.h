@@ -1,4 +1,5 @@
 #pragma once
+#include "build_profile.h"
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -17,7 +18,7 @@
 #include <vector>
 
 namespace a11y {
-// All layouts below are for the fingerprinted Mark2 disc build. Host pointers are
+// Layouts are selected by the fingerprinted build profile. Host pointers are
 // never substituted for the game's big-endian, 32-bit guest pointers.
 class Memory {
  public:
@@ -69,20 +70,20 @@ inline int collection_grid_index(const Value* cursor,const Value* page,const Val
 
 class Reader {
  public:
-  static constexpr uint32_t names_global=0x832a9c58,objects_global=0x832a9c98;
-  static constexpr uint32_t sprite_vtable=0x82028718;
+  explicit Reader(ReaderLayout layout=disc_profile.layout):layout_(layout){}
+  const ReaderLayout& layout() const{return layout_;}
   std::string name(const Memory& m,uint32_t index) {
-   if(index>=m.u32(names_global+4)||index>250000)return {};
+   if(index>=m.u32(layout_.names_global+4)||index>250000)return {};
    auto it=names_.find(index);if(it!=names_.end())return it->second;
-   auto p=m.u32(m.u32(names_global)+index*4);if(!p)return {};
+   auto p=m.u32(m.u32(layout_.names_global)+index*4);if(!p)return {};
    auto s=m.string(p+8,256);if(!s.empty())names_[index]=s;return s;
   }
   std::string object_name(const Memory& m,uint32_t p){return p?name(m,m.u32(p+0x2c)):"";}
   std::string class_name(const Memory& m,uint32_t p){return object_name(m,m.u32(p+0x34));}
-  bool ready(const Memory& m) { return name(m,0)=="None"&&name(m,1)=="ByteProperty"&&m.u32(objects_global+4)>1000&&m.u32(objects_global+4)<250000; }
+  bool ready(const Memory& m) { return name(m,0)=="None"&&name(m,1)=="ByteProperty"&&m.u32(layout_.objects_global+4)>1000&&m.u32(layout_.objects_global+4)<250000; }
   void discover(const Memory& m) {
    movies_.clear();if(!ready(m)){discovered_count_=0;discovered_table_=0;return;}
-   auto count=m.u32(objects_global+4),table=m.u32(objects_global);
+   auto count=m.u32(layout_.objects_global+4),table=m.u32(layout_.objects_global);
    bool reset=discovered_table_!=table||count<discovered_count_;if(reset)menu_classes_.clear();
    std::vector<unsigned char> pointers(size_t(count)*4);if(!m.copy(table,pointers.data(),pointers.size()))return;
    auto examine=[&](uint32_t i){
@@ -99,7 +100,7 @@ class Reader {
     if(std::none_of(movies_.begin(),movies_.end(),[&](const Movie& movie){return movie.p==p&&movie.index==i&&movie.cls==cls;}))movies_.push_back({p,i,cls});
    };
    // Publication and slot reuse do not necessarily change the array's size.
-   // Refresh the complete registry; keep the faster visible-tree polling path.
+   // Refresh the complete registry; ordinary UI events reuse known movie trees.
    for(uint32_t i=0;i<count;i++)examine(i);
    discovered_count_=count;discovered_table_=table;
   }
@@ -125,7 +126,7 @@ class Reader {
    if((value->type==3||value->type==4)&&std::isfinite(value->number)){char s[64];snprintf(s,sizeof(s),"%.6g",value->number);return s;}return {};
   }
   std::vector<uint32_t> children(const Memory& m,uint32_t c) const {
-   if(m.u32(c)!=sprite_vtable)return {};
+   if(m.u32(c)!=layout_.sprite_vtable)return {};
    auto p=m.u32(c+0xc4),n=m.u32(c+0xc8),cap=m.u32(c+0xcc);if(n>2048||n>cap||cap>4096)return {};
    std::vector<uint32_t> out;for(uint32_t i=0;i<n;i++){auto child=m.u32(p+i*4);if(child)out.push_back(child);}return out;
   }
@@ -133,8 +134,8 @@ class Reader {
   std::vector<std::string> text(const Memory& m,uint32_t root,size_t limit=500) const {
    std::vector<std::string> out;std::vector<uint32_t> todo{root};std::set<uint32_t> seen;
    while(!todo.empty()&&seen.size()<limit){auto c=todo.back();todo.pop_back();if(!c||!seen.insert(c).second||!visible(m,c))continue;
-    if(m.u32(c)==0x8202bcb0){auto s=native_text(m,c);if(!s.empty()&&std::find(out.begin(),out.end(),s)==out.end())out.push_back(std::move(s));continue;}
-    if(m.u32(c)!=sprite_vtable)continue;
+    if(m.u32(c)==layout_.text_vtable){auto s=native_text(m,c);if(!s.empty()&&std::find(out.begin(),out.end(),s)==out.end())out.push_back(std::move(s));continue;}
+    if(m.u32(c)!=layout_.sprite_vtable)continue;
     auto fields=members(m,m.u32(c+0x1c8));auto v=get(fields,"m_text");if(!v)v=get(fields,"_text");
     auto s=value_text(m,v);if(!s.empty()&&std::find(out.begin(),out.end(),s)==out.end())out.push_back(std::move(s));
     auto kids=children(m,c);todo.insert(todo.end(),kids.rbegin(),kids.rend());
@@ -181,7 +182,7 @@ class Reader {
      auto handle=m.u32(gfx+0x44),root=m.u32(handle+4);
      std::vector<uint32_t> todo{root};
      while(!todo.empty()&&seen.size()<3000){
-      auto c=todo.back();todo.pop_back();if(!c||!seen.insert(c).second||m.u32(c)!=sprite_vtable||!visible(m,c))continue;
+      auto c=todo.back();todo.pop_back();if(!c||!seen.insert(c).second||m.u32(c)!=layout_.sprite_vtable||!visible(m,c))continue;
       auto fields=members(m,m.u32(c+0x1c8));auto cur=get(fields,"m_cursor"),items=get(fields,"m_items");
       auto details=get(fields,"m_details"),input=get(fields,"m_input");
       if(details&&details->type==6&&cur&&(cur->type==3||cur->type==4)&&input&&input->type==2&&input->boolean&&visible(m,c)){
@@ -299,6 +300,13 @@ class Reader {
     }
     std::erase_if(out,[](const Menu& menu){return !menu.modal;});return out;
    }
+   // The title selector is populated before save loading and the queued DLC
+   // check finish. Native bEnableInput owns its readiness; visible labels and
+   // delegated ActionScript m_input flags do not. Dialogs above keep priority.
+   std::erase_if(out,[&](const Menu& menu){
+    bool blocked=!menu.message&&!menu.settings&&!menu.collection&&class_name(m,menu.movie)=="BCGFxUI_TitleMenu"&&!(m.u32(menu.movie+0x208)&0x40000000);
+    inactiveSelection|=blocked;return blocked;
+   });
    if(std::any_of(out.begin(),out.end(),[](const Menu& menu){return menu.collection;})){std::erase_if(out,[](const Menu& menu){return !menu.collection;});return out;}
    if(std::any_of(out.begin(),out.end(),[](const Menu& menu){return menu.settings;})){
     for(auto& panel:out)if(panel.settings)for(const auto& parent:out)if(parent.movie==panel.movie&&!parent.settings&&!parent.collection&&!parent.message&&parent.cursor>=0&&size_t(parent.cursor)<parent.items.size()){panel.heading=parent.items[parent.cursor].label;break;}
@@ -309,7 +317,7 @@ class Reader {
     if(class_name(m,movie.p)!="BCGFxUI_TitleMenu")continue;
     auto gfx=m.u32(movie.p+0x180);if(m.u32(gfx+0x40)!=0x48)continue;auto root=m.u32(m.u32(gfx+0x44)+4);auto lines=text(m,root);std::string message;
     for(const auto& line:lines){if(line.find("CAPCOM")!=std::string::npos||line.find("RIGHTS RESERVED")!=std::string::npos)continue;if(!message.empty())message+=". ";message+=line;}
-    if(class_name(m,movie.p)=="BCGFxUI_TitleMenu"&&m.u8(movie.p+0x1f1)==4)message="Checking downloadable content.";
+    if(class_name(m,movie.p)=="BCGFxUI_TitleMenu"&&m.u8(movie.p+layout_.title_process_offset)==4)message="Checking downloadable content.";
     if(!message.empty()){Menu status;status.movie=movie.p;status.selector=root;status.cursor=0;status.message=true;status.items.push_back({message,"",true});out.push_back(std::move(status));}
    }}return out;
   }
@@ -320,7 +328,7 @@ class Reader {
     if(!(m.u32(movie.p+0xc8)&0x80000000))continue;
     std::set<uint32_t> seen;std::vector<std::pair<uint32_t,int>> todo;
     for(auto f:{0x17cu,0x180u}){auto gfx=m.u32(movie.p+f);out<<" gfx="<<std::hex<<gfx<<" type="<<m.u32(gfx+0x40)<<std::dec<<"\n";if(gfx)todo.push_back({m.u32(m.u32(gfx+0x44)+4),0});}
-    while(!todo.empty()&&seen.size()<3000){auto [c,depth]=todo.back();todo.pop_back();if(!c||!seen.insert(c).second||m.u32(c)!=sprite_vtable)continue;
+     while(!todo.empty()&&seen.size()<3000){auto [c,depth]=todo.back();todo.pop_back();if(!c||!seen.insert(c).second||m.u32(c)!=layout_.sprite_vtable)continue;
      auto object=m.u32(c+0x1c8);out<<"CHAR "<<std::hex<<c<<" AS "<<object<<std::dec<<" "<<character_name(m,c)<<"\n";
      dump_members(m,object,out,0);
      for(auto child:children(m,c))todo.push_back({child,depth+1});
@@ -337,6 +345,7 @@ class Reader {
   }
   static std::string heading(std::string cls){const std::string prefix="BCGFxUI_";if(cls.starts_with(prefix))cls.erase(0,prefix.size());std::string out;for(size_t i=0;i<cls.size();i++){if(cls[i]=='_'){out+=' ';continue;}if(i&&cls[i]>='A'&&cls[i]<='Z'&&cls[i-1]>='a'&&cls[i-1]<='z')out+=' ';out+=cls[i];}return out;}
  private:
+  ReaderLayout layout_;
   struct Movie {uint32_t p,index,cls;};std::vector<Movie> movies_;std::unordered_map<uint32_t,std::string> names_;std::unordered_map<uint32_t,bool> menu_classes_;
   uint32_t discovered_count_{},discovered_table_{};
 };

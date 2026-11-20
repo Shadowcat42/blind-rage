@@ -3,13 +3,43 @@
 using namespace a11y;
 static DWORD remote_call(HANDLE process,uintptr_t fn,void* arg){HANDLE thread=CreateRemoteThread(process,nullptr,0,(LPTHREAD_START_ROUTINE)fn,arg,0,nullptr);if(!thread)throw std::runtime_error("Cannot create initialization thread");auto wait=WaitForSingleObject(thread,15000);DWORD result{};if(wait==WAIT_OBJECT_0)GetExitCodeThread(thread,&result);CloseHandle(thread);if(wait!=WAIT_OBJECT_0)throw std::runtime_error("Initialization timed out; game left running");return result;}
 int wmain(int argc,wchar_t** argv){try{
- auto dir=module_path().parent_path();auto root=fs::exists(dir/L"mods"/L"accessibility")?dir:dir.parent_path().parent_path().parent_path();auto dist=root/L"mods"/L"accessibility"/L"dist";auto bin=root/L"bin_disc";std::string error;
- if(!supported(bin,error))throw std::runtime_error(error);
- DWORD pid=0;std::wstring command;for(int i=1;i<argc;i++){std::wstring arg=argv[i];if(arg==L"--attach"&&i+1<argc)pid=wcstoul(argv[++i],nullptr,10);else if(arg==L"--command"&&i+1<argc)command=argv[++i];else throw std::runtime_error("Usage: BlindRage.exe [--attach PID] [--command test|repeat|stop|mute|dump|shutdown]");}
- if(!pid){auto snapshot=CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS,0);PROCESSENTRY32W p{};p.dwSize=sizeof(p);if(Process32FirstW(snapshot,&p))do{if(!_wcsicmp(p.szExeFile,L"asura_wrath_recomp.exe")){auto m=remote_module(p.th32ProcessID,L"asura_wrath_recomp.exe");if(!m.path.empty()&&fs::equivalent(m.path,bin/L"asura_wrath_recomp.exe")){if(pid){CloseHandle(snapshot);throw std::runtime_error("Multiple game processes; use --attach PID");}pid=p.th32ProcessID;}}}while(Process32NextW(snapshot,&p));CloseHandle(snapshot);}
+ auto dir=module_path().parent_path();auto root=fs::exists(dir/L"mods"/L"accessibility")?dir:dir.parent_path().parent_path().parent_path();auto dist=root/L"mods"/L"accessibility"/L"dist";fs::path bin;std::string error;
+ DWORD pid=0;std::wstring command;bool checkOnly=false;const BuildProfile* requested=nullptr;const BuildProfile* selected=nullptr;
+ for(int i=1;i<argc;i++){
+  std::wstring arg=argv[i];
+  if(arg==L"--attach"&&i+1<argc){wchar_t* end{};pid=wcstoul(argv[++i],&end,10);if(!pid||*end)throw std::runtime_error("Invalid process ID");}
+  else if(arg==L"--command"&&i+1<argc)command=argv[++i];
+  else if(arg==L"--check")checkOnly=true;
+  else if(arg==L"--build"&&i+1<argc){auto name=utf8(argv[++i]);requested=name=="auto"?nullptr:profile_named(name);if(name!="auto"&&!requested)throw std::runtime_error("Unknown build; choose auto, disc, or updated");}
+  else throw std::runtime_error("Usage: BlindRage.exe [--build auto|disc|updated] [--check] [--attach PID] [--command test|repeat|stop|mute|dump|shutdown]");
+ }
+ auto installation_build=[&](const fs::path& path)->const BuildProfile*{for(auto profile:build_profiles){auto expected=root/profile->directory/L"asura_wrath_recomp.exe";if(fs::exists(expected)&&fs::equivalent(path,expected))return profile;}return nullptr;};
+ if(pid){auto module=remote_module(pid,L"asura_wrath_recomp.exe");if(module.path.empty()||!(selected=installation_build(module.path)))throw std::runtime_error("Target is not a game process from this installation");bin=module.path.parent_path();}
+ else if(!checkOnly||!requested){
+  auto snapshot=CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS,0);PROCESSENTRY32W p{};p.dwSize=sizeof(p);
+  if(Process32FirstW(snapshot,&p)){do{if(!_wcsicmp(p.szExeFile,L"asura_wrath_recomp.exe")){
+   auto module=remote_module(p.th32ProcessID,L"asura_wrath_recomp.exe");auto profile=module.path.empty()?nullptr:installation_build(module.path);
+   if(profile){if(pid){CloseHandle(snapshot);throw std::runtime_error("Multiple game processes; use --attach PID");}pid=p.th32ProcessID;selected=profile;bin=module.path.parent_path();}
+  }}while(Process32NextW(snapshot,&p));}
+  CloseHandle(snapshot);
+ }
+ if(selected&&requested&&selected!=requested)throw std::runtime_error("A different game build is running. Close it or select its matching --build profile.");
+ if(!selected){
+  selected=requested;
+  if(!selected){std::ifstream installation(root/L"userdata"/L"install.txt");std::optional<bool> updated;
+   if(installation){updated=installed_title_update(installation);if(!updated)throw std::runtime_error("Cannot determine installed title update; use --build disc or --build updated");}
+   else updated=fs::exists(root/L"game"/L"default.xexp");
+   selected=*updated?&updated_profile:&disc_profile;
+  }
+  bin=root/selected->directory;
+ }
+ auto verified=identify_build(bin,error);if(!verified)throw std::runtime_error(error);
+ if(verified!=selected)throw std::runtime_error("The selected build directory contains files from another profile");
+ if(!supported_game_data(root,*verified,error))throw std::runtime_error(error);
+ if(checkOnly){std::cout<<"Verified build profile: "<<verified->id<<"\nExecutable: "<<utf8((bin/L"asura_wrath_recomp.exe").wstring())<<"\n";return 0;}
  if(!pid){if(!command.empty())throw std::runtime_error("No running game");auto exe=bin/L"asura_wrath_recomp.exe";auto line=L"\""+exe.wstring()+L"\"";STARTUPINFOW si{};si.cb=sizeof(si);PROCESS_INFORMATION pi{};if(!CreateProcessW(exe.c_str(),line.data(),nullptr,nullptr,FALSE,0,nullptr,bin.c_str(),&si,&pi))throw std::runtime_error("Could not launch game");pid=pi.dwProcessId;CloseHandle(pi.hThread);CloseHandle(pi.hProcess);}
  Module game;for(int i=0;i<150;i++){game=remote_module(pid,L"asura_wrath_recomp.exe");if(game.base&&remote_module(pid,L"rexruntime.dll").base)break;Sleep(100);}
- if(game.path.empty()||!fs::equivalent(game.path,bin/L"asura_wrath_recomp.exe"))throw std::runtime_error("Target is not the supported game process");
+ if(game.path.empty()||!fs::equivalent(game.path,bin/L"asura_wrath_recomp.exe"))throw std::runtime_error("Target is not the selected game build");
  if(!command.empty()){auto event=OpenEventW(EVENT_MODIFY_STATE,FALSE,event_name(pid,command).c_str());if(!event)throw std::runtime_error("Accessibility command unavailable");SetEvent(event);CloseHandle(event);return 0;}
  HANDLE process=OpenProcess(PROCESS_CREATE_THREAD|PROCESS_QUERY_INFORMATION|PROCESS_VM_OPERATION|PROCESS_VM_WRITE|PROCESS_VM_READ,FALSE,pid);if(!process)throw std::runtime_error("Cannot open game process");
  auto mod=remote_module(pid,L"asura_accessibility.dll");auto dll=dist/L"asura_accessibility.dll";

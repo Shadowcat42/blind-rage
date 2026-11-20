@@ -21,13 +21,14 @@ static DWORD WINAPI run(void*) {
   DiagnosticCleanup cleanup;if(!diagnosticsStarted.exchange(true))cleanup=clear_previous_diagnostics(logs);
   std::ofstream log(logs/L"accessibility.log",std::ios::app);auto write=[&](const std::string& s){log<<GetTickCount64()<<" "<<s<<std::endl;};
   write("SESSION pid="+std::to_string(GetCurrentProcessId())+" previous_diagnostics_removed="+std::to_string(cleanup.removed)+" cleanup_failures="+std::to_string(cleanup.failed));
-  std::string error;if(!supported(bin,error)){write(error);return 1;}
+  std::string error;auto profile=identify_build(bin,error);if(!profile||!supported_game_data(bin.parent_path(),*profile,error)){write(error);return 1;}
+  write(std::string("BUILD profile=")+profile->id);
   auto runtime=GetModuleHandleW(L"rexruntime.dll");
   auto instance=reinterpret_cast<void*(*)()>(GetProcAddress(runtime,"?instance@Runtime@rex@@SAPEAV12@XZ"));
   auto membase=reinterpret_cast<unsigned char*(*)(void*)>(GetProcAddress(runtime,"?virtual_membase@Runtime@rex@@QEBAPEAEXZ"));
   if(!instance||!membase){write("Runtime accessors unavailable");return 2;}
   auto& source=UiHookSource::instance();
-  if(!source.install(reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr)))){write("UI hook installation failed; event reader not started");return 4;}
+  if(!source.install(reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr)),*profile)){write("UI hook installation failed; event reader not started");return 4;}
   CaptureGuard captureGuard{source};
   auto co=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);Speech speech(write);bool speaking=speech.init(dir);if(speaking)speech.speak("Blind Rage ready.");
   std::vector<std::wstring> commands={L"test",L"repeat",L"stop",L"mute",L"dump",L"shutdown"};std::vector<HANDLE> events;
@@ -37,7 +38,7 @@ static DWORD WINAPI run(void*) {
   WindowNotifications notifications;if(!notifications.initialize(hotkeys)){write("Foreground notifications unavailable; reader stopped");for(auto h:events)CloseHandle(h);speech.close();if(SUCCEEDED(co))CoUninitialize();return 5;}
   for(unsigned i=0;i<6;i++)if(notifications.focused()&&hotkeys[i]&&!notifications.hotkey_registered(i))write("Hotkey unavailable: "+utf8(commands[i]));
   events.push_back(source.event());source.capture(true);
-  Reader reader;std::string last,pending,lastSpeech,lastContext,spoken;
+  Reader reader(profile->layout);std::string last,pending,lastSpeech,lastContext,spoken;
   bool muted=false,forceContext=notifications.focused(),scheduled=false,discovered=false;unsigned stable=0,retries=0;
   ULONGLONG due=0,burst=0,emptySince=0;uint64_t reads=0;
   auto changed=[&]{auto now=GetTickCount64();if(!scheduled)burst=now;scheduled=true;due=std::min(now+20,burst+80);retries=10;};

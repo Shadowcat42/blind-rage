@@ -28,11 +28,12 @@ try {
  if($LASTEXITCODE){throw 'Fake speech backend compilation failed'}
  & $compiler @common 'tests/diagnostics_test.cpp' '-o' 'build/speech/diagnostics_test.exe' '-lbcrypt' '-luser32'
  if($LASTEXITCODE){throw 'Diagnostic test compilation failed'}
+ & $compiler @common 'tests/build_profile_test.cpp' '-o' 'build/hooks/build_profile_test.exe'
+ if($LASTEXITCODE){throw 'Build profile test compilation failed'}
  & $compiler @common "-I$hookRoot/include" '-shared' 'src/dll.cpp' @hookObjects '-o' 'dist/asura_accessibility.dll' '-lbcrypt' '-lole32' '-luser32'
  if($LASTEXITCODE){throw 'DLL compilation failed'}
- & $compiler @common '-municode' 'src/launcher.cpp' '-o' 'dist/AsurasWrathAccessible.exe' '-lbcrypt' '-luser32'
+ & $compiler @common '-municode' 'src/launcher.cpp' '-o' 'dist/BlindRage.exe' '-lbcrypt' '-luser32'
  if($LASTEXITCODE){throw 'Launcher compilation failed'}
- Copy-Item -LiteralPath dist/AsurasWrathAccessible.exe -Destination dist/BlindRage.exe
  & $compiler @common 'tests/reader_test.cpp' '-o' 'dist/reader_test.exe'
  if($LASTEXITCODE){throw 'Test compilation failed'}
  & $compiler @common '-municode' 'tests/speech_test.cpp' '-o' 'dist/speech_test.exe' '-lbcrypt' '-lole32' '-luser32'
@@ -50,9 +51,10 @@ try {
   & ./build/hooks/ui_changes_test.exe; if($LASTEXITCODE){throw 'UI change tests failed'}
   & ./build/hooks/ui_hook_source_test.exe; if($LASTEXITCODE){throw 'UI hook source tests failed'}
   & ./build/speech/diagnostics_test.exe; if($LASTEXITCODE){throw 'Diagnostic tests failed'}
+  & ./build/hooks/build_profile_test.exe; if($LASTEXITCODE){throw 'Build profile tests failed'}
  }
  if(!$NoInstall){
-  if(!$InstallTo -and (Test-Path -LiteralPath ../../bin_disc/asura_wrath_recomp.exe)){$InstallTo=(Resolve-Path ../..).Path}
+  if(!$InstallTo -and ((Test-Path -LiteralPath ../../bin_disc/asura_wrath_recomp.exe) -or (Test-Path -LiteralPath ../../bin/asura_wrath_recomp.exe))){$InstallTo=(Resolve-Path ../..).Path}
   if($InstallTo){& ./install.ps1 -GameRoot $InstallTo}
  }
 } finally {Pop-Location}

@@ -6,7 +6,7 @@ This is an experimental, independently developed mod. **Users must obtain the re
 
 ## Compatibility
 
-Currently targets the **Mark2 disc build 2026.11.01.1627** of the [PC recompilation](https://github.com/omar2300/asuras-wrath-pc). The launcher verifies executable, runtime, and renderer fingerprints. Other builds need separate validation.
+Targets the **Mark2 2026.11.01.1627 disc and title-update builds** of the [PC recompilation](https://github.com/omar2300/asuras-wrath-pc). Both use one reader with verified build profiles. The launcher checks executable, runtime, and renderer fingerprints; the updated profile also checks the installed `game/default.xexp` patch. Other builds need separate validation.
 
 Windows x64 is required. Start NVDA before the mod to use its voice; [Prism](https://github.com/ethindp/prism) provides other speech backends and fallback engines.
 
@@ -16,7 +16,11 @@ Windows x64 is required. Start NVDA before the mod to use its voice; [Prism](htt
 2. Extract a Blind Rage mod package into the installation root. It adds `BlindRage.exe` and files under `mods/accessibility/dist`.
 3. Run **BlindRage.exe**. The ordinary recomp launcher does not load the mod.
 
-The existing `AsurasWrathAccessible.exe` launcher remains usable in the development installation. The recomp updater can change binaries and make the mod incompatible; Blind Rage does not update or replace them.
+Automatic mode attaches to a recognized game already running from this installation. Otherwise, it follows the installer's `userdata/install.txt`: an installed title update selects `bin`, and a disc-only installation selects `bin_disc`. An unsupported updated installation reports an error rather than silently using the disc build.
+
+Use `BlindRage.exe --build disc` or `BlindRage.exe --build updated` to choose explicitly. `BlindRage.exe --check` verifies automatic selection without launching or injecting; add `--build disc` or `--build updated` to check either profile. Close a running game before switching builds.
+
+The old `AsurasWrathAccessible.exe` compatibility launcher can be deleted. Current builds and installations provide only `BlindRage.exe`. The recomp updater can change binaries and make the mod incompatible; Blind Rage does not update or replace them.
 
 | Shortcut while the game has focus | Action |
 | --- | --- |
@@ -60,7 +64,7 @@ When developing directly in an installation's `mods/accessibility` folder, the b
 
 ## Diagnostics and contributions
 
-Logs and timestamped UI dumps stay locally under the installation's `userdata/accessibility`. Dumps can contain game memory and must not be committed or automatically uploaded. Optional private replay uses `dist/reader_test.exe research/snapshot-name`; snapshots are not required for CI and are excluded from Git.
+Logs and timestamped UI dumps stay locally under the installation's `userdata/accessibility`. Dumps can contain game memory and must not be committed or automatically uploaded. Optional private replay uses `dist/reader_test.exe research/snapshot-name`, or `dist/reader_test.exe --profile=updated research/snapshot-name` for title-update captures. Snapshots are not required for CI and are excluded from Git.
 
 Each game process starts with a fresh mod log and removes prior `dump-<number>.txt` and `.pages` captures from that directory. Copy captures you want to retain elsewhere before restarting. Restarting the mod worker within the same game process preserves its session files. Unrelated files and subdirectories are retained.
 
