@@ -52,8 +52,18 @@ struct Item { std::string label,help;bool enabled=true;bool operator==(const Ite
 struct Menu {
  uint32_t movie{},selector{};std::string heading,path;int cursor=-1;std::vector<Item> items;bool message=false,modal=false,collection=false;std::string acquired;bool settings=false,pending=false;
  uint32_t selection_key{},collection_count{};int collection_position=-1;
+ std::string summary;bool readout=false;
  bool operator==(const Menu&) const = default;
 };
+inline std::string result_rank(unsigned rank){constexpr std::array<const char*,6> labels{"Unranked","S","A","B","C","D"};return rank<labels.size()?labels[rank]:"";}
+inline std::string result_score(unsigned type,int score){
+ if(score<0||type>2)return {};
+ if(type==0)return std::to_string(score)+" points";
+ if(type==2)return score<=100?std::to_string(score)+" percent":std::string{};
+ auto minutes=score/60,seconds=score%60;std::string text;
+ if(minutes)text=std::to_string(minutes)+(minutes==1?" minute":" minutes");
+ if(seconds||!minutes){if(!text.empty())text+=' ';text+=std::to_string(seconds)+(seconds==1?" second":" seconds");}return text;
+}
 
 inline int collection_grid_index(const Value* cursor,const Value* page,const Value* perPage,uint32_t count){
  // The cursor addresses the full category. Page metadata validates the visible
@@ -170,12 +180,59 @@ class Reader {
     }
    }return clean_text(out);
   }
+  struct Results {uint32_t root{};bool main{},detail{},pending{};std::string summary,breakdown;};
+  std::optional<Results> results(const Memory& m,uint32_t root,const Members& fields) const {
+   auto control=[&](const Members& values,const char* key){auto v=get(values,key);return v&&v->type==7?m.u32(v->pointer+4):0;};
+   auto estimates=control(fields,"m_instEstimList"),total=control(fields,"m_instTotalRank"),detail=control(fields,"m_instDetail");
+   if(!estimates||!total||!detail)return {};
+   Results out;out.root=root;out.main=visible(m,estimates)&&visible(m,total);out.detail=visible(m,detail)&&!out.main;
+   auto input=get(fields,"m_input");out.pending=!input||input->type!=2||!input->boolean;
+   auto number=[&](const std::optional<Value>& value,int low,int high)->std::optional<int>{if(!value||(value->type!=3&&value->type!=4)||!std::isfinite(value->number)||std::floor(value->number)!=value->number||value->number<low||value->number>high)return {};return int(value->number);};
+   auto rank=[&](uint32_t node)->std::string{
+    std::vector<uint32_t> todo{node};std::set<uint32_t> seen;std::optional<int> found;
+    while(!todo.empty()&&seen.size()<64){auto c=todo.back();todo.pop_back();if(!c||!seen.insert(c).second)continue;auto data=members(m,m.u32(c+0x1c8));
+     if(auto value=get(data,"m_rankIdx")){auto valueRank=number(value,0,5);if(!valueRank||(found&&found!=valueRank))return {};found=valueRank;}
+     auto kids=children(m,c);todo.insert(todo.end(),kids.begin(),kids.end());
+    }return found?result_rank(unsigned(*found)):std::string{};
+   };
+   if(out.main){
+    auto totalData=members(m,m.u32(total+0x1c8));auto finish=get(totalData,"m_finish");auto totalRank=rank(control(totalData,"m_rank"));
+    if(!finish||finish->type!=2||!finish->boolean||totalRank.empty())out.pending=true;
+    else out.summary="Overall rank "+totalRank+".";
+    unsigned count=0;std::set<int> types;
+    for(auto row:children(m,estimates)){
+     auto data=members(m,m.u32(row+0x1c8));auto scoreClass=get(data,"m_scoreClass");if(!scoreClass||scoreClass->type!=6)continue;
+     auto done=get(data,"m_finish");auto type=number(get(data,"m_scoreType"),0,2);auto score=number(get(members(m,scoreClass->pointer),"m_score"),0,INT32_MAX);auto grade=rank(control(data,"m_rank"));
+     if(!visible(m,row)||!done||done->type!=2||!done->boolean||!type||!score||grade.empty()||!types.insert(*type).second){out.pending=true;continue;}
+     auto value=result_score(unsigned(*type),*score);if(value.empty()){out.pending=true;continue;}
+     std::string label;for(const auto& line:text(m,control(data,"m_text"))){if(!label.empty())label+=' ';label+=line;}
+     if(label.empty())label=*type==0?"Battle points":*type==1?"Clear time":"Synchronic rate";
+     if(!out.summary.empty())out.summary+=' ';out.summary+=label+": "+value+". Rank "+grade+".";++count;
+    }
+    if(count!=3)out.pending=true;
+   }
+   if(out.detail){
+    std::vector<uint32_t> todo{detail};std::set<uint32_t> seen;unsigned rows=0;
+    while(!todo.empty()&&seen.size()<512){auto c=todo.back();todo.pop_back();if(!seen.insert(c).second||!visible(m,c))continue;auto kids=children(m,c);std::string label,points,count;
+     for(auto child:kids){auto path=character_name(m,child);auto lines=text(m,child);std::string value;for(const auto& line:lines){if(!value.empty())value+=' ';value+=line;}
+      if(path.ends_with(".mcInst_Text"))label=value;else if(path.ends_with(".mcInst_Point"))points=value;else if(path.ends_with(".mcInst_Num"))count=value;
+     }
+     if(!label.empty()&&!points.empty()){
+      if(++rows>32){out.pending=true;break;}
+      if(!out.breakdown.empty())out.breakdown+=' ';out.breakdown+=label+": "+(count.empty()?std::string{}:count+", ")+points+" points.";
+     }else todo.insert(todo.end(),kids.rbegin(),kids.rend());
+    }
+    if(!rows)out.pending=true;
+    else out.breakdown="Battle point breakdown. "+out.breakdown;
+   }return out;
+  }
   std::vector<Menu> menus(const Memory& m) {
    std::vector<Menu> out;bool inactiveSelection=false;
    for(auto movie:movies_){
     if(m.u32(movie.p+0x20)!=movie.index||m.u32(movie.p+0x34)!=movie.cls)continue;
     // GFxMoviePlayer.bMovieIsOpen is the high bit of its reflected boolean word.
     if(!(m.u32(movie.p+0xc8)&0x80000000))continue;
+    std::optional<Results> result;
     std::unordered_set<uint32_t> seen;
     for(auto field:{0x180u,0x17cu}){
      auto gfx=m.u32(movie.p+field);if(!gfx||m.u32(gfx+0x40)!=0x48)continue;
@@ -262,8 +319,13 @@ class Reader {
         }
        }
       }
+      if(!result)result=results(m,c,fields);
       auto kids=children(m,c);todo.insert(todo.end(),kids.rbegin(),kids.rend());
      }
+    }
+    if(result){
+     if(result->main)for(auto& menu:out)if(menu.movie==movie.p){menu.summary=result->summary;menu.pending=menu.pending||result->pending;}
+     if(result->detail){Menu detail;detail.movie=movie.p;detail.selector=result->root;detail.cursor=0;detail.message=detail.readout=true;detail.pending=result->pending;detail.items.push_back({result->breakdown,"",true});out.push_back(std::move(detail));}
     }
    }
    std::set<std::pair<uint32_t,uint32_t>> seen;std::erase_if(out,[&](const Menu& menu){return !seen.insert({menu.movie,menu.selector}).second;});
@@ -307,6 +369,7 @@ class Reader {
     bool blocked=!menu.message&&!menu.settings&&!menu.collection&&class_name(m,menu.movie)=="BCGFxUI_TitleMenu"&&!(m.u32(menu.movie+0x208)&0x40000000);
     inactiveSelection|=blocked;return blocked;
    });
+   if(std::any_of(out.begin(),out.end(),[](const Menu& menu){return menu.readout;})){std::erase_if(out,[](const Menu& menu){return !menu.readout;});return out;}
    if(std::any_of(out.begin(),out.end(),[](const Menu& menu){return menu.collection;})){std::erase_if(out,[](const Menu& menu){return !menu.collection;});return out;}
    if(std::any_of(out.begin(),out.end(),[](const Menu& menu){return menu.settings;})){
     for(auto& panel:out)if(panel.settings)for(const auto& parent:out)if(parent.movie==panel.movie&&!parent.settings&&!parent.collection&&!parent.message&&parent.cursor>=0&&size_t(parent.cursor)<parent.items.size()){panel.heading=parent.items[parent.cursor].label;break;}
@@ -352,6 +415,7 @@ class Reader {
 inline void append_phrase(std::string& text,const std::string& phrase){if(phrase.empty())return;if(!text.empty()){if(text.back()!='.'&&text.back()!='?'&&text.back()!='!')text+='.';text+=' ';}text+=phrase;}
 inline std::string menu_context(const Menu& menu){
  auto key=std::to_string(menu.movie)+":"+std::to_string(menu.selector);
+ if(!menu.summary.empty())key+="|results:"+menu.summary;
  // A single dialog object is reused for different questions. Selection changes
  // share context; a new question must announce its prompt again.
  if(menu.modal&&!menu.message)key+="|dialog:"+menu.heading;
@@ -361,6 +425,7 @@ inline std::string describe(const Menu& menu,bool heading,bool help) {
  if(menu.pending)return {};
  if(menu.cursor<0||size_t(menu.cursor)>=menu.items.size())return {};
  const auto& item=menu.items[menu.cursor];std::string s=heading?menu.heading+". ":"";s+=item.label;
+ if(heading&&!menu.summary.empty()){s=menu.heading;append_phrase(s,menu.summary);append_phrase(s,item.label);}
  if(menu.message)return item.label;
  if(menu.modal){std::string prompt=heading?menu.heading:"";if(!prompt.empty()){if(prompt.back()!='.'&&prompt.back()!='?'&&prompt.back()!='!')prompt+='.';prompt+=' ';}return prompt+item.label;}
  if(menu.collection){
