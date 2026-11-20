@@ -84,6 +84,8 @@ int main() {
         trace.push(record, 1001);
         check(trace.take().records.empty(), "disabled callbacks do not record");
         trace.configure(true);
+        check(!trace.begin(500, false) && trace.take().started == 0,
+              "idle shooting ticks cannot spend the capture window before any candidate check");
         check(trace.begin(1000), "active shooting starts capture");
         for (unsigned i = 0; i < 600; i++)
             trace.push(record, 1001 + i);

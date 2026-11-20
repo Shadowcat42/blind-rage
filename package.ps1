@@ -1,4 +1,7 @@
-param([string]$BuildDirectory=(Join-Path $PSScriptRoot 'dist'))
+param(
+ [string]$BuildDirectory=(Join-Path $PSScriptRoot 'dist'),
+ [string]$ConfigurationFile=(Join-Path $PSScriptRoot 'accessibility.ini')
+)
 $ErrorActionPreference='Stop'
 $distribution=(Resolve-Path -LiteralPath $BuildDirectory).Path
 $stage=Join-Path $PSScriptRoot ('build/package-'+[Guid]::NewGuid().ToString('N'))
@@ -8,7 +11,7 @@ New-Item -ItemType Directory -Force -Path $mod,(Join-Path $PSScriptRoot 'artifac
 Copy-Item -LiteralPath (Join-Path $distribution 'BlindRage.exe') -Destination $stage
 foreach($name in @('asura_accessibility.dll','prism.dll')){Copy-Item -LiteralPath (Join-Path $distribution $name) -Destination $mod}
 # Ship project defaults; do not export a developer's preserved local INI.
-Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'accessibility.ini') -Destination (Split-Path -Parent $mod)
+Copy-Item -LiteralPath $ConfigurationFile -Destination (Split-Path -Parent $mod)
 Copy-Item -LiteralPath (Join-Path $distribution 'licenses') -Destination $mod -Recurse
 foreach($name in @('README.md','THIRD_PARTY_NOTICES.md','LICENSE')){if(Test-Path -LiteralPath (Join-Path $PSScriptRoot $name)){Copy-Item -LiteralPath (Join-Path $PSScriptRoot $name) -Destination $stage}}
 New-Item -ItemType Directory -Force -Path (Join-Path $stage 'docs') | Out-Null

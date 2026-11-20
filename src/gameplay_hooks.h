@@ -534,7 +534,7 @@ class GameplayHooks {
             LockFrame frame{state.locks, source, memory.u32(source + 0x20), ++lock_frames_};
             frame.active = frame.index && world && memory.u32(source + 0x5c4) &&
                            !(memory.u32(source + 0x378) & 0x8000) && !memory.u32(world + 0x368);
-            frame.tracing = frame.active && trace_.begin(GetTickCount64());
+            frame.tracing = frame.active && trace_.begin(GetTickCount64(), false);
             state.locks = &frame;
             // The first acquisition callback supplies the authoritative aim line.
             trace_record(lock_record(memory, state, LockTraceKind::frame), state);
@@ -545,6 +545,10 @@ class GameplayHooks {
             return true;
         }
         if (route == Route::aim) {
+            if (state.locks && state.locks->active && !state.locks->tracing && trace_.armed()) {
+                state.locks->tracing = trace_.begin(GetTickCount64());
+                trace_record(lock_record(memory, state, LockTraceKind::frame), state);
+            }
             if (!stable_cone_.load() && !(state.locks && state.locks->tracing)) {
                 AcquisitionScope scope(
                     memory,

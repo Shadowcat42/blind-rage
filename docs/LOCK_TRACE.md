@@ -11,7 +11,7 @@ Add the following to `mods/accessibility/accessibility.ini`, then start a fresh 
 lock_trace=1
 ```
 
-Capture starts at the first active, unpaused, noncinematic shooting-controller tick. It stops after 30 seconds or 8,192 attempted records. A separate 512-record queue reports overflow without resetting narration. `userdata/accessibility/lock-trace.jsonl` is limited to 2 MiB, overwritten rather than appended, and removed by startup diagnostic cleanup. The game thread only copies bounded data; the speech worker resolves metadata names and writes the file. No timer, key listener, speech or sound is added.
+Capture starts at the first candidate-acquisition check inside an active, unpaused, noncinematic shooting-controller tick. Idle opening animations therefore cannot spend the capture window before any target is checked. It stops after 30 seconds or 8,192 attempted records. A separate 512-record queue reports overflow without resetting narration. `userdata/accessibility/lock-trace.jsonl` is limited to 2 MiB, overwritten rather than appended, and removed by startup diagnostic cleanup. The game thread only copies bounded data; the speech worker resolves metadata names and writes the file. No timer, key listener, speech or sound is added.
 
 Copy this file and the session's `accessibility.log` somewhere under ignored `research/` before restarting. Capture the same section with assistance off and on at the selected 20-degree setting, using normal user navigation. Preserve and restore the user's INI choices. Testing can wait until the user is available; no autonomous navigation is required.
 

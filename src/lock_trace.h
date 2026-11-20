@@ -98,10 +98,12 @@ class LockTrace {
     bool armed() const {
         return enabled_.load(std::memory_order_relaxed);
     }
-    bool begin(uint64_t now) {
+    bool begin(uint64_t now, bool startAllowed = true) {
         now = std::max<uint64_t>(now, 1);
         std::lock_guard lock(mutex_);
         if (!enabled_ || done_)
+            return false;
+        if (!started_ && !startAllowed)
             return false;
         if (!started_)
             started_ = now;
