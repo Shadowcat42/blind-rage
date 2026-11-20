@@ -19,10 +19,10 @@ class Speech {
    if(!backend_){log_("No Prism speech backend available");return false;}
    log_(std::string("Speech backend: ")+prism_backend_name_(backend_));return true;
   }
-  bool speak(const std::string& s){
+  bool speak(const std::string& s,bool interrupt=true){
    if(!backend_||s.empty())return false;
-   auto err=prism_backend_speak_(backend_,s.c_str(),true);
-   if(err==PRISM_ERROR_BACKEND_NOT_AVAILABLE){prism_backend_free_(backend_);backend_=prism_registry_create_best_(ctx_);if(backend_)err=prism_backend_speak_(backend_,s.c_str(),true);}
+   auto err=prism_backend_speak_(backend_,s.c_str(),interrupt);
+   if(err==PRISM_ERROR_BACKEND_NOT_AVAILABLE){prism_backend_free_(backend_);backend_=prism_registry_create_best_(ctx_);if(backend_)err=prism_backend_speak_(backend_,s.c_str(),interrupt);}
    if(err!=PRISM_OK)log_(std::string("Speech failed: ")+prism_error_string_(err)+"; text="+s);
    else log_(std::string("SPEAK [")+prism_backend_name_(backend_)+"] "+s);
    return err==PRISM_OK;

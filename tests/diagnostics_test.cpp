@@ -20,6 +20,7 @@ int main(){
  {Speech speech([&](const std::string& line){lines.push_back(line);});
   require(speech.init(dir),"load isolated fake Prism backend");
   require(speech.speak("Repeat selected item")&&speech.speak("Repeat selected item"),"repeat requests succeed");
+  require(speech.speak("require queued",false),"gameplay speech can preserve unrelated speech");
   require(!speech.speak("fail"),"speech failure reported");
   require(speech.speak("fallback"),"fallback backend succeeds");speech.stop();
  }

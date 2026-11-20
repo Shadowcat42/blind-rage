@@ -4,6 +4,8 @@
 #include "ui_hook_source.h"
 #include "window_notifications.h"
 #include "diagnostics.h"
+#include "presentation_hooks.h"
+#include "gameplay_text.h"
 #include <atomic>
 #include <mutex>
 #include <objbase.h>
@@ -15,6 +17,7 @@ static std::atomic<bool> stopping;
 static std::atomic<bool> diagnosticsStarted;
 struct Page {std::array<unsigned char,4096> bytes{};bool valid{};};
 struct CaptureGuard {UiHookSource& source;~CaptureGuard(){source.capture(false);}};
+struct PresentationGuard {PresentationHooks& source;~PresentationGuard(){source.capture(false);}};
 static DWORD WINAPI run(void*) {
  try {
   auto dir=module_path(self).parent_path();auto bin=module_path().parent_path();auto logs=bin.parent_path()/L"userdata"/L"accessibility";fs::create_directories(logs);
@@ -30,6 +33,10 @@ static DWORD WINAPI run(void*) {
   auto& source=UiHookSource::instance();
   if(!source.install(reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr)),*profile)){write("UI hook installation failed; event reader not started");return 4;}
   CaptureGuard captureGuard{source};
+  auto& presentations=PresentationHooks::instance();
+  bool textHooks=presentations.install(reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr)),*profile);
+  if(!textHooks)write("Gameplay text hooks unavailable; menu reader remains active");
+  PresentationGuard presentationGuard{presentations};
   auto co=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);Speech speech(write);bool speaking=speech.init(dir);if(speaking)speech.speak("Blind Rage ready.");
   std::vector<std::wstring> commands={L"test",L"repeat",L"stop",L"mute",L"dump",L"shutdown"};std::vector<HANDLE> events;
   for(auto& c:commands)events.push_back(CreateEventW(nullptr,FALSE,FALSE,event_name(GetCurrentProcessId(),c).c_str()));
@@ -40,6 +47,11 @@ static DWORD WINAPI run(void*) {
   events.push_back(source.event());source.capture(true);
   Reader reader(profile->layout);std::string last,pending,lastSpeech,lastContext,spoken;
   bool muted=false,forceContext=notifications.focused(),scheduled=false,discovered=false;unsigned stable=0,retries=0;
+  auto setting=[&](const wchar_t* key,int fallback){return GetPrivateProfileIntW(L"gameplay",key,fallback,(dir/L"accessibility.ini").c_str())!=0;};
+  GameplayText gameplay({setting(L"subtitles",1),setting(L"tutorials",1)});
+  bool interruptText=setting(L"interrupt",0);
+  if(textHooks){events.push_back(presentations.event());presentations.capture(true);write("Gameplay text observer started (prototype)");}
+  auto narrate_text=[&]{for(const auto& line:gameplay.take()){write("GAME_TEXT ["+line.channel+"] "+line.text);if(notifications.focused()&&!muted&&speaking)speech.speak(line.text,interruptText);}};
   ULONGLONG due=0,burst=0,emptySince=0;uint64_t reads=0;
   auto changed=[&]{auto now=GetTickCount64();if(!scheduled)burst=now;scheduled=true;due=std::min(now+20,burst+80);retries=10;};
   auto inspect=[&](bool dumpOnly){
@@ -63,6 +75,17 @@ static DWORD WINAPI run(void*) {
     counts.clear();for(unsigned i=0;i<UiHookSource::hook_count;i++)counts+=" "+std::to_string(source.notifications(i));write("EVENT_SOURCES"+counts);return;
    }
    auto menus=base?reader.menus(memory):std::vector<Menu>{};
+   for(auto movie:gameplay.movies())if(memory.u32(movie.pointer+0x20)!=movie.index||!(memory.u32(movie.pointer+0xc8)&0x80000000))gameplay.closed(movie);
+   for(auto movie:gameplay.boxes()){
+    if(memory.u32(movie.pointer+0x20)!=movie.index||!(memory.u32(movie.pointer+0xc8)&0x80000000)){gameplay.closed(movie);continue;}
+    // Box tutorials are authored inside the movie rather than delivered as a
+    // FString. Reuse the visible-tree decoder only after actual UI events.
+    auto gfx=memory.u32(movie.pointer+0x180);if(memory.u32(gfx+0x40)!=0x48)continue;
+    auto root=memory.u32(memory.u32(gfx+0x44)+4);std::string text;
+    for(const auto& line:reader.text(memory,root)){if(text.size()+line.size()>8192)break;append_phrase(text,line);}
+    gameplay.box_text(movie,std::move(text));
+   }
+   narrate_text();
    for(const auto& menu:menus)if(reader.class_name(memory,menu.movie)=="BCGFxUI_TitleMenu")source.watch_title(menu.movie);
    std::string current,context;bool incomplete=!menus.empty()&&menus.back().pending;
    if(!menus.empty()&&!incomplete){auto& menu=menus.back();context=menu_context(menu);current=context+":"+std::to_string(menu.selection_key)+"|"+describe(menu,false,true);}
@@ -89,7 +112,7 @@ static DWORD WINAPI run(void*) {
   };
   auto command=[&](unsigned i){
    if(i==0&&speaking)speech.speak("Prism speech test.");
-   if(i==1&&speaking&&!muted)speech.speak(lastSpeech.empty()?"No supported menu is active.":lastSpeech);
+   if(i==1&&speaking&&!muted){auto text=last.empty()?gameplay.repeat():lastSpeech;speech.speak(text.empty()?"No supported text is active.":text);}
    if(i==2)speech.stop();
    if(i==3){muted=!muted;speech.stop();if(speaking)speech.speak(muted?"Menu narration off.":"Menu narration on.");}
    if(i==4)inspect(true);
@@ -103,7 +126,13 @@ static DWORD WINAPI run(void*) {
    if(stopping)break;
    if(wait==WAIT_TIMEOUT){inspect(false);continue;}
    if(wait>=WAIT_OBJECT_0&&wait<WAIT_OBJECT_0+events.size()){
-    auto index=wait-WAIT_OBJECT_0;if(index==commands.size())changed();else command(index);
+    auto index=wait-WAIT_OBJECT_0;
+    if(index==commands.size())changed();
+    else if(index==commands.size()+1){
+     bool overflow=false;auto batch=presentations.take(overflow);
+     if(overflow){gameplay.reset();write("GAME_TEXT_OVERFLOW discarded stale presentation batch");}
+     else{for(const auto& event:batch){if(GetTickCount64()-event.tick>2000){gameplay.reset();continue;}gameplay.apply(event);}narrate_text();if(!gameplay.boxes().empty())changed();}
+    }else command(index);
    }else if(wait==WAIT_OBJECT_0+events.size()){
     MSG message;while(PeekMessageW(&message,nullptr,0,0,PM_REMOVE)){
      if(message.message==WindowNotifications::focus_message){bool was=notifications.focused();bool focused=notifications.update();if(focused&&!was){forceContext=true;source.request_discovery();changed();}}
@@ -112,7 +141,7 @@ static DWORD WINAPI run(void*) {
     }
    }else{write("Event wait failed: "+std::to_string(GetLastError()));break;}
   }
-  source.capture(false);speech.stop();speech.close();for(size_t i=0;i<commands.size();i++)CloseHandle(events[i]);if(SUCCEEDED(co))CoUninitialize();write("Accessibility stopped");
+  presentations.capture(false);source.capture(false);speech.stop();speech.close();for(size_t i=0;i<commands.size();i++)CloseHandle(events[i]);if(SUCCEEDED(co))CoUninitialize();write("Accessibility stopped");
  }catch(...){OutputDebugStringA("Blind Rage worker failed\n");return 3;}return 0;
 }
 extern "C" __declspec(dllexport) DWORD WINAPI A11yInitialize(void*){std::lock_guard lock(lifecycle);if(worker&&WaitForSingleObject(worker,0)==WAIT_TIMEOUT)return 1;if(worker)CloseHandle(worker);stopping=false;worker=CreateThread(nullptr,0,run,nullptr,0,nullptr);return worker?1:0;}

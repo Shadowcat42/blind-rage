@@ -40,7 +40,11 @@ Collection grids resolve their selected record from the list cursor and page, in
 
 This experimental branch replaces recurring menu and registry polling with shared native hooks for ActionScript assignment, movie open/close, text changes, display flag changes, and title status assignments. Windows notifications handle foreground changes and shortcuts. The speech worker waits between events; a mutation starts bounded settling checks before narration. It reads bounded guest-memory snapshots and does not count navigation keys. Live event coverage is still being validated; see [hook research](docs/HOOK_RESEARCH.md).
 
-The current event-driven build passes synthetic and private snapshot tests. The paged Extras extension and New Game handoff polish still need a live pass. Coverage remains under active testing. Custom key binding, pause menus, QTEs, and combat are not claimed as fully accessible. See the [roadmap](docs/ROADMAP.md) for planned gameplay work.
+The menu implementation has passed synthetic, private replay, and user-led live checks. Custom key binding, pause menus, QTEs, and combat are not claimed as fully accessible. See the [roadmap](docs/ROADMAP.md) for planned gameplay work.
+
+The `experiment/gameplay-text-reader` branch adds a preliminary subtitle/tutorial reader. It observes resolved text delivery and tutorial show/clear calls, preserving remapped button names. Subtitle and tutorial narration default to enabled, including existing installations without new settings. Add `[gameplay]` settings `subtitles=0` or `tutorials=0` to `mods/accessibility/dist/accessibility.ini` to disable either. Gameplay speech queues by default (`interrupt=0`); it does not stop NVDA when text disappears. Menu selection announcements retain their existing behavior.
+
+This first gameplay-text build has offline validation only. Text rendered as images, icon-only QTEs, and separate conversation/interlude presentation routes are not covered. See [prototype behavior and limits](docs/GAMEPLAY_TEXT_READER.md) and [QTE research](docs/QTE_INPUT_RESEARCH.md). No gameplay test is required to install this preliminary build.
 
 ## Build from source
 
