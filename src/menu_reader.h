@@ -182,12 +182,15 @@ class Reader {
        }
       }
       auto info=get(fields,"m_info"),param=get(fields,"m_param");
-      if(info&&param&&info->type==6&&param->type==6&&visible(m,c)){
+      if(info&&param&&info->type==6&&param->type==6&&visible(m,c)&&(!input||(input->type==2&&input->boolean))){
        auto data=members(m,info->pointer),selected=members(m,param->pointer);auto list=get(data,"m_items"),owned=get(selected,"Get");
        if(list&&list->type==6&&owned&&owned->type==2){
         auto count=m.u32(list->pointer+0x3c);if(count&&count<1000){
          Menu detail;detail.movie=movie.p;detail.selector=c;detail.cursor=0;detail.collection=true;
-         if(auto title=get(fields,"m_instTitle");title&&title->type==7){for(const auto& s:text(m,m.u32(title->pointer+4))){if(!detail.heading.empty())detail.heading+=" ";detail.heading+=s;}}
+         if(auto title=get(fields,"m_instTitle");title&&title->type==7){
+          auto root=m.u32(title->pointer+4);for(auto child:children(m,root))if(character_name(m,child).ends_with(".mcInst_Title")){root=child;break;}
+          for(const auto& s:text(m,root)){if(!detail.heading.empty())detail.heading+=" ";detail.heading+=s;}
+         }
          auto total=get(data,"m_getItemNum");if(total&&total->type==3)detail.acquired=std::to_string(int(total->number))+"/"+std::to_string(count);
          Item item;item.enabled=owned->boolean;item.label=value_text(m,get(selected,"Title"));item.help=value_text(m,get(selected,"Text"));
          if(!item.label.empty()||!item.help.empty()){detail.items.push_back(std::move(item));out.push_back(std::move(detail));}

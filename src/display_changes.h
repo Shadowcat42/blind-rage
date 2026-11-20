@@ -7,6 +7,7 @@ namespace a11y {
 class DisplayChanges {
  public:
   void record(uint32_t object,uint32_t before) noexcept {
+   if(overflow_)return;
    unsigned slot=(object>>4)%entries_.size();
    for(unsigned attempts=0;attempts<entries_.size();attempts++,slot=(slot+1)%entries_.size()){
     auto& entry=entries_[slot];if(entry.object==object)return;

@@ -25,9 +25,10 @@ int main(){
  auto event=[&]{return WaitForSingleObject(source.event(),0)==WAIT_OBJECT_0;};
  source.capture(true);require(event(),"initial discovery notification");
  normal_target(ctx.data(),b);
- require(event()&&ctx[0]==0x777,"assignment event preserves original return register");
- ctx[0]=0x100;normal_target(ctx.data(),b);require(!event(),"unchanged assignment stays quiet");
- ctx[0]=0x100;word(b,0x508,2);raw_target(ctx.data(),b);require(event()&&ctx[0]==0x888,"raw assignment event");
+ require(!event()&&ctx[0]==0x777,"assignment preserves original return register and waits for boundary");advance_target(ctx.data(),b);require(event(),"assignment event at boundary");
+ ctx[0]=0x100;normal_target(ctx.data(),b);advance_target(ctx.data(),b);require(!event(),"unchanged assignment stays quiet");
+ ctx[0]=0x100;word(b,0x508,2);raw_target(ctx.data(),b);require(!event()&&ctx[0]==0x888,"raw assignment preserves original behavior");advance_target(ctx.data(),b);require(event(),"raw assignment event");
+ ctx[0]=0x100;word(b,0x508,1);normal_target(ctx.data(),b);ctx[0]=0x100;word(b,0x508,2);raw_target(ctx.data(),b);advance_target(ctx.data(),b);require(!event(),"temporary member writes restored before boundary stay quiet");
  open_target(ctx.data(),b);require(event()&&lifecycle_calls==1,"open notification");
  close_target(ctx.data(),b);require(event()&&lifecycle_calls==2,"close notification");
  // Native text layout matches the reader's UTF-16 paragraph decoder.

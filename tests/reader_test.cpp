@@ -49,6 +49,15 @@ int main(int argc,char** argv){try{
    reads=0;start=std::chrono::steady_clock::now();for(int i=0;i<10;i++)r.discover(memory);ms=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-start).count()/10;
    std::cout<<"DISCOVER "<<ms<<" ms, "<<reads/10<<" reads\n";
   }else if(argc==3)check(menus.back().items[menus.back().cursor].label==argv[2],"snapshot selected item matches expected label");
+  if(menus.back().collection){
+   auto object=memory.u32(menus.back().selector+0x1c8),table=memory.u32(object+0x1c),mask=memory.u32(table+4);
+   for(uint32_t i=0;i<=mask&&mask<4096;i++){
+    auto entry=table+8+i*32;if(memory.u32(entry)==0xfffffffe||memory.string(memory.u32(memory.u32(entry+8)))!="m_input"||uint64_t(entry)+32>low.size())continue;
+    char saved=low[entry+20];low[entry+20]=0;auto background=r.menus(memory);low[entry+20]=saved;
+    check(std::none_of(background.begin(),background.end(),[](const Menu& menu){return menu.collection;}),"inactive retained collection panel cannot override its parent menu");
+    check(r.menus(memory)==menus,"reactivated collection panel restores its selection");break;
+   }
+  }
   if(menus.back().modal&&!menus.back().message){
    check(!menus.back().heading.empty(),"confirmation retains the question as well as the selected button");
    std::vector<uint32_t> todo{menus.back().selector};std::set<uint32_t> seen;bool tested=false;

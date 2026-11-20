@@ -2,6 +2,7 @@
 #include "native_hooks.h"
 #include "ui_changes.h"
 #include "display_changes.h"
+#include "assignment_changes.h"
 #include <atomic>
 #include <algorithm>
 #include <windows.h>
@@ -50,9 +51,12 @@ class UiHookSource {
    auto& self=instance();
    if(!self.enabled_.load(std::memory_order_relaxed)){self.original_[I](context,base);return;}
    self.calls_[I].fetch_add(1,std::memory_order_relaxed);
-   Read read{base};auto before=ui_before_assignment(read,context);
+   Read read{base};auto& batch=assignment_batch(self);
+   auto object=ui_argument(context,3),key=ui_word(read,ui_argument(context,5));
+   // The outer named setter and its raw setter often touch the same member.
+   // Capture the first value once, including across repeated writes this frame.
+   if(!batch.contains(object,key))batch.record(ui_before_assignment(read,context));
    self.original_[I](context,base);
-   if(ui_after_assignment(read,before))self.changed(I);
   }
   static void assignment(void* c,uint8_t* b){member<0>(c,b);}
   static void raw_assignment(void* c,uint8_t* b){member<1>(c,b);}
@@ -98,6 +102,11 @@ class UiHookSource {
    static thread_local uint64_t epoch;
    auto current=self.epoch_.load(std::memory_order_relaxed);if(epoch!=current){batch.clear();epoch=current;}return batch;
   }
+  static AssignmentChanges& assignment_batch(UiHookSource& self){
+   static thread_local AssignmentChanges batch;
+   static thread_local uint64_t epoch;
+   auto current=self.epoch_.load(std::memory_order_relaxed);if(epoch!=current){batch.clear();epoch=current;}return batch;
+  }
   template<unsigned I> static void display_change(void* context,uint8_t* base){
    auto& self=instance();if(!self.enabled_.load(std::memory_order_relaxed)){self.original_[I](context,base);return;}
    self.calls_[I].fetch_add(1,std::memory_order_relaxed);
@@ -112,7 +121,9 @@ class UiHookSource {
    auto& self=instance();self.original_[7](context,base);
    if(!self.enabled_.load(std::memory_order_relaxed))return;
    self.calls_[7].fetch_add(1,std::memory_order_relaxed);
-   Read read{base};if(display_batch(self).flush([&](uint32_t object){return ui_word(read,object+0xa0)&3;}))self.changed(7);
+   Read read{base};bool displayChanged=display_batch(self).flush([&](uint32_t object){return ui_word(read,object+0xa0)&3;});
+   bool memberChanged=assignment_batch(self).flush([&](uint32_t object,uint32_t key){return ui_member_value(read,object,key);});
+   if(displayChanged||memberChanged)self.changed(7);
   }
   static void script_assignment(void* context,uint8_t* base){
    auto& self=instance();const auto movie=ui_argument(context,3);
