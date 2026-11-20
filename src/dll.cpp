@@ -51,22 +51,24 @@ static DWORD WINAPI run(void*) {
   bool restartReady=restart.install(reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr)),*profile,bin.parent_path()/L"BlindRage.exe",module_path());
   restart.capture(restartReady);write(restartReady?"Settings restart redirect installed":"Settings restart redirect unavailable; restart through BlindRage.exe manually");
   auto co=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);Speech speech(write);bool speaking=speech.init(dir);if(speaking)speech.speak("Blind Rage ready.");
+  // One settings file: mods/accessibility/accessibility.ini, the parent of dist.
+  auto ini=(dir.parent_path()/L"accessibility.ini").wstring();write("CONFIG "+utf8(ini)+(fs::exists(ini)?"":" (missing; defaults in use)"));
   std::vector<std::wstring> commands={L"test",L"repeat",L"stop",L"mute",L"dump",L"shutdown",L"status"};std::vector<HANDLE> events;
   for(auto& c:commands)events.push_back(CreateEventW(nullptr,FALSE,FALSE,event_name(GetCurrentProcessId(),c).c_str()));
   const int defaults[]={VK_F1,VK_F2,VK_F3,VK_F5,VK_F8,0,VK_F4};int hotkeys[7]{};
-  for(size_t i=0;i<commands.size();i++)hotkeys[i]=GetPrivateProfileIntW(L"hotkeys",commands[i].c_str(),defaults[i],(dir/L"accessibility.ini").c_str());
+  for(size_t i=0;i<commands.size();i++)hotkeys[i]=GetPrivateProfileIntW(L"hotkeys",commands[i].c_str(),defaults[i],ini.c_str());
   WindowNotifications notifications;if(!notifications.initialize(hotkeys)){write("Foreground notifications unavailable; reader stopped");for(auto h:events)CloseHandle(h);speech.close();if(SUCCEEDED(co))CoUninitialize();return 5;}
   for(unsigned i=0;i<commands.size();i++)if(notifications.focused()&&hotkeys[i]&&!notifications.hotkey_registered(i))write("Hotkey unavailable: "+utf8(commands[i]));
   events.push_back(source.event());source.capture(true);
   Reader reader(profile->layout);std::string last,pending,lastSpeech,lastContext,spoken;
   bool muted=false,forceContext=notifications.focused(),scheduled=false,discovered=false,metadataReady=false;unsigned stable=0,retries=0;
-  auto setting=[&](const wchar_t* key,int fallback){return GetPrivateProfileIntW(L"gameplay",key,fallback,(dir/L"accessibility.ini").c_str())!=0;};
+  auto setting=[&](const wchar_t* key,int fallback){return GetPrivateProfileIntW(L"gameplay",key,fallback,ini.c_str())!=0;};
   RecompPrompts prompts;if(!prompts.initialize(runtime,reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr)),*profile))write("Recomp prompt labels unavailable");
   GameplayText gameplay({setting(L"subtitles",1),setting(L"tutorials",1)},[&](std::string_view tag){return prompts.button(tag);});
-  GameplayStatus status([&](std::string_view tag){return prompts.button(tag);},GetPrivateProfileIntW(L"gameplay",L"low_health_percent",25,(dir/L"accessibility.ini").c_str()));
+  GameplayStatus status([&](std::string_view tag){return prompts.button(tag);},GetPrivateProfileIntW(L"gameplay",L"low_health_percent",25,ini.c_str()));
   bool statusWarnings=setting(L"status_warnings",1);
   bool interruptText=setting(L"interrupt",0);
-  bool qteEnabled=setting(L"qtes",1),interruptQte=setting(L"qte_interrupt",1);int shootingDegrees=std::clamp<int>(GetPrivateProfileIntW(L"gameplay",L"shooting_cone_degrees",45,(dir/L"accessibility.ini").c_str()),1,89);
+  bool qteEnabled=setting(L"qtes",1),interruptQte=setting(L"qte_interrupt",1);int shootingDegrees=std::clamp<int>(GetPrivateProfileIntW(L"gameplay",L"shooting_cone_degrees",45,ini.c_str()),1,89);
   gameHooks.options(textHooks&&qteEnabled,setting(L"shooting_assist",1)?float(shootingDegrees):0.f,setting(L"status_button",1));
   QteReader qtes([&](std::string_view tag){return prompts.button(tag);},[&](std::string_view tag){return prompts.gesture(tag);});
   SynchronicReader timing([&](std::string_view tag){return prompts.button(tag);});

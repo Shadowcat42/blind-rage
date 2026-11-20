@@ -55,7 +55,6 @@ try {
  & $compiler @common '-municode' 'tests/speech_test.cpp' '-o' 'dist/speech_test.exe' '-lbcrypt' '-lole32' '-luser32'
  if($LASTEXITCODE){throw 'Speech test compilation failed'}
  Copy-Item -LiteralPath vendor/dynamic/release/bin/prism.dll -Destination dist/prism.dll
- if(!(Test-Path -LiteralPath dist/accessibility.ini)){Copy-Item -LiteralPath accessibility.ini -Destination dist/accessibility.ini}
  New-Item -ItemType Directory -Force dist/licenses | Out-Null
  Copy-Item -LiteralPath vendor/NOTICE -Destination dist/licenses/Prism-NOTICE.txt
  Copy-Item -LiteralPath vendor/LICENSES -Destination dist/licenses -Recurse -Force

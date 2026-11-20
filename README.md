@@ -34,7 +34,7 @@ When an option asks to restart the game, an active Blind Rage session now restar
 | Ctrl+Alt+F5 | Toggle narration |
 | Ctrl+Alt+F8 | Save local UI diagnostics |
 
-Configure virtual-key codes in `mods/accessibility/dist/accessibility.ini`; 0 disables a chord. Restart to reload the file. On this experimental branch, Windows hotkeys are registered while the game has focus and released when it loses focus. A conflicting shortcut may be unavailable; named launcher commands remain usable.
+Configure virtual-key codes in `mods/accessibility/accessibility.ini`; 0 disables a chord. Restart to reload the file. On this experimental branch, Windows hotkeys are registered while the game has focus and released when it loses focus. A conflicting shortcut may be unavailable; named launcher commands remain usable.
 
 ## Current behavior
 
@@ -46,7 +46,7 @@ This experimental branch replaces recurring menu and registry polling with share
 
 The menu implementation has passed synthetic, private replay, and user-led live checks. Custom key binding, pause menus, QTEs, and combat are not claimed as fully accessible. See the [roadmap](docs/ROADMAP.md) for planned gameplay work.
 
-The `experiment/gameplay-text-reader` branch adds subtitle/tutorial narration and the first Episode 1 gameplay prototype. It follows the recomp's effective Xbox, PlayStation or keyboard display and current remapped button labels. Subtitle and tutorial narration default to enabled, including existing installations without new settings. Add `[gameplay]` settings `subtitles=0` or `tutorials=0` to `mods/accessibility/dist/accessibility.ini` to disable either. Text and status speech queue by default (`interrupt=0`); urgent new QTE instructions may interrupt (`qte_interrupt=1`). Disappearing cues do not stop NVDA.
+The `experiment/gameplay-text-reader` branch adds subtitle/tutorial narration and the first Episode 1 gameplay prototype. It follows the recomp's effective Xbox, PlayStation or keyboard display and current remapped button labels. Subtitle and tutorial narration default to enabled, including existing installations without new settings. Add `[gameplay]` settings `subtitles=0` or `tutorials=0` to `mods/accessibility/accessibility.ini` to disable either. Text and status speech queue by default (`interrupt=0`); urgent new QTE instructions may interrupt (`qte_interrupt=1`). Disappearing cues do not stop NVDA.
 
 Shared QTE readers cover resolved presses, mashes, holds, grouped stick commands and rotations, plus the separate Synchronic input window. Health/Burst status is available on Back/Select during active gameplay, with low-health warnings and native Burst-button readiness. This follows the recomp's Back binding (default Tab on keyboard), preserves the game's original handler and stays silent in cutscenes or pause/menu screens. Set `status_button=0` to disable it; Ctrl+Alt+F4 remains an alternative. The optional shooting aid widens the game's acquisition cone while retaining its eligibility, range, occlusion, lock limits, homing and manual firing. Defaults are `qtes=1`, `status_warnings=1`, `shooting_assist=1` and `shooting_cone_degrees=45`; changes take effect after restarting the mod/game.
 
