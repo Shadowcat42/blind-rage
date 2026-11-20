@@ -42,11 +42,13 @@ int main(int argc,char** argv){try{
  check(describe(collection,false,true)=="Avenger: Asura's default gauge.","collection movement includes effect but excludes heading and acquired total");
  collection.heading.clear();check(describe(collection,true,true)=="Acquired: 1/9. Avenger: Asura's default gauge.","empty collection heading adds no leading punctuation");
  collection.items[0]={"???","Complete the requirement.",false};check(describe(collection,false,true)=="Locked: Complete the requirement","locked item announces requirement without placeholder or double punctuation");
- Value gridCursor;gridCursor.type=3;gridCursor.number=2;Value gridPage=gridCursor;gridPage.number=1;Value pageSize=gridCursor;pageSize.type=4;pageSize.number=10;
- check(collection_grid_index(&gridCursor,&gridPage,&pageSize,45)==12,"paged collection uses page offset and local cursor");
+ Value gridCursor;gridCursor.type=3;gridCursor.number=12;Value gridPage=gridCursor;gridPage.number=1;Value pageSize=gridCursor;pageSize.type=4;pageSize.number=10;
+ check(collection_grid_index(&gridCursor,&gridPage,&pageSize,45)==12,"paged collection retains its absolute cursor");
  gridCursor.type=4;check(collection_grid_index(&gridCursor,&gridPage,&pageSize,45)==12,"integer collection cursor");
- gridPage.number=4;gridCursor.number=4;check(collection_grid_index(&gridCursor,&gridPage,&pageSize,45)==44,"partial last collection page");
- gridCursor.number=5;check(collection_grid_index(&gridCursor,&gridPage,&pageSize,45)==-1,"reject empty cell on partial collection page");
+ gridPage.number=4;gridCursor.number=44;check(collection_grid_index(&gridCursor,&gridPage,&pageSize,45)==44,"partial last collection page");
+ gridCursor.number=45;check(collection_grid_index(&gridCursor,&gridPage,&pageSize,45)==-1,"reject empty cell on partial collection page");
+ gridPage.number=1;gridCursor.number=2;check(collection_grid_index(&gridCursor,&gridPage,&pageSize,45)==-1,"wait for coherent page and absolute cursor during tab switching");
+ gridCursor.number=15;pageSize.number=15;check(collection_grid_index(&gridCursor,&gridPage,&pageSize,30)==15,"movie second tab starts at absolute cursor fifteen");
  gridCursor.number=std::numeric_limits<double>::quiet_NaN();check(collection_grid_index(&gridCursor,&gridPage,&pageSize,45)==-1,"reject invalid collection cursor");
  gridCursor.number=2;pageSize.number=0;check(collection_grid_index(&gridCursor,&gridPage,&pageSize,45)==-1,"reject zero page size");
  Menu lockedGrid=collection;lockedGrid.items[0]={"???","",false};lockedGrid.collection_count=45;lockedGrid.collection_position=0;

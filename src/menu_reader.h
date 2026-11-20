@@ -55,13 +55,14 @@ struct Menu {
 };
 
 inline int collection_grid_index(const Value* cursor,const Value* page,const Value* perPage,uint32_t count){
- // The array spans the category; the nested grid cursor addresses its page.
+ // The cursor addresses the full category. Page metadata validates the visible
+ // window; it is not an offset to add to the already absolute cursor.
  auto integer=[](const Value* value,int maximum){return value&&(value->type==3||value->type==4)&&std::isfinite(value->number)&&value->number>=0&&value->number<=maximum&&std::floor(value->number)==value->number;};
  if(!count||count>1000||!integer(cursor,999))return -1;
  int index=int(cursor->number);
  if(page||perPage){
-  if(!integer(page,999)||!integer(perPage,1000)||perPage->number<1||index>=perPage->number)return -1;
-  index+=int(page->number)*int(perPage->number);
+  if(!integer(page,999)||!integer(perPage,1000)||perPage->number<1)return -1;
+  if(index/int(perPage->number)!=int(page->number))return -1;
  }
  return index<int(count)?index:-1;
 }
