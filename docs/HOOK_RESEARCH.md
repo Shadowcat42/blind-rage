@@ -1,6 +1,6 @@
 # Event-driven reader investigation
 
-Branch: `experiment/event-driven-reader`. Implementation and live coverage are not yet complete.
+Branch: `experiment/event-driven-reader`. The event-driven replacement is implemented. Final live validation remains open, including the latest startup-order correction.
 
 ## Verified offline observations
 
@@ -58,6 +58,26 @@ During a user-confirmed idle Gauges check, counter samples at ticks 38246703 and
 The New Game difficulty-to-confirmation transition briefly exposed a dormant title selector. A temporary external read-only watcher confirmed that the title controller retained `m_gameDiffHelp=true` and `m_input=false` across the gap. Ordinary `m_input` flags alone cannot determine ownership on every controller, so the adapter uses that explicit title prompt phase to suppress its background selector and text fallback. Dialog selectors retain their own lifecycle. A changed question also starts a new narration context when the game reuses a dialog object, preserving the prompt independently of gap duration. Synthetic tests and a captured handoff simulation cover the suppression without adding a general return delay. The temporary watcher has been stopped.
 
 ## Required before replacing polling
+
+### Completion audit, 2026-11-19
+
+The original goal requires verified executable hooks, an isolated test branch, and preservation of the existing reader's functionality without its continuous polling loop. Current evidence is:
+
+| Requirement | Current evidence | Remaining validation |
+| --- | --- | --- |
+| Actual executable entry points and ABI | Ten mapped native functions, disassembly comparisons, isolated real-executable detour checks, and live interception; disc and updated profiles documented in `BUILD_PROFILES.md` | No known mapping gap for the supported fingerprints |
+| Separate experimental branch | `experiment/event-driven-reader`, pushed to the private mod-only repository | Keep the experiment separate until live validation finishes |
+| Event-driven worker and notifications | `src/dll.cpp` waits indefinitely when no work is scheduled; bounded settle reads follow notifications. `window_notifications.h` uses foreground events and registered hotkeys. The movie boundary flushes queued mutations without running the reader | Total game CPU cost remains unmeasured; the measured reduction is in worker reads |
+| Preserve startup, menus, submenus, dialogs, settings, help, collections, and return navigation | Shared decoder, hook-source synthetic tests, 15 private replay cases across both profiles, and user-led live tests described above | Fresh launch must validate the newest title-readiness gate; saved-state replay cannot prove live startup ordering |
+| Preserve focus return and diagnostics | Foreground-return discovery, explicit command handling, diagnostic cleanup and fake-speech logging tests | Retest if subsequent lifecycle changes alter these paths |
+| Avoid an idle registry scan | Confirmed idle Gauges interval: 15 reads in 25.547 seconds, no periodic discovery and no repeated speech | Genuine UI mutations can still request bounded reads |
+| Standalone mod build and packaging | Six local synthetic suites and GitHub CI passed for `3f5c203`; package allowlist inspected, containing no game files or captures | No remaining build failure at this revision |
+
+The installed startup correction gates ordinary title selections on native `bEnableInput`, preserving modal speech. Its tests cover disabled input, input restoration, and modal choices; a fresh user-led launch is still needed. The last available log is from the preceding build and demonstrates the reported premature title announcement, so it cannot establish that the correction works. The overall goal remains active until that remaining live evidence is available.
+
+Gameplay subtitle/tutorial/QTE findings are recorded separately in `GAMEPLAY_CUE_RESEARCH.md`. They are research for the requested expansion, not evidence that gameplay narration is implemented.
+
+### Original verification checklist
 
 - Resolve guest addresses to exact host entry points in this installed build; verify the actual runtime register ABI instead of assuming the current upstream SDK matches it.
 - Verify interception of both direct and indirect calls, preserving original behavior and register state.
