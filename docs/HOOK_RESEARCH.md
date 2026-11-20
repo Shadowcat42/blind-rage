@@ -1,6 +1,6 @@
 # Event-driven reader investigation
 
-Branch: `experiment/event-driven-reader`. The event-driven replacement is implemented. Final live validation remains open, including the latest startup-order correction.
+Branch: `experiment/event-driven-reader`. The event-driven replacement is implemented and its completion audit passed. Gameplay narration is a separate expansion.
 
 ## Verified offline observations
 
@@ -66,14 +66,14 @@ The original goal requires verified executable hooks, an isolated test branch, a
 | Requirement | Current evidence | Remaining validation |
 | --- | --- | --- |
 | Actual executable entry points and ABI | Ten mapped native functions, disassembly comparisons, isolated real-executable detour checks, and live interception; disc and updated profiles documented in `BUILD_PROFILES.md` | No known mapping gap for the supported fingerprints |
-| Separate experimental branch | `experiment/event-driven-reader`, pushed to the private mod-only repository | Keep the experiment separate until live validation finishes |
+| Separate experimental branch | `experiment/event-driven-reader`, pushed to the private mod-only repository | Experimental branch remains separate from main |
 | Event-driven worker and notifications | `src/dll.cpp` waits indefinitely when no work is scheduled; bounded settle reads follow notifications. `window_notifications.h` uses foreground events and registered hotkeys. The movie boundary flushes queued mutations without running the reader | Total game CPU cost remains unmeasured; the measured reduction is in worker reads |
-| Preserve startup, menus, submenus, dialogs, settings, help, collections, and return navigation | Shared decoder, hook-source synthetic tests, 15 private replay cases across both profiles, and user-led live tests described above | Fresh launch must validate the newest title-readiness gate; saved-state replay cannot prove live startup ordering |
+| Preserve startup, menus, submenus, dialogs, settings, help, collections, and return navigation | Shared decoder, hook-source synthetic tests, 15 private replay cases across both profiles, and user-led live tests described above | Updated session 1856 verifies Press Start, load success, DLC check, then title; navigation and return through Extras and Options also emit speech |
 | Preserve focus return and diagnostics | Foreground-return discovery, explicit command handling, diagnostic cleanup and fake-speech logging tests | Retest if subsequent lifecycle changes alter these paths |
 | Avoid an idle registry scan | Confirmed idle Gauges interval: 15 reads in 25.547 seconds, no periodic discovery and no repeated speech | Genuine UI mutations can still request bounded reads |
 | Standalone mod build and packaging | Six local synthetic suites and GitHub CI passed for `3f5c203`; package allowlist inspected, containing no game files or captures | No remaining build failure at this revision |
 
-The installed startup correction gates ordinary title selections on native `bEnableInput`, preserving modal speech. Its tests cover disabled input, input restoration, and modal choices; a fresh user-led launch is still needed. The last available log is from the preceding build and demonstrates the reported premature title announcement, so it cannot establish that the correction works. The overall goal remains active until that remaining live evidence is available.
+The installed startup correction gates ordinary title selections on native `bEnableInput`, preserving modal speech. Its tests cover disabled input, input restoration, and modal choices. A fresh updated-build session (PID 1856) emitted Press Start at tick 51968937, Load successful at 51970421, Checking for downloadable content at 51971875, and the first Title Menu at 51974921. There was no preceding title announcement. Subsequent speech records confirm Extras entry, title return, and Options entry. Together with the earlier live navigation, private replay, hook checks, and standalone CI, this satisfies the original event-driven replacement goal. This establishes supported UI behavior and reduced worker reads; it does not establish zero per-frame hook overhead or a total CPU benchmark.
 
 Gameplay subtitle/tutorial/QTE findings are recorded separately in `GAMEPLAY_CUE_RESEARCH.md`. They are research for the requested expansion, not evidence that gameplay narration is implemented.
 
