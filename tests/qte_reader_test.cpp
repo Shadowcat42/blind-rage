@@ -26,6 +26,20 @@ int main() {
         auto buttons = [](std::string_view button) {
             return controller_button(button, PromptDevice::playstation);
         };
+        QteGroup wording;
+        wording.mode = 3;
+        check(qte_instruction(wording, {{"circle", InputAction::press},
+                                        {"left stick up", InputAction::move}}) ==
+                  "Circle and left stick up together.",
+              "mixed simultaneous inputs omit redundant action verbs");
+        wording.mode = 1;
+        check(qte_instruction(wording, {{"right stick clockwise", InputAction::rotate}}) ==
+                  "Right stick clockwise repeatedly.",
+              "rotation repetition remains explicit without an action prefix");
+        wording.mode = 0;
+        check(qte_instruction(wording, {{"W, D, S, A in order", InputAction::sequence}}) ==
+                  "W, D, S, A in order.",
+              "keyboard rotation sequence retains ordering without a press prefix");
         QteReader reader(buttons);
         QteGroup group;
         group.source = 1;
@@ -45,14 +59,14 @@ int main() {
         check(reader.take().empty(), "old snapshot cannot authorize a newly created icon");
         reader.apply(group, 4, names);
         auto lines = reader.take();
-        check(lines.size() == 1 && lines[0] == "Move left stick down and right stick up together.",
+        check(lines.size() == 1 && lines[0] == "Left stick down and right stick up together.",
               "paired tilts retain request grouping");
         check(reader.take().empty(), "unchanged active QTE is quiet");
         QteReader aliased([](std::string_view) { return std::string("K"); });
         aliased.apply(icon("A", "tag10", 1));
         aliased.apply(icon("X", "tag11", 2));
         aliased.apply(group, 3, names);
-        check(aliased.repeat() == "Press K.",
+        check(aliased.repeat() == "K.",
               "shared keyboard binding does not invent a double-key chord");
         group.active = false;
         reader.apply(group, 5, names);
@@ -70,13 +84,13 @@ int main() {
         reader.apply(icon("Barrage_Y", "tag11", 8));
         reader.apply(group, 9, names);
         lines = reader.take();
-        check(lines.size() == 1 && lines[0] == "Press cross.",
+        check(lines.size() == 1 && lines[0] == "Cross.",
               "ordered mode reads the current resolved icon only");
         group.commands[0].visible = false;
         group.commands[1].visible = true;
         reader.apply(group, 10, names);
         lines = reader.take();
-        check(lines.size() == 1 && lines[0] == "Press triangle.",
+        check(lines.size() == 1 && lines[0] == "Triangle.",
               "judge mode overrides icon styling prefixes");
         auto finish = icon("", "tag11", 11);
         finish.kind = PresentationKind::button_success;
@@ -110,11 +124,11 @@ int main() {
         group.commands[0].visible = true;
         reader.apply(icon("RRotateL", "tag10", 17));
         reader.apply(group, 18, names);
-        check(reader.repeat() == "Rotate left stick clockwise.",
+        check(reader.repeat() == "Left stick clockwise.",
               "misleading native rotation names use verified physical stick");
         reader.apply(icon("LRotateSet", "tag10", 19));
         reader.apply(group, 20, names);
-        check(reader.repeat() == "Rotate sticks counterclockwise.",
+        check(reader.repeat() == "Sticks counterclockwise.",
               "paired rotation does not claim both channels must succeed");
         auto hidden = icon("", "tag10", 21);
         hidden.kind = PresentationKind::button_visible;

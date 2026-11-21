@@ -1,5 +1,6 @@
 #pragma once
 #include "qte_events.h"
+#include "presentation_events.h"
 #include <mutex>
 #include <optional>
 
@@ -72,7 +73,12 @@ inline bool capture_timing(const Memory &m, uint32_t source, int32_t track, bool
     return true;
 }
 struct GameplayEvent {
-    bool timing{}, status_request{}, menu_repeat{};
+    bool record_info{};
+    int record_command{}, record_difficulty{};
+    uint32_t record_movie{}, record_index{};
+    CapturedString<65> record_story;
+    CapturedString<513> record_text;
+    bool timing{}, status_request{}, menu_repeat{}, menu_changed{};
     uint32_t repeat_movie{}, repeat_index{};
     QteGroup group;
     TimingState sync;

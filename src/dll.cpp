@@ -410,8 +410,7 @@ static DWORD WINAPI run(void *) {
             if (!menus.empty() && !incomplete) {
                 auto &menu = menus.back();
                 context = menu_context(menu);
-                current = context + ":" + std::to_string(menu.selection_key) + "|" +
-                          describe(menu, false, true);
+                current = menu_selection_state(menu);
             }
             if (current == pending)
                 stable++;
@@ -595,7 +594,44 @@ static DWORD WINAPI run(void *) {
                                           " revision=" + std::to_string(event.revision));
                             } else {
                                 const auto &event = native[item.index];
-                                if (event.menu_repeat)
+                                if (event.record_info) {
+                                    if (memory.u32(event.record_movie + 0x20) ==
+                                            event.record_index &&
+                                        movie_class(memory, event.record_movie,
+                                                    "BCGFxUI_ChapterMenu")) {
+                                        reader.record_info(event.record_movie, event.record_index,
+                                                           event.record_story.utf8(),
+                                                           event.record_difficulty,
+                                                           event.record_text.utf8());
+                                        changed();
+                                    }
+                                } else if (event.record_command) {
+                                    if (notifications.focused() &&
+                                        memory.u32(event.record_movie + 0x20) ==
+                                            event.record_index &&
+                                        movie_class(memory, event.record_movie,
+                                                    "BCGFxUI_ChapterMenu"))
+                                        if (auto menu = reader.navigate_record(
+                                                memory, event.record_movie, event.record_command)) {
+                                            // This cursor belongs to the mod: its new state is
+                                            // already complete, so no animation settling delay is needed.
+                                            lastContext = menu_context(*menu);
+                                            last = pending = menu_selection_state(*menu);
+                                            stable = 1;
+                                            lastSpeech = record_navigation_text(
+                                                *menu, event.record_command <= 2);
+                                            write("MENU_RECORD age_ms=" +
+                                                  std::to_string(GetTickCount64() - event.tick) +
+                                                  " " + lastSpeech);
+                                            if (!muted && speaking) {
+                                                speech.speak(lastSpeech);
+                                                spoken = last;
+                                                forceContext = false;
+                                            }
+                                        }
+                                } else if (event.menu_changed)
+                                    changed();
+                                else if (event.menu_repeat)
                                     menuRepeat = {{event.repeat_movie, event.repeat_index}};
                                 else if (event.status_request)
                                     statusRequest = event.status;

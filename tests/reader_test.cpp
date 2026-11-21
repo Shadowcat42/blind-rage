@@ -12,6 +12,43 @@ static void check(bool v, const char *message) {
 }
 int main(int argc, char **argv) {
     try {
+        auto record = parse_episode_record(
+            "Time score|00:02:39|B/Battle points|6149|A/Synchronic rate|71%|S");
+        check(record && (*record)[0].rank == "B" && (*record)[1].value == "6149" &&
+                  (*record)[2].rank == "S",
+              "record callback preserves each category rank and score");
+        check(!parse_episode_record("Time|1|A/Battle|2|B") &&
+                  !parse_episode_record("Time|1|Z/Battle|2|A/Sync|3|B"),
+              "partial or unknown record grades cannot become plausible speech");
+        RecordBrowse browse;
+        browse.capture(1, 2, "000", 1, "Time|1|A/Battle|2|B/Sync|3|-");
+        check(browse.scores[1] && (*browse.scores[1])[2].rank == "Unranked",
+              "unplayed grade is explicit");
+        browse.stat = 2;
+        browse.move(2);
+        check(browse.difficulty == 2 && browse.stat == 2,
+              "difficulty changes preserve the selected statistic");
+        browse.move(4);
+        browse.move(4);
+        check(browse.stat == 0, "statistic browsing wraps independently");
+        browse.capture(1, 3, "010", 0, "Time|4|A/Battle|5|B/Sync|6|C");
+        check(!browse.scores[1] && browse.story == "010",
+              "new movie identity or episode clears stale grades");
+        Menu recordMenu;
+        recordMenu.movie = 1;
+        recordMenu.selector = 2;
+        recordMenu.records = recordMenu.readout = true;
+        recordMenu.record_difficulty = "NORMAL";
+        recordMenu.cursor = 0;
+        recordMenu.items = {{"Battle points: 6149. Rank A.", "", true}};
+        check(record_navigation_text(recordMenu, false) == "Battle points: 6149. Rank A.",
+              "stat navigation omits repeated difficulty");
+        check(record_navigation_text(recordMenu, true) == "NORMAL. Battle points: 6149. Rank A.",
+              "difficulty navigation announces its new difficulty and current stat");
+        auto recordState = menu_selection_state(recordMenu);
+        recordMenu.selection_key = 1;
+        check(menu_selection_state(recordMenu) != recordState,
+              "difficulty changes remain distinct even when both scores are identical");
         check(clean_text(" <font color='#fff'>Sound &amp; Music</font>\n  80 ") ==
                   "Sound & Music 80",
               "text cleanup");
@@ -134,6 +171,46 @@ int main(int argc, char **argv) {
         data[0x811c] = 1;
         check(reader.selector_input_active(fake, 0x4000),
               "reactivated pause owner allows normal return announcements");
+        {
+            std::vector<uint8_t> lifecycle(0x4000);
+            auto stateWord = [&](uint32_t at, uint32_t value) {
+                for (unsigned i = 0; i < 4; ++i)
+                    lifecycle[at + i] = uint8_t(value >> (24 - 8 * i));
+            };
+            ReaderLayout layout;
+            layout.names_global = 0x100;
+            Reader lifecycleReader(layout);
+            Memory memory([&](uint32_t at, void *out, size_t n) {
+                if (uint64_t(at) + n > lifecycle.size())
+                    return false;
+                std::memcpy(out, lifecycle.data() + at, n);
+                return true;
+            });
+            stateWord(0x100, 0x200);
+            stateWord(0x104, 3);
+            for (unsigned i = 0; i < 3; ++i)
+                stateWord(0x200 + i * 4, 0x300 + i * 0x80);
+            std::strcpy(reinterpret_cast<char *>(lifecycle.data() + 0x308), "BCGFxMovieMenu");
+            std::strcpy(reinterpret_cast<char *>(lifecycle.data() + 0x388), "BCGFxUI_Common");
+            std::strcpy(reinterpret_cast<char *>(lifecycle.data() + 0x408), "AnyMenuSubclass");
+            stateWord(0x1034, 0x1400);
+            stateWord(0x142c, 2);
+            stateWord(0x1440, 0x1500);
+            stateWord(0x152c, 0);
+            stateWord(0x10c8, 0x80000000);
+            for (uint8_t state : {uint8_t(0), uint8_t(1), uint8_t(2), uint8_t(3), uint8_t(4)}) {
+                lifecycle[0x1174] = state;
+                check(lifecycleReader.menu_movie_active(memory, 0x1000) == (state < 2),
+                      "every menu subclass obeys the shared open/closing lifecycle");
+            }
+            stateWord(0x142c, 1);
+            lifecycle[0x1174] = 3;
+            check(lifecycleReader.menu_movie_active(memory, 0x1000),
+                  "common dialog keeps its separate lifecycle even with native state closed");
+            stateWord(0x10c8, 0);
+            check(!lifecycleReader.menu_movie_active(memory, 0x1000),
+                  "unloaded common dialog remains inactive");
+        }
         Menu status;
         status.message = true;
         status.cursor = 0;
@@ -316,6 +393,23 @@ int main(int argc, char **argv) {
                     check(std::any_of(published.begin(), published.end(),
                                       [&](const Menu &menu) { return menu.movie == movie; }),
                           "rediscover menu published in an existing object slot");
+                }
+            }
+            {
+                auto movie = menus.back().movie;
+                auto at = uint64_t(movie) + 0x174 - 0x40000000;
+                if (at < high.size() && r.class_name(memory, movie) != "BCGFxUI_Common") {
+                    auto saved = high[at];
+                    for (char state : {char(2), char(3)}) {
+                        high[at] = state;
+                        auto closing = r.menus(memory);
+                        check(std::none_of(closing.begin(), closing.end(),
+                                           [&](const Menu &menu) { return menu.movie == movie; }),
+                              "closing retained movie cannot narrate any of its decoded panels");
+                    }
+                    high[at] = saved;
+                    check(r.menus(memory) == menus,
+                          "reopened movie retains its original decoded menus");
                 }
             }
             if (argc - snapshotArg == 2 && std::string(argv[snapshotArg + 1]) == "--bench") {

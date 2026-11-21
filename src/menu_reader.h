@@ -1,5 +1,6 @@
 #pragma once
 #include "build_profile.h"
+#include "episode_records.h"
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -137,6 +138,8 @@ struct Menu {
     int collection_position = -1;
     std::string summary, repeat_text;
     bool readout = false;
+    bool records = false;
+    std::string record_difficulty;
     bool operator==(const Menu &) const = default;
 };
 inline std::string result_rank(unsigned rank) {
@@ -211,6 +214,23 @@ class Reader {
     }
     std::string class_name(const Memory &m, uint32_t p) {
         return object_name(m, m.u32(p + 0x34));
+    }
+    bool menu_movie_active(const Memory &m, uint32_t movie) {
+        if (!(m.u32(movie + 0xc8) & 0x80000000))
+            return false;
+        std::set<uint32_t> seen;
+        for (auto cls = m.u32(movie + 0x34); cls && seen.insert(cls).second && seen.size() < 20;
+             cls = m.u32(cls + 0x40)) {
+            // Common dialogs have their own ActionScript lifecycle. Only menu
+            // movies promise to maintain BCGFxMoviePlayer.UIState (+0x174).
+            if (object_name(m, cls) == "BCGFxMovieMenu") {
+                uint8_t state = 255;
+                return m.copy(movie + 0x174, &state, 1) && state < 2;
+            }
+            if (object_name(m, cls) == "BCGFxUI_Common")
+                return true;
+        }
+        return false;
     }
     bool ready(const Memory &m) {
         return name(m, 0) == "None" && name(m, 1) == "ByteProperty" &&
@@ -378,31 +398,31 @@ class Reader {
         }
         return c == 0;
     }
+    static bool selector_owner_inactive(const Members &fields) {
+        auto input = get(fields, "m_input");
+        if (!input || input->type != 2 || input->boolean)
+            return false;
+        // Delegated controllers can keep m_input=false while a child owns input.
+        // Only explicit handoff phases or owners whose whole handler uses this
+        // flag block descendants. These apply within an open native movie too.
+        const bool ownsInput = (get(fields, "m_closeOperation") && get(fields, "m_proc")) ||
+                               (get(fields, "m_instBar") && get(fields, "m_data"));
+        if (ownsInput)
+            return true;
+        for (auto key : {"m_decide", "m_gameDiffHelp"})
+            if (auto phase = get(fields, key); phase && phase->type == 2 && phase->boolean)
+                return true;
+        return false;
+    }
     bool selector_input_active(const Memory &m, uint32_t c) const {
         bool blocked = false;
         std::set<uint32_t> seen;
         while (c && seen.insert(c).second && seen.size() < 64) {
             auto fields = members(m, m.u32(c + 0x1c8));
-            // Dialog choices follow their dialog's lifecycle, including pending entry.
+            // Dialog choices follow their own lifecycle, including pending entry.
             if (auto dialog = get(fields, "tl_opend"); dialog && dialog->type == 2)
                 return true;
-            // The title controller keeps its child selector alive during New Game's
-            // difficulty/confirmation handoff. Its help phase explicitly owns input;
-            // ordinary m_input flags alone are unreliable on delegated controllers.
-            auto help = get(fields, "m_gameDiffHelp"), input = get(fields, "m_input");
-            // These owners gate their entire input handler on m_input. Their
-            // retained child selectors must not revive while the owner exits.
-            const bool gatedOwner = (get(fields, "m_closeOperation") && get(fields, "m_proc")) ||
-                                    (get(fields, "m_instBar") && get(fields, "m_data"));
-            if (gatedOwner && input && input->type == 2 && !input->boolean)
-                blocked = true;
-            auto decided = get(fields, "m_decide");
-            if (decided && decided->type == 2 && decided->boolean && input && input->type == 2 &&
-                !input->boolean)
-                blocked = true;
-            if (help && help->type == 2 && help->boolean && input && input->type == 2 &&
-                !input->boolean)
-                blocked = true;
+            blocked |= selector_owner_inactive(fields);
             c = m.u32(c + 0x20);
         }
         return !c && !blocked;
@@ -594,14 +614,177 @@ class Reader {
         }
         return out;
     }
+    void record_info(uint32_t movie, uint32_t index, std::string story, int difficulty,
+                     std::string_view data) {
+        record_browser_.capture(movie, index, std::move(story), difficulty, data);
+    }
+    std::optional<Menu> navigate_record(const Memory &m, uint32_t movie, int command) {
+        if (command < 1 || command > 4 || record_browser_.movie != movie)
+            return {};
+        if (m.u32(movie + 0x20) != record_browser_.index || !record_browser_.panel ||
+            !menu_movie_active(m, movie) || !visible(m, record_browser_.panel)) {
+            record_browser_.panel = 0;
+            return {};
+        }
+        // The accessibility cursor browses an immutable record table. Revalidate
+        // the live episode identity, rather than decoding every widget per press.
+        auto fields = members(m, m.u32(record_browser_.root + 0x1c8));
+        auto data = get(fields, "m_data"), cursor = get(fields, "m_cursor");
+        if (!data || data->type != 6 || !cursor || (cursor->type != 3 && cursor->type != 4) ||
+            !std::isfinite(cursor->number) || cursor->number < 0 || cursor->number > 255 ||
+            std::floor(cursor->number) != cursor->number)
+            return {};
+        auto count = m.u32(data->pointer + 0x3c), entries = m.u32(data->pointer + 0x38);
+        if (!entries || count > 256 || uint32_t(cursor->number) >= count)
+            return {};
+        auto entry = m.u32(entries + uint32_t(cursor->number) * 4);
+        if (m.u8(entry) != 6 ||
+            value_text(m, get(members(m, m.u32(entry + 4)), "Tag")) != record_browser_.story)
+            return {};
+        record_browser_.move(command);
+        auto menu = record_panels_[record_browser_.difficulty];
+        menu.cursor = record_browser_.stat;
+        if (!menu.records || menu.items.size() != 4)
+            return {};
+        menu.repeat_text = menu.items[menu.cursor].label;
+        return menu;
+    }
+    bool move_record(const Memory &m, uint32_t movie, int command) {
+        return navigate_record(m, movie, command).has_value();
+    }
+    std::optional<Menu> record_menu(const Memory &m, uint32_t movie, const Members &fields) {
+        auto reference = get(fields, "m_instRecord"), data = get(fields, "m_data"),
+             cursor = get(fields, "m_cursor");
+        if (!reference || reference->type != 7 || !data || data->type != 6 || !cursor ||
+            (cursor->type != 3 && cursor->type != 4) || !std::isfinite(cursor->number) ||
+            cursor->number < 0 || cursor->number > 255 ||
+            std::floor(cursor->number) != cursor->number)
+            return {};
+        auto panel = m.u32(reference->pointer + 4);
+        if (!panel || !visible(m, panel))
+            return {};
+        auto count = m.u32(data->pointer + 0x3c), entries = m.u32(data->pointer + 0x38);
+        if (!entries || count > 256 || uint32_t(cursor->number) >= count)
+            return {};
+        auto entry = m.u32(entries + uint32_t(cursor->number) * 4);
+        if (m.u8(entry) != 6)
+            return {};
+        auto selected = members(m, m.u32(entry + 4));
+        auto story = value_text(m, get(selected, "Tag"));
+        auto ranks = value_text(m, get(selected, "Rank"));
+        if (story.empty() || ranks.size() != 3 ||
+            ranks.find_first_not_of("SABCD-") != std::string::npos)
+            return {};
+        auto index = m.u32(movie + 0x20);
+        if (record_browser_.movie != movie || record_browser_.index != index ||
+            record_browser_.story != story) {
+            record_browser_ = {};
+            record_browser_.movie = movie;
+            record_browser_.index = index;
+            record_browser_.story = story;
+        }
+        struct Column {
+            std::string label;
+            std::array<RecordStat, 3> stats;
+        };
+        std::array<Column, 3> columns;
+        for (auto group : children(m, panel))
+            for (auto column : children(m, group)) {
+                auto path = character_name(m, column);
+                int diff = path.ends_with(".mcInst_Diff1")   ? 0
+                           : path.ends_with(".mcInst_Diff2") ? 1
+                           : path.ends_with(".mcInst_Diff3") ? 2
+                                                             : -1;
+                if (diff < 0 || !visible(m, column))
+                    continue;
+                for (auto child : children(m, column)) {
+                    auto name = character_name(m, child);
+                    if (name.ends_with(".mcInst_Diff")) {
+                        auto lines = text(m, child);
+                        if (lines.size() == 1)
+                            columns[diff].label = lines[0];
+                    }
+                    int stat = name.ends_with(".mcInst_Record1")   ? 0
+                               : name.ends_with(".mcInst_Record2") ? 1
+                               : name.ends_with(".mcInst_Record3") ? 2
+                                                                   : -1;
+                    if (stat < 0)
+                        continue;
+                    for (auto part : children(m, child)) {
+                        auto lines = text(m, part);
+                        if (lines.size() != 1)
+                            continue;
+                        auto partName = character_name(m, part);
+                        if (partName.ends_with(".mcInst_Index"))
+                            columns[diff].stats[stat].label = lines[0];
+                        if (partName.ends_with(".mcInst_Param"))
+                            columns[diff].stats[stat].value = lines[0];
+                    }
+                }
+            }
+        for (const auto &column : columns) {
+            if (column.label.empty())
+                return {};
+            for (const auto &stat : column.stats)
+                if (stat.label.empty() || stat.value.empty())
+                    return {};
+        }
+        if (record_browser_.panel != panel) {
+            record_browser_.panel = panel;
+            record_browser_.difficulty = 1;
+            record_browser_.stat = 0;
+            auto base = get(fields, "m_instBase");
+            if (base && base->type == 7)
+                for (const auto &line : text(m, m.u32(base->pointer + 4)))
+                    for (int i = 0; i < 3; ++i)
+                        if (line == columns[i].label)
+                            record_browser_.difficulty = i;
+        }
+        record_browser_.root = m.u32(panel + 0x20);
+        for (int diff = 0; diff < 3; ++diff) {
+            Menu menu;
+            menu.movie = movie;
+            menu.selector = panel;
+            menu.records = menu.readout = true;
+            menu.record_difficulty = columns[diff].label;
+            menu.selection_key = uint32_t(diff);
+            menu.heading = "Episode records";
+            auto repeatButton = button_labels_ ? button_labels_("X") : std::string("Square/X");
+            if (!repeatButton.empty())
+                repeatButton[0] = char(std::toupper(static_cast<unsigned char>(repeatButton[0])));
+            menu.summary =
+                "Right stick left or right browses difficulties. Up or down browses stats.";
+            if (!repeatButton.empty())
+                menu.summary += " " + repeatButton + " repeats.";
+            menu.cursor = record_browser_.stat;
+            menu.items.push_back(
+                {"Overall rank " +
+                     (ranks[diff] == '-' ? std::string("Unranked") : std::string(1, ranks[diff])) +
+                     ".",
+                 "", true});
+            for (unsigned i = 0; i < 3; ++i) {
+                const auto &stat = columns[diff].stats[i];
+                std::string line = stat.label + ": " + stat.value + ".";
+                if (record_browser_.scores[diff]) {
+                    const auto &cached = (*record_browser_.scores[diff])[i];
+                    if (cached.label == stat.label && cached.value == stat.value)
+                        line += " Rank " + cached.rank + ".";
+                }
+                menu.items.push_back({std::move(line), "", true});
+            }
+            menu.repeat_text = menu.items[menu.cursor].label;
+            record_panels_[diff] = std::move(menu);
+        }
+        return record_panels_[record_browser_.difficulty];
+    }
     std::vector<Menu> menus(const Memory &m) {
         std::vector<Menu> out;
         bool inactiveSelection = false;
         for (auto movie : movies_) {
             if (m.u32(movie.p + 0x20) != movie.index || m.u32(movie.p + 0x34) != movie.cls)
                 continue;
-            // GFxMoviePlayer.bMovieIsOpen is the high bit of its reflected boolean word.
-            if (!(m.u32(movie.p + 0xc8) & 0x80000000))
+            // Loaded movie trees outlive their interactive menu during closing.
+            if (!menu_movie_active(m, movie.p))
                 continue;
             std::optional<Results> result;
             std::unordered_set<uint32_t> seen;
@@ -618,6 +801,8 @@ class Reader {
                         !visible(m, c))
                         continue;
                     auto fields = members(m, m.u32(c + 0x1c8));
+                    if (auto record = record_menu(m, movie.p, fields))
+                        out.push_back(std::move(*record));
                     auto controlsActive = get(fields, "m2active"),
                          controlsForm = get(fields, "m2op");
                     if (controlsActive && controlsActive->type == 2 && controlsActive->boolean &&
@@ -1169,6 +1354,8 @@ class Reader {
             inactiveSelection |= blocked;
             return blocked;
         });
+        if (std::none_of(out.begin(), out.end(), [](const Menu &menu) { return menu.records; }))
+            record_browser_.panel = 0;
         if (std::any_of(out.begin(), out.end(), [](const Menu &menu) { return menu.readout; })) {
             std::erase_if(out, [](const Menu &menu) { return !menu.readout; });
             return out;
@@ -1192,7 +1379,7 @@ class Reader {
         }
         if (out.empty() && !inactiveSelection) {
             for (auto movie : movies_) {
-                if (m.u32(movie.p + 0x20) != movie.index || !(m.u32(movie.p + 0xc8) & 0x80000000))
+                if (m.u32(movie.p + 0x20) != movie.index || !menu_movie_active(m, movie.p))
                     continue;
                 if (class_name(m, movie.p) != "BCGFxUI_TitleMenu")
                     continue;
@@ -1308,6 +1495,8 @@ class Reader {
 
   private:
     ReaderLayout layout_;
+    RecordBrowse record_browser_;
+    std::array<Menu, 3> record_panels_;
     std::function<std::string(std::string_view)> button_labels_;
     struct Movie {
         uint32_t p, index, cls;
@@ -1337,12 +1526,32 @@ inline std::string menu_context(const Menu &menu) {
         key += "|dialog:" + menu.heading;
     return key;
 }
+inline std::string record_navigation_text(const Menu &menu, bool difficulty_changed) {
+    if (!menu.records || menu.pending || menu.cursor < 0 ||
+        size_t(menu.cursor) >= menu.items.size())
+        return {};
+    std::string line;
+    if (difficulty_changed)
+        append_phrase(line, menu.record_difficulty);
+    append_phrase(line, menu.items[menu.cursor].label);
+    return line;
+}
 inline std::string describe(const Menu &menu, bool heading, bool help) {
     if (menu.pending)
         return {};
     if (menu.cursor < 0 || size_t(menu.cursor) >= menu.items.size())
         return {};
     const auto &item = menu.items[menu.cursor];
+    if (menu.records) {
+        std::string line;
+        if (heading) {
+            append_phrase(line, menu.heading);
+            append_phrase(line, menu.summary);
+            append_phrase(line, menu.record_difficulty);
+        }
+        append_phrase(line, item.label);
+        return line;
+    }
     std::string s = heading ? menu.heading + ". " : "";
     s += item.label;
     if (heading && !menu.summary.empty()) {
@@ -1408,5 +1617,9 @@ inline std::string menu_repeat_text(const std::vector<Menu> &menus, uint32_t mov
             return it->repeat_text.empty() ? describe(*it, true, true) : it->repeat_text;
         }
     return {};
+}
+inline std::string menu_selection_state(const Menu &menu) {
+    return menu_context(menu) + ":" + std::to_string(menu.selection_key) + "|" +
+           describe(menu, false, true);
 }
 }

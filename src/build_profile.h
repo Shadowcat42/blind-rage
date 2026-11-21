@@ -20,7 +20,7 @@ struct BuildProfile {
     const char *patch_fingerprint;
     std::array<uintptr_t, 2> presentation_rvas;
     std::array<uintptr_t, 2> prompt_state_rvas;
-    std::array<uintptr_t, 2> gameplay_rvas;
+    std::array<uintptr_t, 3> gameplay_rvas;
     // Main-image CreateProcessW import slot and return address in RestartGame.
     std::array<uintptr_t, 2> restart_rvas;
 };
@@ -36,7 +36,7 @@ inline constexpr BuildProfile disc_profile{
     nullptr,
     {0x030822c0, 0x0406ec00},
     {0x04e83cb1, 0x04e83cc8},
-    {0x0466e5a0, 0x023e9ae0},
+    {0x0466e5a0, 0x023e9ae0, 0x03d3d630},
     {0x04ca7df0, 0x047bdcb5}};
 inline constexpr BuildProfile updated_profile{
     "updated",
@@ -50,7 +50,7 @@ inline constexpr BuildProfile updated_profile{
     "918cdee90389f27dee0bfe1bdfd758bc52cc4148666dcae1e35a1c0297f2005c",
     {0x0348bb10, 0x03078010},
     {0x04e83cb1, 0x04e83cc8},
-    {0x03aa6770, 0x00df51f0},
+    {0x03aa6770, 0x00df51f0, 0x00e19240},
     {0x04ca7e70, 0x047bdac5}};
 inline constexpr std::array<const BuildProfile *, 2> build_profiles{&updated_profile,
                                                                     &disc_profile};

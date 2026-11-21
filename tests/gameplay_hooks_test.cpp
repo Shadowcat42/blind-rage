@@ -40,6 +40,12 @@ extern "C" __declspec(noinline) void script_target(void *context, uint8_t *base)
         word(base, 0x3000 + 0x378, 0x8000);
     static_cast<uint64_t *>(context)[0] = 0xfeed;
 }
+// Simulates ProcessEvent's early return for an event with no defined script body.
+// It deliberately never invokes script_target/ProcessInternal.
+extern "C" __declspec(noinline) void movie_event_target(void *context, uint8_t *) {
+    ++calls;
+    static_cast<uint64_t *>(context)[0] = 0xfeed;
+}
 int main() {
     try {
         auto *base = static_cast<uint8_t *>(
@@ -109,7 +115,8 @@ int main() {
         word(base, info, 0x40000000);
         auto &source = GameplayHooks::instance();
         check(source.install_targets({reinterpret_cast<void *>(script_target),
-                                      reinterpret_cast<void *>(window_target)}),
+                                      reinterpret_cast<void *>(window_target),
+                                      reinterpret_cast<void *>(movie_event_target)}),
               "install native gameplay detours");
         source.configure_indices(indices);
         source.options(true, 45);
@@ -348,36 +355,38 @@ int main() {
         word(base, locals + 4, 10);
         word(base, locals + 8, 0);
         base[locals + 0xc] = 0;
+        GameplayHooks::Function volatile call_movie_event = movie_event_target;
+        context[4] = node;
+        context[5] = locals;
         context[0] = actor;
         originalCalls = calls;
-        call_script(context.data(), base);
+        call_movie_event(context.data(), base);
         events = source.take(overflow);
-        check(
-            calls == originalCalls + 1 && context[0] == 0xfeed && events.size() == 1 &&
-                events[0].menu_repeat && events[0].repeat_movie == actor &&
-                events[0].repeat_index == 7,
-            "Square/X on results requests repeat without changing original input or requiring QTE narration");
+        check(calls == originalCalls + 1 && context[0] == 0xfeed && events.size() == 1 &&
+                  events[0].menu_repeat && events[0].repeat_movie == actor &&
+                  events[0].repeat_index == 7,
+              "Square/X repeats results even when ProcessEvent skips the undefined script body");
         for (uint8_t inputEvent : {uint8_t(1), uint8_t(2), uint8_t(3)}) {
             base[locals + 0xc] = inputEvent;
             context[0] = actor;
-            call_script(context.data(), base);
+            call_movie_event(context.data(), base);
             check(source.take(overflow).empty(),
                   "release/repeat/double-click do not flood result narration");
         }
         base[locals + 0xc] = 0;
         word(base, locals + 4, 11);
         context[0] = actor;
-        call_script(context.data(), base);
+        call_movie_event(context.data(), base);
         check(source.take(overflow).empty(), "other face buttons do not repeat results");
         word(base, locals + 4, 10);
         word(base, actor + 0xc8, 0);
         context[0] = actor;
-        call_script(context.data(), base);
+        call_movie_event(context.data(), base);
         check(source.take(overflow).empty(), "closed results movie cannot request a repeat");
         word(base, actor + 0xc8, 0x80000000);
         word(base, actor + 0x34, 0x1d100);
         context[0] = actor;
-        call_script(context.data(), base);
+        call_movie_event(context.data(), base);
         check(source.take(overflow).empty(), "Square/X outside results remains native input only");
         name(54, "BCGFxUI_ChapterMenu");
         word(base, 0x1d400 + 0x2c, 54);
@@ -385,11 +394,88 @@ int main() {
         word(base, actor + 0x34, 0x1d400);
         context[0] = actor;
         originalCalls = calls;
-        call_script(context.data(), base);
+        call_movie_event(context.data(), base);
         events = source.take(overflow);
         check(calls == originalCalls + 1 && context[0] == 0xfeed && events.size() == 1 &&
                   events[0].menu_repeat && events[0].repeat_movie == actor,
               "episode intro repeat shares the input observer and preserves native input");
+        constexpr std::array<const char *, 4> recordKeys{
+            "Gamepad_RightStick_Left", "Gamepad_RightStick_Right", "Gamepad_RightStick_Up",
+            "Gamepad_RightStick_Down"};
+        for (unsigned i = 0; i < recordKeys.size(); ++i) {
+            auto recordKeyIndex = i < 2 ? 48 + i : 55 + i;
+            name(recordKeyIndex, recordKeys[i]);
+            word(base, locals + 4, recordKeyIndex);
+            context[0] = actor;
+            call_movie_event(context.data(), base);
+            events = source.take(overflow);
+            check(
+                events.size() == 1 && events[0].record_command == int(i + 1) &&
+                    events[0].record_movie == actor && !events[0].menu_repeat,
+                "chapter right-stick press publishes a record browse command without consuming input");
+            base[locals + 0xc] = 1;
+            context[0] = actor;
+            call_movie_event(context.data(), base);
+            check(source.take(overflow).empty(), "right-stick release cannot browse records");
+            base[locals + 0xc] = 0;
+        }
+        word(base, locals + 4, 10);
+        // Record ranks are sent as text before Flash selects its rank timeline.
+        word(base, owner + 0x2c, 54);
+        word(base, node + 0x2c, indices[27]);
+        auto fstring = [&](uint32_t at, uint32_t bytes, std::string_view value) {
+            word(base, at, bytes);
+            word(base, at + 4, uint32_t(value.size() + 1));
+            word(base, at + 8, uint32_t(value.size() + 1));
+            std::memset(base + bytes, 0, (value.size() + 1) * 2);
+            for (unsigned i = 0; i < value.size(); ++i)
+                base[bytes + i * 2 + 1] = value[i];
+        };
+        fstring(locals, 0x14000, "000");
+        word(base, locals + 0xc, 1);
+        fstring(locals + 0x10, 0x14200, "Time|1|A/Battle|2|B/Sync|3|C");
+        context[4] = frame;
+        context[0] = actor;
+        call_script(context.data(), base);
+        events = source.take(overflow);
+        check(events.size() == 1 && events[0].record_info && events[0].record_difficulty == 1 &&
+                  events[0].record_story.utf8() == "000" &&
+                  events[0].record_text.utf8() == "Time|1|A/Battle|2|B/Sync|3|C",
+              "record callback copies resolved rank data even with QTE narration disabled");
+        word(base, owner + 0x2c, 8);
+        word(base, node + 0x2c, indices[15]);
+        // The interpreter path must not publish a second copy if a future
+        // movie subclass defines a FilterButtonInput implementation.
+        context[4] = frame;
+        context[5] = 0;
+        context[0] = actor;
+        call_script(context.data(), base);
+        check(source.take(overflow).empty(), "movie script body cannot duplicate the input event");
+        name(55, "BCGFxMovieMenu");
+        name(56, "BCGFxMoviePlayer");
+        word(base, 0x1d100 + 0x2c, 55);
+        word(base, owner + 0x2c, 56);
+        word(base, node + 0x2c, indices[25]);
+        base[actor + 0x174] = 1;
+        traceOriginal = [&](void *, uint8_t *) { base[actor + 0x174] = 2; };
+        context[0] = actor;
+        originalCalls = calls;
+        call_script(context.data(), base);
+        events = source.take(overflow);
+        check(calls == originalCalls + 1 && events.size() == 1 && events[0].menu_changed &&
+                  context[0] == 0xfeed,
+              "shared close lifecycle wakes the reader even without a UI-tree mutation");
+        context[0] = actor;
+        call_script(context.data(), base);
+        check(source.take(overflow).empty(), "unchanged lifecycle does not wake the reader");
+        word(base, node + 0x2c, indices[26]);
+        traceOriginal = [&](void *, uint8_t *) { base[actor + 0x174] = 1; };
+        context[0] = actor;
+        call_script(context.data(), base);
+        events = source.take(overflow);
+        check(events.size() == 1 && events[0].menu_changed,
+              "shared open completion restores event-driven menu discovery");
+        traceOriginal = {};
         name(50, "BCGFxUI_Hud");
         name(51, "Camera");
         name(52, "BCGFxMoviePlayer");

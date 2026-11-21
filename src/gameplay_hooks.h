@@ -12,7 +12,7 @@ namespace a11y {
 class GameplayHooks {
   public:
     using Function = void (*)(void *, uint8_t *);
-    static constexpr std::array<const char *, 25> function_names{"RequestInputJudge",
+    static constexpr std::array<const char *, 28> function_names{"RequestInputJudge",
                                                                  "RequestButtonIcon",
                                                                  "UpdateButtonIcon",
                                                                  "CheckActivate",
@@ -36,7 +36,10 @@ class GameplayHooks {
                                                                  "PlayGFxUISound",
                                                                  "SearchLockOnShotTarget",
                                                                  "UpdateLockOnLevel",
-                                                                 "ResetLockOnLevel"};
+                                                                 "ResetLockOnLevel",
+                                                                 "PlayCloseAnimation",
+                                                                 "OnOpenAnimationComplete",
+                                                                 "OnGetRecordInfo"};
     static GameplayHooks &instance() {
         static auto *value = new GameplayHooks;
         return *value;
@@ -47,16 +50,18 @@ class GameplayHooks {
         profile_ = &profile;
         names_global_ = profile.layout.names_global;
         return install_targets({reinterpret_cast<void *>(executable + profile.gameplay_rvas[0]),
-                                reinterpret_cast<void *>(executable + profile.gameplay_rvas[1])});
+                                reinterpret_cast<void *>(executable + profile.gameplay_rvas[1]),
+                                reinterpret_cast<void *>(executable + profile.gameplay_rvas[2])});
     }
-    bool install_targets(const std::array<void *, 2> &targets) {
+    bool install_targets(const std::array<void *, 3> &targets) {
         if (installed_)
             return true;
         if (!event_ || !hooks_.initialize())
             return false;
         void *callbacks[]{reinterpret_cast<void *>(script_call),
-                          reinterpret_cast<void *>(input_window)};
-        for (unsigned i = 0; i < 2; ++i)
+                          reinterpret_cast<void *>(input_window),
+                          reinterpret_cast<void *>(movie_input_event)};
+        for (unsigned i = 0; i < 3; ++i)
             if (!hooks_.add(targets[i], callbacks[i], reinterpret_cast<void **>(&original_[i]))) {
                 hooks_.clear();
                 return false;
@@ -138,6 +143,7 @@ class GameplayHooks {
   private:
     enum class Route {
         ignore,
+        record_info,
         qte_bind,
         qte_update,
         judge_update,
@@ -150,7 +156,7 @@ class GameplayHooks {
         animation_mash,
         animation_hold,
         status_button,
-        menu_repeat,
+        menu_lifecycle,
         shoot_tick,
         remove,
         view,
@@ -262,7 +268,9 @@ class GameplayHooks {
             return cached.route;
         auto cls = state.reader.name(memory, ownerName), function = state.reader.name(memory, name);
         Route route = Route::ignore;
-        if (cls == "BCSeqAct_InputDivergence" && function == "RequestInputJudge")
+        if (cls == "BCGFxUI_ChapterMenu" && function == "OnGetRecordInfo")
+            route = Route::record_info;
+        else if (cls == "BCSeqAct_InputDivergence" && function == "RequestInputJudge")
             route = Route::qte_bind;
         else if ((cls == "BCSeqAct_InputDivergence" &&
                   (function == "RequestButtonIcon" || function == "UpdateButtonIcon")) ||
@@ -276,8 +284,9 @@ class GameplayHooks {
             route = Route::aim;
         else if (cls == "BCPlayerInput" && function == "HandleButtonInput_Back")
             route = Route::status_button;
-        else if (cls == "GFxMoviePlayer" && function == "FilterButtonInput")
-            route = Route::menu_repeat;
+        else if (cls == "BCGFxMoviePlayer" &&
+                 (function == "PlayCloseAnimation" || function == "OnOpenAnimationComplete"))
+            route = Route::menu_lifecycle;
         else if (function == "PlayerTick")
             route = Route::shoot_tick;
         else if (cls == "BCPlayerController_HeavyShoot" && function == "CheckRemoveLockOnTarget")
@@ -760,25 +769,18 @@ class GameplayHooks {
         auto source = ui_argument(context, 3), locals = memory.u32(frame + 0x1c);
         if (self.observe_lock(route, context, base, memory, state, source, locals))
             return;
-        if (route == Route::menu_repeat) {
-            // UE3's existing movie input event: XboxTypeS_X is physical Square/X.
-            // Observe only IE_Pressed (0), never repeats/releases or gameplay input.
-            uint8_t inputEvent = 255;
-            auto index = memory.u32(source + 0x20), cls = memory.u32(source + 0x34);
-            bool repeat = locals && memory.copy(locals + 0xc, &inputEvent, 1) && inputEvent == 0 &&
-                          index && (memory.u32(source + 0xc8) & 0x80000000) &&
-                          memory.u32(locals + 8) == 0 &&
-                          state.reader.name(memory, memory.u32(locals + 4)) == "XboxTypeS_X" &&
-                          (subclass(memory, state.reader, source, "BCGFxUI_ResultMenu") ||
-                           subclass(memory, state.reader, source, "BCGFxUI_ChapterMenu"));
+        if (route == Route::menu_lifecycle) {
+            auto index = memory.u32(source + 0x20);
+            uint8_t before = 255, after = 255;
+            const bool observe = index &&
+                                 subclass(memory, state.reader, source, "BCGFxMovieMenu") &&
+                                 memory.copy(source + 0x174, &before, 1);
             self.original_[0](context, base);
-            if (repeat && self.enabled_.load() && epoch == self.epoch_.load() &&
-                memory.u32(source + 0x20) == index && memory.u32(source + 0x34) == cls &&
-                (memory.u32(source + 0xc8) & 0x80000000)) {
+            if (observe && self.enabled_.load() && epoch == self.epoch_.load() &&
+                memory.u32(source + 0x20) == index && memory.copy(source + 0x174, &after, 1) &&
+                before != after) {
                 GameplayEvent event;
-                event.menu_repeat = true;
-                event.repeat_movie = source;
-                event.repeat_index = index;
+                event.menu_changed = true;
                 self.publish(event);
             }
             return;
@@ -798,6 +800,24 @@ class GameplayHooks {
                 event.status = *before;
                 self.publish(event);
             }
+            return;
+        }
+        if (route == Route::record_info) {
+            GameplayEvent event;
+            event.record_info = true;
+            event.record_movie = source;
+            event.record_index = memory.u32(source + 0x20);
+            event.record_difficulty = int32_t(memory.u32(locals + 0xc));
+            auto read = [&](uint32_t at, void *out, size_t size) {
+                return memory.copy(at, out, size);
+            };
+            bool valid =
+                locals && event.record_index && capture_fstring(read, locals, event.record_story);
+            self.original_[0](context, base);
+            if (valid && self.enabled_.load() && epoch == self.epoch_.load() &&
+                memory.u32(source + 0x20) == event.record_index &&
+                capture_fstring(read, locals + 0x10, event.record_text))
+                self.publish(event);
             return;
         }
         if (!self.qtes_.load()) {
@@ -842,6 +862,60 @@ class GameplayHooks {
                 self.snapshot(memory, *binding);
         }
     }
+    static void movie_input_event(void *context, uint8_t *base) {
+        auto &self = instance();
+        auto node = ui_argument(context, 4);
+        auto name = node ? frame_word(base, node + 0x2c) : UINT32_MAX;
+        // ProcessEvent sees native-origin movie callbacks even when their script
+        // body is undefined. ProcessInternal never runs that default empty event.
+        // The original dispatcher reads this UFunction field too; exclude unrelated
+        // events before memory queries, metadata lookup or queue synchronization.
+        if (!self.enabled_.load(std::memory_order_relaxed) ||
+            !self.configured_.load(std::memory_order_relaxed) || !node ||
+            name != self.indices_[15].load(std::memory_order_relaxed)) {
+            self.original_[2](context, base);
+            return;
+        }
+        const auto epoch = self.epoch_.load();
+        Memory memory(Read{base});
+        auto &state = thread();
+        auto source = ui_argument(context, 3), params = ui_argument(context, 5);
+        auto owner = memory.u32(node + 0x28);
+        auto index = memory.u32(source + 0x20), cls = memory.u32(source + 0x34);
+        uint8_t inputEvent = 255;
+        int recordCommand = 0;
+        if (params && state.reader.object_name(memory, owner) == "GFxMoviePlayer" &&
+            memory.copy(params + 0xc, &inputEvent, 1) && inputEvent == 0 && index &&
+            (memory.u32(source + 0xc8) & 0x80000000) && memory.u32(params + 8) == 0 &&
+            subclass(memory, state.reader, source, "BCGFxUI_ChapterMenu")) {
+            auto key = state.reader.name(memory, memory.u32(params + 4));
+            constexpr std::array<std::string_view, 4> directions{
+                "Gamepad_RightStick_Left", "Gamepad_RightStick_Right", "Gamepad_RightStick_Up",
+                "Gamepad_RightStick_Down"};
+            for (unsigned i = 0; i < directions.size(); ++i)
+                if (key == directions[i])
+                    recordCommand = int(i + 1);
+        }
+        bool repeat = params && state.reader.object_name(memory, owner) == "GFxMoviePlayer" &&
+                      memory.copy(params + 0xc, &inputEvent, 1) && inputEvent == 0 && index &&
+                      (memory.u32(source + 0xc8) & 0x80000000) && memory.u32(params + 8) == 0 &&
+                      state.reader.name(memory, memory.u32(params + 4)) == "XboxTypeS_X" &&
+                      (subclass(memory, state.reader, source, "BCGFxUI_ResultMenu") ||
+                       subclass(memory, state.reader, source, "BCGFxUI_ChapterMenu"));
+        self.original_[2](context, base);
+        if ((repeat || recordCommand) && self.enabled_.load() && epoch == self.epoch_.load() &&
+            memory.u32(source + 0x20) == index && memory.u32(source + 0x34) == cls &&
+            (memory.u32(source + 0xc8) & 0x80000000)) {
+            GameplayEvent event;
+            event.menu_repeat = repeat;
+            event.record_command = recordCommand;
+            event.record_movie = source;
+            event.record_index = index;
+            event.repeat_movie = source;
+            event.repeat_index = index;
+            self.publish(event);
+        }
+    }
     static void input_window(void *context, uint8_t *base) {
         auto &self = instance();
         auto *scope = self.enabled_.load(std::memory_order_relaxed) &&
@@ -865,7 +939,7 @@ class GameplayHooks {
     }
     NativeHooks hooks_;
     const BuildProfile *profile_{};
-    std::array<Function, 2> original_{};
+    std::array<Function, 3> original_{};
     std::array<std::atomic<uint32_t>, function_names.size()> indices_{};
     HANDLE event_{};
     uint32_t names_global_ = disc_profile.layout.names_global;

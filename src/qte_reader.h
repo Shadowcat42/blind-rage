@@ -62,19 +62,12 @@ inline std::string qte_instruction(const QteGroup &group,
     bool same = std::all_of(inputs.begin(), inputs.end(), [&](const InputDescription &input) {
         return input.action == inputs.front().action;
     });
-    auto verb = [](InputAction action) {
-        return action == InputAction::move     ? "move"
-               : action == InputAction::rotate ? "rotate"
-                                               : "press";
-    };
     std::string list;
     for (size_t i = 0; i < inputs.size(); ++i) {
         if (inputs[i].label.empty())
             return {};
         if (i)
             list += " and ";
-        if (!same)
-            list += std::string(verb(inputs[i].action)) + " ";
         list += inputs[i].label;
     }
     std::string text;
@@ -91,12 +84,11 @@ inline std::string qte_instruction(const QteGroup &group,
         if (same && inputs.front().action == InputAction::press)
             text = "Mash " + list;
         else
-            text = (same ? std::string(verb(inputs.front().action)) + " " : std::string{}) + list +
-                   " repeatedly";
+            text = list + " repeatedly";
         if (group.required > 1 && group.required <= 999)
             text += ", " + std::to_string(group.required) + " times";
     } else {
-        text = (same ? std::string(verb(inputs.front().action)) + " " : std::string{}) + list;
+        text = list;
         if (group.mode == 3 && inputs.size() > 1)
             text += " together";
     }
