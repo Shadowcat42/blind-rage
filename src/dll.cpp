@@ -124,11 +124,24 @@ static DWORD WINAPI run(void *) {
         for (auto &c : commands)
             events.push_back(
                 CreateEventW(nullptr, FALSE, FALSE, event_name(GetCurrentProcessId(), c).c_str()));
-        const int defaults[] = {VK_F1, VK_F2, VK_F3, VK_F5, VK_F8, 0, VK_F4, VK_F9, VK_F10, VK_F12};
-        int hotkeys[10]{};
-        for (size_t i = 0; i < commands.size(); i++)
-            hotkeys[i] =
-                GetPrivateProfileIntW(L"hotkeys", commands[i].c_str(), defaults[i], ini.c_str());
+        // Shortcuts are written as key names ("Ctrl+Alt+F9"); legacy numeric
+        // virtual-key codes still mean Ctrl+Alt plus that key. A missing or empty
+        // value uses the default; "None" disables the shortcut.
+        constexpr UINT chord = MOD_CONTROL | MOD_ALT;
+        const Hotkey defaults[] = {
+            {chord, VK_F1}, {chord, VK_F2}, {chord, VK_F3},  {chord, VK_F5}, {chord, VK_F8}, {},
+            {chord, VK_F4}, {chord, VK_F9}, {chord, VK_F10}, {chord, VK_F12}};
+        Hotkey hotkeys[10]{};
+        for (size_t i = 0; i < commands.size(); i++) {
+            wchar_t text[64]{};
+            GetPrivateProfileStringW(L"hotkeys", commands[i].c_str(), L"", text, 64, ini.c_str());
+            auto value = utf8(text);
+            auto parsed = value.empty() ? std::optional<Hotkey>(defaults[i]) : parse_hotkey(value);
+            if (!parsed)
+                write("Hotkey " + utf8(commands[i]) + ": unrecognized \"" + value + "\"; using " +
+                      describe_hotkey(defaults[i]));
+            hotkeys[i] = parsed.value_or(defaults[i]);
+        }
         WindowNotifications notifications;
         if (!notifications.initialize(hotkeys)) {
             write("Foreground notifications unavailable; reader stopped");
@@ -140,8 +153,9 @@ static DWORD WINAPI run(void *) {
             return 5;
         }
         for (unsigned i = 0; i < commands.size(); i++)
-            if (notifications.focused() && hotkeys[i] && !notifications.hotkey_registered(i))
-                write("Hotkey unavailable: " + utf8(commands[i]));
+            if (notifications.focused() && hotkeys[i].key && !notifications.hotkey_registered(i))
+                write("Hotkey unavailable: " + utf8(commands[i]) + " (" +
+                      describe_hotkey(hotkeys[i]) + ")");
         events.push_back(source.event());
         source.capture(true);
         Reader reader(profile->layout);

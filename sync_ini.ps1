@@ -45,6 +45,24 @@ if(!$local.Values.ContainsKey($modeId) -and $local.Values.ContainsKey($legacyId)
  $local.Order['gameplay'].Add('shooting_mode')
 }
 
+# Older files store shortcuts as virtual-key codes that always meant Ctrl+Alt.
+# Rewrite those as the equivalent names; unknown codes are kept and still work.
+$keyNames=@{8='Backspace';9='Tab';13='Enter';19='Pause';27='Escape';32='Space';33='PageUp';34='PageDown';35='End';36='Home';37='Left';38='Up';39='Right';40='Down';44='PrintScreen';45='Insert';46='Delete';93='Menu';106='NumpadMultiply';107='NumpadAdd';109='NumpadSubtract';110='NumpadDecimal';111='NumpadDivide';145='ScrollLock';186='Semicolon';187='Equals';188='Comma';189='Minus';190='Period';191='Slash';192='Backtick';219='LeftBracket';220='Backslash';221='RightBracket';222='Quote'}
+for($k=48;$k -le 57;$k++){$keyNames[$k]=[string][char]$k}
+for($k=65;$k -le 90;$k++){$keyNames[$k]=[string][char]$k}
+for($k=0;$k -le 9;$k++){$keyNames[96+$k]="Numpad$k"}
+for($k=1;$k -le 24;$k++){$keyNames[111+$k]="F$k"}
+if($local.Order.Contains('hotkeys')){
+ foreach($key in $local.Order['hotkeys']){
+  $id="hotkeys`n$key";$parts=$local.Values[$id].Split('=',2)
+  $raw=$parts[1].Split([char[]]';#')[0].Trim();$code=0
+  if($raw -match '^\d{1,3}$' -and [int]::TryParse($raw,[ref]$code)){
+   if($code -eq 0){$local.Values[$id]="$($parts[0].Trim())=None"}
+   elseif($keyNames.ContainsKey($code)){$local.Values[$id]="$($parts[0].Trim())=Ctrl+Alt+$($keyNames[$code])"}
+  }
+ }
+}
+
 $defaults=Read-Ini $templateLines
 $used=@{};$added=0
 $output=[Collections.Generic.List[string]]::new()

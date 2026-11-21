@@ -1,4 +1,5 @@
 #pragma once
+#include "hotkey_names.h"
 #include <windows.h>
 #include <array>
 #include <atomic>
@@ -6,7 +7,7 @@ namespace a11y {
 class WindowNotifications {
   public:
     static constexpr UINT focus_message = WM_APP + 17;
-    bool initialize(const int *keys) {
+    bool initialize(const Hotkey *keys) {
         MSG message;
         PeekMessageW(&message, nullptr, 0, 0, PM_NOREMOVE);
         thread_ = GetCurrentThreadId();
@@ -27,9 +28,9 @@ class WindowNotifications {
                     UnregisterHotKey(nullptr, 100 + int(i));
                     registered_[i] = false;
                 }
-                if (focused && keys_[i])
-                    registered_[i] = RegisterHotKey(nullptr, 100 + int(i),
-                                                    MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, keys_[i]);
+                if (focused && keys_[i].key)
+                    registered_[i] = RegisterHotKey(
+                        nullptr, 100 + int(i), keys_[i].modifiers | MOD_NOREPEAT, keys_[i].key);
             }
         focused_ = focused;
         return focused_;
@@ -57,7 +58,7 @@ class WindowNotifications {
     }
     inline static std::atomic<DWORD> thread_{};
     HWINEVENTHOOK hook_{};
-    std::array<int, 10> keys_{};
+    std::array<Hotkey, 10> keys_{};
     std::array<bool, 10> registered_{};
     bool focused_{};
 };

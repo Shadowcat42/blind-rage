@@ -42,7 +42,7 @@ When an option asks to restart the game, an active Blind Rage session now restar
 | Ctrl+Alt+F9 | Cycle shooting mode (keyboard equivalent of D-pad Up) |
 | Ctrl+Alt+F10 / F12 | Previous / next beacon cluster (D-pad Left / Right) |
 
-Configure virtual-key codes in `mods/accessibility/accessibility.ini`; 0 disables a chord. Restart to reload the file. On this experimental branch, Windows hotkeys are registered while the game has focus and released when it loses focus. A conflicting shortcut may be unavailable; named launcher commands remain usable.
+Change shortcuts in the `[hotkeys]` section of `mods/accessibility/accessibility.ini` using key names, such as `aimmode=Ctrl+Alt+F9` or `stop=Ctrl+Shift+Numpad5`. Modifiers are Ctrl, Alt, Shift and Win; keys include A-Z, 0-9, F1-F24, Numpad0-9 and names such as Space, Enter, PageUp, Home, Slash or Backtick. `None` disables a shortcut. Older numeric key codes still work and are converted to names on install. An unrecognized value is logged and the default is used. Restart to reload the file. On this experimental branch, Windows hotkeys are registered while the game has focus and released when it loses focus. A conflicting shortcut may be unavailable; named launcher commands remain usable.
 
 ## Current behavior
 

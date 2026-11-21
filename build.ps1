@@ -46,6 +46,8 @@ try {
  if($LASTEXITCODE){throw 'Presentation hook test compilation failed'}
  & $compiler @common '-municode' 'tests/restart_test.cpp' '-o' 'build/hooks/restart_test.exe' '-lshell32' '-lbcrypt'
  if($LASTEXITCODE){throw 'Restart test compilation failed'}
+ & $compiler @common 'tests/hotkey_names_test.cpp' '-o' 'build/tests/hotkey_names_test.exe'
+ if($LASTEXITCODE){throw 'Hotkey name compilation failed'}
  & $compiler @common 'tests/shooting_beacons_test.cpp' '-o' 'build/tests/shooting_beacons_test.exe'
  if($LASTEXITCODE){throw 'Shooting beacon compilation failed'}
  & $compiler @common 'tests/lock_trace_test.cpp' '-o' 'build/hooks/lock_trace_test.exe'
@@ -67,6 +69,7 @@ try {
  Copy-Item -LiteralPath tools/llvm-mingw-20261117-ucrt-x86_64/LICENSE.TXT -Destination dist/licenses/LLVM-LICENSE.txt
  Copy-Item -LiteralPath "$hookRoot/LICENSE.txt" -Destination dist/licenses/MinHook-LICENSE.txt
  if($Test){
+  & ./build/tests/hotkey_names_test.exe; if($LASTEXITCODE){throw 'Hotkey name tests failed'}
   & ./build/tests/shooting_beacons_test.exe; if($LASTEXITCODE){throw 'Shooting beacon tests failed'}
   & ./build/tests/reader_test.exe; if($LASTEXITCODE){throw 'Reader tests failed'}
   & ./build/hooks/hook_test.exe; if($LASTEXITCODE){throw 'Hook tests failed'}
