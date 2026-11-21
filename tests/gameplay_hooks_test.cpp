@@ -531,6 +531,40 @@ int main() {
         check(events.size() == 1 && events[0].menu_changed,
               "shared open completion restores event-driven menu discovery");
         traceOriginal = {};
+        name(62, "BCGFxUI_IntervalDrama");
+        word(base, owner + 0x2c, 62);
+        word(base, 0x1d600 + 0x2c, 62);
+        word(base, 0x1d600 + 0x40, 0x1d100);
+        word(base, actor + 0x34, 0x1d600);
+        for (unsigned kind = 30; kind <= 32; ++kind) {
+            word(base, node + 0x2c, indices[kind]);
+            context[0] = actor;
+            originalCalls = calls;
+            call_script(context.data(), base);
+            events = source.take(overflow);
+            check(
+                calls == originalCalls + 1 && context[0] == 0xfeed && events.size() == 1 &&
+                    events[0].script_scene && events[0].scene_active == (kind == 30) &&
+                    events[0].scene_movie == actor && events[0].scene_index == 7,
+                "script-owned interlude start/end lifecycle is copied independently of QTE settings");
+        }
+        name(63, "BCGFxUI_LastCheck");
+        word(base, owner + 0x2c, 63);
+        word(base, 0x1d600 + 0x2c, 63);
+        word(base, node + 0x2c, indices[30]);
+        context[0] = actor;
+        call_script(context.data(), base);
+        events = source.take(overflow);
+        check(events.size() == 1 && events[0].script_scene && events[0].scene_active,
+              "choice-only scene shares the script-start protocol");
+        word(base, owner + 0x2c, 56);
+        word(base, node + 0x2c, indices[32]);
+        context[0] = actor;
+        call_script(context.data(), base);
+        events = source.take(overflow);
+        check(events.size() == 1 && events[0].script_scene && !events[0].scene_active,
+              "inherited close completion ends a script-owned choice scene");
+        word(base, actor + 0x34, 0x1d400);
         name(50, "BCGFxUI_Hud");
         name(51, "Camera");
         name(52, "BCGFxMoviePlayer");

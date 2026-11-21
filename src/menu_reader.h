@@ -138,9 +138,43 @@ struct Menu {
     int collection_position = -1;
     std::string summary, repeat_text;
     bool readout = false;
+    bool choices_only = false;
     bool records = false;
     std::string record_difficulty;
     bool operator==(const Menu &) const = default;
+};
+inline bool declared_choices_match(const Menu &declaration, const Menu &choice) {
+    if (!declaration.choices_only || declaration.pending || declaration.movie != choice.movie ||
+        choice.items.empty() || declaration.items.size() != choice.items.size() ||
+        choice.cursor < 0 || size_t(choice.cursor) >= choice.items.size())
+        return false;
+    for (size_t i = 0; i < choice.items.size(); ++i)
+        if (choice.items[i].label.empty() || declaration.items[i].label != choice.items[i].label)
+            return false;
+    return true;
+}
+class ModalReturnHistory {
+  public:
+    bool observe(const std::string &selection, bool modal) {
+        // An empty animation frame does not make retained background focus new.
+        if (selection.empty())
+            return false;
+        if (modal) {
+            if (!modal_)
+                suspended_ = underlying_;
+            modal_ = true;
+            return false;
+        }
+        bool unchanged = modal_ && !suspended_.empty() && selection == suspended_;
+        modal_ = false;
+        suspended_.clear();
+        underlying_ = selection;
+        return unchanged;
+    }
+
+  private:
+    std::string underlying_, suspended_;
+    bool modal_{};
 };
 inline std::string result_rank(unsigned rank) {
     constexpr std::array<const char *, 6> labels{"Unranked", "S", "A", "B", "C", "D"};
@@ -186,6 +220,9 @@ inline int collection_grid_index(const Value *cursor, const Value *page, const V
     return index < int(count) ? index : -1;
 }
 
+inline bool script_scene_protocol(std::string_view cls) {
+    return cls == "BCGFxUI_IntervalDrama" || cls == "BCGFxUI_LastCheck";
+}
 class Reader {
   public:
     explicit Reader(ReaderLayout layout = disc_profile.layout) : layout_(layout) {}
@@ -218,6 +255,10 @@ class Reader {
     bool menu_movie_active(const Memory &m, uint32_t movie) {
         if (!(m.u32(movie + 0xc8) & 0x80000000))
             return false;
+        if (auto it = script_scenes_.find(movie); it != script_scenes_.end() &&
+                                                  it->second.index == m.u32(movie + 0x20) &&
+                                                  it->second.cls == m.u32(movie + 0x34))
+            return it->second.active && m.u8(movie + 0x174) != 2;
         std::set<uint32_t> seen;
         for (auto cls = m.u32(movie + 0x34); cls && seen.insert(cls).second && seen.size() < 20;
              cls = m.u32(cls + 0x40)) {
@@ -231,6 +272,17 @@ class Reader {
                 return true;
         }
         return false;
+    }
+    void script_scene(const Memory &m, uint32_t movie, uint32_t index, bool active) {
+        if (!movie || !index || m.u32(movie + 0x20) != index ||
+            !script_scene_protocol(class_name(m, movie)))
+            return;
+        if (script_scenes_.size() >= 32 && !script_scenes_.contains(movie))
+            script_scenes_.erase(script_scenes_.begin());
+        script_scenes_[movie] = {index, m.u32(movie + 0x34), active};
+    }
+    void clear_script_scenes() {
+        script_scenes_.clear();
     }
     bool ready(const Memory &m) {
         return name(m, 0) == "None" && name(m, 1) == "ByteProperty" &&
@@ -398,7 +450,19 @@ class Reader {
         }
         return c == 0;
     }
-    static bool selector_owner_inactive(const Members &fields) {
+    static bool delegated_selector_owner(const Members &fields) {
+        auto main = get(fields, "m_mainItems"), sub = get(fields, "m_subItems");
+        return main && main->type == 6 && sub && sub->type == 6 && get(fields, "m_mainIdx") &&
+               get(fields, "m_subIdx") && get(fields, "m_proc");
+    }
+    static bool delegated_selector_ready(const Members &fields) {
+        auto input = get(fields, "m_input"), phase = get(fields, "m_proc");
+        return delegated_selector_owner(fields) && input && input->type == 2 && input->boolean &&
+               phase && (phase->type == 3 || phase->type == 4) && phase->number == 0;
+    }
+    static bool selector_owner_inactive(const Members &fields, bool delegated = false) {
+        if (delegated_selector_owner(fields) && !delegated_selector_ready(fields))
+            return true;
         auto input = get(fields, "m_input");
         if (!input || input->type != 2 || input->boolean)
             return false;
@@ -406,26 +470,42 @@ class Reader {
         // Only explicit handoff phases or owners whose whole handler uses this
         // flag block descendants. These apply within an open native movie too.
         const bool ownsInput = (get(fields, "m_closeOperation") && get(fields, "m_proc")) ||
-                               (get(fields, "m_instBar") && get(fields, "m_data"));
+                               (get(fields, "m_instBar") && get(fields, "m_data")) ||
+                               delegated_selector_owner(fields);
         if (ownsInput)
             return true;
-        for (auto key : {"m_decide", "m_gameDiffHelp"})
+        for (auto key : {"m_decide", "m_gameDiffHelp"}) {
+            // The recomp's delegated list controller can drive a child whose
+            // original handler remains decided and disabled. That child flag is
+            // not a handoff while its owner is accepting menu input.
+            if (delegated && std::string_view(key) == "m_decide")
+                continue;
             if (auto phase = get(fields, key); phase && phase->type == 2 && phase->boolean)
                 return true;
+        }
         return false;
     }
     bool selector_input_active(const Memory &m, uint32_t c) const {
-        bool blocked = false;
+        std::vector<Members> ancestors;
         std::set<uint32_t> seen;
         while (c && seen.insert(c).second && seen.size() < 64) {
             auto fields = members(m, m.u32(c + 0x1c8));
             // Dialog choices follow their own lifecycle, including pending entry.
             if (auto dialog = get(fields, "tl_opend"); dialog && dialog->type == 2)
                 return true;
-            blocked |= selector_owner_inactive(fields);
+            ancestors.push_back(std::move(fields));
             c = m.u32(c + 0x20);
         }
-        return !c && !blocked;
+        if (c)
+            return false;
+        bool delegated = false;
+        for (auto it = ancestors.rbegin(); it != ancestors.rend(); ++it) {
+            if (delegated_selector_owner(*it))
+                delegated = delegated_selector_ready(*it);
+            if (selector_owner_inactive(*it, delegated))
+                return false;
+        }
+        return true;
     }
     std::string native_text(const Memory &m, uint32_t field) const {
         auto view = m.u32(field + 0xbc), styled = m.u32(view + 8), paragraphs = m.u32(styled + 0xc),
@@ -786,6 +866,7 @@ class Reader {
             // Loaded movie trees outlive their interactive menu during closing.
             if (!menu_movie_active(m, movie.p))
                 continue;
+            const bool illustrationScene = class_name(m, movie.p) == "BCGFxUI_IntervalDrama";
             std::optional<Results> result;
             std::unordered_set<uint32_t> seen;
             for (auto field : {0x180u, 0x17cu}) {
@@ -801,6 +882,41 @@ class Reader {
                         !visible(m, c))
                         continue;
                     auto fields = members(m, m.u32(c + 0x1c8));
+                    // Read only the active illustration text container. AddText
+                    // can preload future pages and is not a narration trigger.
+                    if (illustrationScene) {
+                        auto content = get(fields, "m_instText"), shown = get(fields, "m_visible");
+                        if (content && content->type == 7 && shown && shown->type == 2 &&
+                            shown->boolean) {
+                            auto display = m.u32(content->pointer + 4);
+                            std::string body;
+                            for (const auto &line : text(m, display)) {
+                                if (!body.empty())
+                                    body += ' ';
+                                body += line;
+                            }
+                            if (!body.empty()) {
+                                Menu scene;
+                                scene.movie = movie.p;
+                                scene.selector = display;
+                                scene.cursor = 0;
+                                scene.message = scene.readout = true;
+                                auto position = get(fields, "m_textIdx");
+                                if (position && (position->type == 3 || position->type == 4) &&
+                                    std::isfinite(position->number) && position->number >= 0 &&
+                                    position->number <= 65535 &&
+                                    std::floor(position->number) == position->number)
+                                    scene.selection_key = uint32_t(position->number);
+                                if (auto page = get(fields, "m_instPage"); page && page->type == 7)
+                                    for (const auto &label : text(m, m.u32(page->pointer + 4)))
+                                        scene.selection_key ^=
+                                            uint32_t(std::hash<std::string>{}(label));
+                                scene.items.push_back({body, "", true});
+                                scene.repeat_text = body;
+                                out.push_back(std::move(scene));
+                            }
+                        }
+                    }
                     if (auto record = record_menu(m, movie.p, fields))
                         out.push_back(std::move(*record));
                     auto controlsActive = get(fields, "m2active"),
@@ -1160,6 +1276,10 @@ class Reader {
                                 menu.cursor = int(cur->number);
                                 menu.path = character_name(m, c);
                                 menu.heading = heading(class_name(m, movie.p));
+                                auto declaredTitle = get(fields, "m_titleText"),
+                                     acceptsInput = get(fields, "m_input");
+                                menu.choices_only = declaredTitle && declaredTitle->type == 5 &&
+                                                    value_text(m, declaredTitle).empty();
                                 if (auto missions = get(fields, "m_missions");
                                     missions && missions->type == 6) {
                                     for (auto container : children(m, c))
@@ -1180,6 +1300,14 @@ class Reader {
                                         break;
                                     }
                                     auto itemFields = members(m, m.u32(v + 4));
+                                    auto function = get(itemFields, "FuncName"),
+                                         dialogType = get(itemFields, "DialogType"),
+                                         dialogText = get(itemFields, "DialogText");
+                                    menu.choices_only = menu.choices_only && function &&
+                                                        function->type == 5 &&
+                                                        !value_text(m, function).empty() &&
+                                                        dialogType && dialogType->type == 5 &&
+                                                        dialogText && dialogText->type == 5;
                                     Item item;
                                     item.help = value_text(m, get(itemFields, "Help"));
                                     if (item.help.empty())
@@ -1206,6 +1334,10 @@ class Reader {
                                     }
                                     menu.items.push_back(std::move(item));
                                 }
+                                if (menu.choices_only &&
+                                    (!acceptsInput || acceptsInput->type != 2 ||
+                                     !acceptsInput->boolean))
+                                    menu.pending = true;
                                 if (menu.items.size() == count &&
                                     !menu.items[menu.cursor].label.empty() &&
                                     m.u32(a + 0x38) == ptr && m.u32(a + 0x3c) == count)
@@ -1330,6 +1462,24 @@ class Reader {
                                 prompt += line;
                             }
                         if (prompt.empty()) {
+                            // Some scenes intentionally use the common dialog as
+                            // a choice menu with no question. Accept that only
+                            // when an active owner explicitly declares a blank
+                            // title and the same ordered, named action choices.
+                            auto input = get(members(m, m.u32(choice.selector + 0x1c8)), "m_input");
+                            bool declared =
+                                input && input->type == 2 && input->boolean &&
+                                std::any_of(out.begin(), out.end(), [&](const Menu &owner) {
+                                    return declared_choices_match(owner, choice);
+                                });
+                            if (declared) {
+                                dialog.heading.clear();
+                                dialog.items = choice.items;
+                                dialog.cursor = choice.cursor;
+                                dialog.message = false;
+                                dialog.pending = false;
+                                break;
+                            }
                             dialog.pending = true;
                             continue;
                         }
@@ -1344,6 +1494,9 @@ class Reader {
             std::erase_if(out, [](const Menu &menu) { return !menu.modal; });
             return out;
         }
+        // Action declarations feed the common dialog; they are not independently
+        // displayed controls and must not revive when that dialog closes.
+        std::erase_if(out, [](const Menu &menu) { return menu.choices_only; });
         // The title selector is populated before save loading and the queued DLC
         // check finish. Native bEnableInput owns its readiness; visible labels and
         // delegated ActionScript m_input flags do not. Dialogs above keep priority.
@@ -1496,6 +1649,11 @@ class Reader {
   private:
     ReaderLayout layout_;
     RecordBrowse record_browser_;
+    struct ScriptScene {
+        uint32_t index{}, cls{};
+        bool active{};
+    };
+    std::map<uint32_t, ScriptScene> script_scenes_;
     std::array<Menu, 3> record_panels_;
     std::function<std::string(std::string_view)> button_labels_;
     struct Movie {

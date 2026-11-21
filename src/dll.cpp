@@ -160,6 +160,7 @@ static DWORD WINAPI run(void *) {
         source.capture(true);
         Reader reader(profile->layout);
         std::string last, pending, lastSpeech, lastContext, spoken;
+        ModalReturnHistory modalReturns;
         bool muted = false, forceContext = notifications.focused(), scheduled = false,
              discovered = false, metadataReady = false;
         unsigned stable = 0, retries = 0;
@@ -531,6 +532,8 @@ static DWORD WINAPI run(void *) {
                            (current.empty() ? GetTickCount64() - emptySince >= 250 : stable >= 1);
             if (settled) {
                 scheduled = false;
+                bool unchangedReturn =
+                    modalReturns.observe(current, !menus.empty() && menus.back().modal);
                 if (current != last) {
                     bool entered = lastContext != context;
                     lastContext = context;
@@ -550,7 +553,10 @@ static DWORD WINAPI run(void *) {
                     (spoken != current || forceContext)) {
                     if (forceContext)
                         lastSpeech = describe(menus.back(), true, true);
-                    speech.speak(lastSpeech);
+                    if (!unchangedReturn || forceContext)
+                        speech.speak(lastSpeech);
+                    else
+                        write("MENU_RETURN unchanged focus; speech suppressed");
                     spoken = current;
                 }
                 forceContext = false;
@@ -661,6 +667,7 @@ static DWORD WINAPI run(void *) {
                         beacons.reset();
                         beaconAudio.silence();
                         lastAim.reset();
+                        reader.clear_script_scenes();
                         if (textHooks)
                             presentations.capture(true);
                         if (nativeGameplay)
@@ -712,7 +719,11 @@ static DWORD WINAPI run(void *) {
                                           " revision=" + std::to_string(event.revision));
                             } else {
                                 const auto &event = native[item.index];
-                                if (event.record_info) {
+                                if (event.script_scene) {
+                                    reader.script_scene(memory, event.scene_movie,
+                                                        event.scene_index, event.scene_active);
+                                    changed();
+                                } else if (event.record_info) {
                                     if (memory.u32(event.record_movie + 0x20) ==
                                             event.record_index &&
                                         movie_class(memory, event.record_movie,
@@ -735,6 +746,7 @@ static DWORD WINAPI run(void *) {
                                             // already complete, so no animation settling delay is needed.
                                             lastContext = menu_context(*menu);
                                             last = pending = menu_selection_state(*menu);
+                                            modalReturns.observe(last, false);
                                             stable = 1;
                                             lastSpeech = record_navigation_text(
                                                 *menu, event.record_command <= 2);

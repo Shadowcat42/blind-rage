@@ -78,6 +78,8 @@ inline bool capture_timing(const Memory &m, uint32_t source, int32_t track, bool
     return true;
 }
 struct GameplayEvent {
+    bool script_scene{}, scene_active{};
+    uint32_t scene_movie{}, scene_index{};
     bool record_info{};
     int record_command{}, record_difficulty{};
     uint32_t record_movie{}, record_index{};

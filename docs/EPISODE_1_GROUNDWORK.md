@@ -122,7 +122,7 @@ that never calls the interpreter; live delivery still requires verification.
 
 ## Shared menu exit rule
 
-All discovered `BCGFxMovieMenu` subclasses now use the same native lifecycle gate
+Menus that use the native animation protocol share the same native lifecycle gate
 before any selector, settings form, collection, result summary or fallback text is
 decoded. `bMovieIsOpen` alone only means the tree is still loaded.
 `BCGFxMoviePlayer.UIState` at +0x174 is shared across both profiles:
@@ -130,6 +130,44 @@ decoded. `bMovieIsOpen` alone only means the tree is still loaded.
 even while their visible labels, cursors and loaded flag remain unchanged.
 Opening menus retain their existing readiness checks. Common dialogs keep their
 own ActionScript lifecycle; they can legitimately retain native UIState 3.
+
+`BCGFxUI_IntervalDrama` uses a separate script-owned lifecycle: `CallStart`,
+`CallEnd` and its overridden `OnCloseAnimationComplete`, while native UIState
+remains 3 during display. The existing interpreter observer copies these
+boundaries, independently of QTE preferences. A bounded movie/index/class registry
+authorizes this verified scene protocol; it does not exempt arbitrary closed menu
+trees. Native movie-open flags and explicit closing state 2 still exclude content.
+Scene end, identity reuse and event-batch reset invalidate the authorization.
+
+Once the scene is active, its embedded common dialog uses the shared dialog
+decoder. When no dialog is open, the reader narrates only the visible `m_instText`
+container. The displayed page label and active `m_textIdx` distinguish current
+readouts. `CallAddText` and preloaded data indices are never treated as display
+events. Dialogs retain priority over background passages. Standard menu repeat
+can repeat the current passage. There is no new memory timer or navigation script.
+Saved dialog and two consecutive visible-text captures validate modal priority,
+passage changes, repeat, scene end, reentry and reset. Live delivery after startup
+still needs testing; attaching midway through an interlude does not reconstruct
+an earlier script-start notification.
+
+The final next-episode/return screen (`BCGFxUI_LastCheck`) shares the verified
+script-start protocol. Its inherited close completion and native closing events
+end the scene. It intentionally presents action choices without a question. The
+shared dialog decoder accepts an empty prompt only when an active owner explicitly
+declares an empty title and matching ordered actions (`Text`, `FuncName`,
+`DialogType`, `DialogText`), and the rendered choice control accepts input. These
+declarations never read as a separate menu when the dialog is hidden. A Yes/No
+confirmation cannot borrow this permission because its choices do not match.
+The captured screen verifies initial selection, the other action, hidden-dialog
+suppression and scene completion.
+
+The narration worker also remembers the background selection covered by a modal
+dialog. Dismissal does not reannounce that selection if it is unchanged, including
+through empty animation frames. This prevents a save dialog from reviving the
+same Options item during exit and the quit confirmation from reviving QUIT GAME
+before shutdown. A changed value/focus, explicit repeat/context request and
+ordinary nonmodal submenu return remain eligible. This complements native closing
+gates; it does not add a delay or cancel speech already handed to NVDA.
 
 The interpreter observer reports actual state changes from the shared base
 `PlayCloseAnimation` and `OnOpenAnimationComplete` methods, so the worker rechecks
@@ -151,3 +189,15 @@ selection). They are not replaced by the native closing flag. Startup title inpu
 unfinished result animation and dialog choice readiness likewise remain separate
 because their native movie can already be open. Whole-menu closing is handled only
 by the shared lifecycle gate.
+
+Delegated main/sub-list controllers are identified by their main/sub item arrays,
+indices and process state. In menu phase with input enabled, such an owner can
+drive a visible child list whose original `m_input=false` and `m_decide=true`
+remain unchanged by the recomp's replacement input handling. Readiness now walks
+the ancestor chain from owner to child, allowing that retained child decision flag
+only under an active delegated owner. Disabled owners, non-menu phases, genuine
+handoff flags and the native closing lifecycle still block narration. This fixes
+the pause Settings category list on fresh entry and submenu return without
+loosening the separate settings-form readers. Synthetic hierarchy checks and both
+saved live states cover the decision, all five cursor positions, disabled owner,
+non-menu phase, close and reopen cases.

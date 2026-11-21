@@ -39,7 +39,7 @@ Synthetic tests exercise copied local ownership, UTF-16 and malformed-string han
 
 Live text delivery, visibility, event order, latency, localization, and control-remap behavior still need a user-led gameplay session. No game input or focus changes were used to prepare this implementation. Start the mod before entering gameplay: it does not reconstruct an already-running subtitle from history.
 
-Image-only text is not decoded. Icon-only QTEs now use separate typed state/presentation readers described in `EPISODE_1_GROUNDWORK.md`. Separate TalkDemo/IntervalDrama conversation routes remain research candidates; their `AddText` calls are not assumed to mean immediate display, which could otherwise announce preloaded dialogue. The box fallback depends on native visible text and cannot recover words baked into textures or unsupported glyphs.
+Image-only text is not decoded. Icon-only QTEs use separate typed state/presentation readers described in `EPISODE_1_GROUNDWORK.md`. Interlude illustration passages now use the visible text container and script-owned scene lifecycle through the shared menu readout path; embedded dialogs keep priority. Preloaded `AddText` calls are not narration events. TalkDemo conversation routes remain research candidates. The box fallback depends on native visible text and cannot recover words baked into textures or unsupported glyphs.
 
 Once noninterrupting speech has been handed to an external backend, the mod cannot selectively retract that utterance without risking cancellation of unrelated speech. Rapid dialogue can therefore build a backend speech backlog. Pending mod events are bounded and invalidated, but this prototype does not claim to solve backend queue ownership or every pause/skip timing case.
 

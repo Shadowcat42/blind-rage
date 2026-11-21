@@ -48,6 +48,8 @@ Change shortcuts in the `[hotkeys]` section of `mods/accessibility/accessibility
 
 One shared reader handles live Scaleform menus, settings rows, collection entries and common dialogs. It reads actual selection state, labels, values, effect descriptions, and unlock requirements. Confirmations should announce the prompt and starting choice, then only the selected choice when navigating. Acquired collection totals are entry-only.
 
+Interlude illustration screens read the currently displayed text and their embedded common dialogs. These follow the scene's own start/end lifecycle; preloaded passages are not announced. This support has captured-state checks and awaits live confirmation.
+
 Collection grids resolve their selected record from the list cursor and page, including Achievements, CG Art, Illustrations, and Interludes & Movies. Grid position distinguishes locked entries with identical hidden labels. Gauges retain their selected-name/effect narration without added position announcements.
 
 This experimental branch replaces recurring menu and registry polling with shared native hooks for ActionScript assignment, movie open/close, text changes, display flag changes, and title status assignments. Windows notifications handle foreground changes and shortcuts. The speech worker waits between events; a mutation starts bounded settling checks before narration. It reads bounded guest-memory snapshots and does not count navigation keys. Live event coverage is still being validated; see [hook research](docs/HOOK_RESEARCH.md).

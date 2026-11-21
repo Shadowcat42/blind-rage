@@ -12,6 +12,36 @@ static void check(bool v, const char *message) {
 }
 int main(int argc, char **argv) {
     try {
+        ModalReturnHistory returns;
+        check(!returns.observe("title:quit", false), "initial selection remains speakable");
+        check(!returns.observe("dialog:quit:no", true), "dialog starting choice remains speakable");
+        returns.observe("dialog:quit:yes", true);
+        returns.observe("", false);
+        check(returns.observe("title:quit", false),
+              "dialog dismissal cannot replay unchanged background focus before quit");
+        check(!returns.observe("title:options", false), "real focus movement remains speakable");
+        returns.observe("dialog:saved", true);
+        check(!returns.observe("title:options:new value", false),
+              "a changed setting still announces after a dialog");
+        returns.observe("extras:gauges", false);
+        check(!returns.observe("extras:list", false),
+              "ordinary submenu returns still announce focus");
+        Menu declared, choices;
+        declared.movie = choices.movie = 1;
+        declared.choices_only = true;
+        declared.items =
+            choices.items = {{"Next episode", "", true}, {"Return to main menu", "", true}};
+        choices.cursor = 0;
+        check(declared_choices_match(declared, choices),
+              "explicit blank-title action menu can omit a question");
+        declared.pending = true;
+        check(!declared_choices_match(declared, choices),
+              "disabled action owner cannot authorize a dialog");
+        declared.pending = false;
+        choices.items = {{"Yes", "", true}, {"No", "", true}};
+        check(
+            !declared_choices_match(declared, choices),
+            "an unfinished confirmation cannot borrow permission from the underlying action menu");
         auto record = parse_episode_record(
             "Time score|00:02:39|B/Battle points|6149|A/Synchronic rate|71%|S");
         check(record && (*record)[0].rank == "B" && (*record)[1].value == "6149" &&
@@ -171,6 +201,48 @@ int main(int argc, char **argv) {
         data[0x811c] = 1;
         check(reader.selector_input_active(fake, 0x4000),
               "reactivated pause owner allows normal return announcements");
+        // A delegated controller owns a selector whose original input handler
+        // remains disabled/decided, including after returning from a submenu.
+        memcpy(data.data() + 0x9120, "m_decide", 9);
+        boolSlot(0x8028, 0x9010, true);
+        put(0x8000, 2);
+        data[0x801c] = 0;
+        put(0x8100, 7);
+        put(0x8104, 7);
+        put(0x81e8, 0xfffffffe);
+        constexpr std::array<const char *, 4> delegatedKeys{"m_mainItems", "m_subItems",
+                                                            "m_mainIdx", "m_subIdx"};
+        for (unsigned i = 0; i < delegatedKeys.size(); ++i) {
+            auto handle = 0x9040 + i * 0x10, label = 0x9180 + i * 0x20;
+            auto entry = 0x8168 + i * 32;
+            put(handle, label);
+            memcpy(data.data() + label, delegatedKeys[i], strlen(delegatedKeys[i]) + 1);
+            put(entry, 0xffffffff);
+            put(entry + 8, handle);
+            data[entry + 16] = i < 2 ? 6 : 3;
+            put(entry + 24, 0);
+            put(entry + 28, 0);
+        }
+        data[0x8158] = 3;
+        put(0x8160, 0);
+        put(0x8164, 0);
+        check(reader.selector_input_active(fake, 0x4000),
+              "active delegated owner authorizes its retained decided child");
+        put(0x8160, 0x3ff00000);
+        check(!reader.selector_input_active(fake, 0x4000),
+              "delegated dialog phase cannot authorize retained child selection");
+        data[0x803c] = 0;
+        check(!reader.selector_input_active(fake, 0x4000),
+              "delegated non-menu phase blocks independently of the child's decision flag");
+        put(0x8160, 0);
+        data[0x811c] = 0;
+        data[0x803c] = 0;
+        check(!reader.selector_input_active(fake, 0x4000),
+              "disabled delegated owner blocks even a child without a decided flag");
+        data[0x811c] = 1;
+        data[0x803c] = 1;
+        check(reader.selector_input_active(fake, 0x4000),
+              "return to delegated menu restores child selection");
         {
             std::vector<uint8_t> lifecycle(0x4000);
             auto stateWord = [&](uint32_t at, uint32_t value) {
@@ -210,6 +282,33 @@ int main(int argc, char **argv) {
             stateWord(0x10c8, 0);
             check(!lifecycleReader.menu_movie_active(memory, 0x1000),
                   "unloaded common dialog remains inactive");
+            stateWord(0x20c, 0x480);
+            std::strcpy(reinterpret_cast<char *>(lifecycle.data() + 0x488),
+                        "BCGFxUI_IntervalDrama");
+            stateWord(0x104, 4);
+            stateWord(0x142c, 3);
+            stateWord(0x1020, 7);
+            stateWord(0x10c8, 0x80000000);
+            check(!lifecycleReader.menu_movie_active(memory, 0x1000),
+                  "script-managed scene does not bypass closed state without an observed start");
+            lifecycleReader.script_scene(memory, 0x1000, 7, true);
+            check(lifecycleReader.menu_movie_active(memory, 0x1000),
+                  "observed script start enables a scene whose native UI state remains closed");
+            lifecycle[0x1174] = 2;
+            check(!lifecycleReader.menu_movie_active(memory, 0x1000),
+                  "explicit native closing state still excludes a script-managed scene");
+            lifecycle[0x1174] = 3;
+            lifecycleReader.script_scene(memory, 0x1000, 7, false);
+            check(!lifecycleReader.menu_movie_active(memory, 0x1000),
+                  "script end excludes retained dialog and text before display flags clear");
+            lifecycleReader.script_scene(memory, 0x1000, 7, true);
+            stateWord(0x1020, 8);
+            check(!lifecycleReader.menu_movie_active(memory, 0x1000),
+                  "reused movie identity cannot inherit an old scene start");
+            lifecycleReader.script_scene(memory, 0x1000, 8, true);
+            lifecycleReader.clear_script_scenes();
+            check(!lifecycleReader.menu_movie_active(memory, 0x1000),
+                  "discarded event batch fails closed instead of retaining script scene state");
         }
         Menu status;
         status.message = true;

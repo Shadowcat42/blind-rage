@@ -13,7 +13,7 @@ namespace a11y {
 class GameplayHooks {
   public:
     using Function = void (*)(void *, uint8_t *);
-    static constexpr std::array<const char *, 30> function_names{"RequestInputJudge",
+    static constexpr std::array<const char *, 33> function_names{"RequestInputJudge",
                                                                  "RequestButtonIcon",
                                                                  "UpdateButtonIcon",
                                                                  "CheckActivate",
@@ -42,7 +42,10 @@ class GameplayHooks {
                                                                  "OnOpenAnimationComplete",
                                                                  "OnGetRecordInfo",
                                                                  "IterateLockOnShotTargetComp",
-                                                                 "InputCheckTick"};
+                                                                 "InputCheckTick",
+                                                                 "CallStart",
+                                                                 "CallEnd",
+                                                                 "OnCloseAnimationComplete"};
     static GameplayHooks &instance() {
         static auto *value = new GameplayHooks;
         return *value;
@@ -170,6 +173,8 @@ class GameplayHooks {
   private:
     enum class Route {
         ignore,
+        script_scene_start,
+        script_scene_end,
         record_info,
         input_tick,
         qte_bind,
@@ -301,7 +306,13 @@ class GameplayHooks {
             return cached.route;
         auto cls = state.reader.name(memory, ownerName), function = state.reader.name(memory, name);
         Route route = Route::ignore;
-        if (cls == "BCPlayerInput" && function == "InputCheckTick")
+        if (script_scene_protocol(cls) && function == "CallStart")
+            route = Route::script_scene_start;
+        else if ((script_scene_protocol(cls) && function == "CallEnd") ||
+                 ((script_scene_protocol(cls) || cls == "BCGFxMoviePlayer") &&
+                  function == "OnCloseAnimationComplete"))
+            route = Route::script_scene_end;
+        else if (cls == "BCPlayerInput" && function == "InputCheckTick")
             route = Route::input_tick;
         else if (cls == "BCGFxUI_ChapterMenu" && function == "OnGetRecordInfo")
             route = Route::record_info;
@@ -876,6 +887,21 @@ class GameplayHooks {
             return;
         }
         auto source = ui_argument(context, 3), locals = memory.u32(frame + 0x1c);
+        if (route == Route::script_scene_start || route == Route::script_scene_end) {
+            auto index = memory.u32(source + 0x20), cls = memory.u32(source + 0x34);
+            bool supported = script_scene_protocol(state.reader.class_name(memory, source));
+            self.original_[0](context, base);
+            if (supported && index && self.enabled_.load() && epoch == self.epoch_.load() &&
+                memory.u32(source + 0x20) == index && memory.u32(source + 0x34) == cls) {
+                GameplayEvent event;
+                event.script_scene = true;
+                event.scene_active = route == Route::script_scene_start;
+                event.scene_movie = source;
+                event.scene_index = index;
+                self.publish(event);
+            }
+            return;
+        }
         if (route == Route::input_tick) {
             // These are the game's already-updated logical button states. Empty
             // delegate handlers may never enter either script/event dispatcher.
@@ -931,6 +957,11 @@ class GameplayHooks {
                 before != after) {
                 GameplayEvent event;
                 event.menu_changed = true;
+                if (after >= 2 && script_scene_protocol(state.reader.class_name(memory, source))) {
+                    event.script_scene = true;
+                    event.scene_movie = source;
+                    event.scene_index = index;
+                }
                 self.publish(event);
             }
             return;
