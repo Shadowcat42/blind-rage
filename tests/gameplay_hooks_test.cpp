@@ -379,8 +379,8 @@ int main() {
         context[0] = actor;
         call_script(context.data(), base);
         check(source.take(overflow).empty(), "Square/X outside results remains native input only");
-        name(41, "BCGFxUI_ChapterMenu");
-        word(base, 0x1d400 + 0x2c, 41);
+        name(54, "BCGFxUI_ChapterMenu");
+        word(base, 0x1d400 + 0x2c, 54);
         word(base, 0x1d400 + 0x40, 0x1d100);
         word(base, actor + 0x34, 0x1d400);
         context[0] = actor;
@@ -390,19 +390,19 @@ int main() {
         check(calls == originalCalls + 1 && context[0] == 0xfeed && events.size() == 1 &&
                   events[0].menu_repeat && events[0].repeat_movie == actor,
               "episode intro repeat shares the input observer and preserves native input");
-        name(37, "BCGFxUI_Hud");
-        name(38, "Camera");
-        name(39, "BCGFxMoviePlayer");
-        name(40, "SE_UI_lockon1_Cue");
+        name(50, "BCGFxUI_Hud");
+        name(51, "Camera");
+        name(52, "BCGFxMoviePlayer");
+        name(53, "SE_UI_lockon1_Cue");
         word(base, pc + 0x34, 0x1d000);
         word(base, 0x1d000 + 0x2c, 3);
         word(base, pc + 0x370, 0x1b000);
         word(base, 0x1b000 + 0x324, std::bit_cast<uint32_t>(70.f));
-        word(base, 0x19000 + 0x2c, 40);
+        word(base, 0x19000 + 0x2c, 53);
         word(base, 0x19000 + 0x20, 90);
         word(base, 0x1b000 + 0x34, 0x1d200);
         word(base, 0x1d200 + 0x20, 101);
-        word(base, 0x1d200 + 0x2c, 38);
+        word(base, 0x1d200 + 0x2c, 51);
         word(base, 0x1d200 + 0x44, 0x1d300);
         word(base, 0x1d300 + 0x28, 0x1d200);
         word(base, 0x1d300 + 0x2c, indices[18]);
@@ -419,9 +419,9 @@ int main() {
             word(base, nn + 0x28, no);
             word(base, nn + 0x2c, indices[kind]);
             word(base, no + 0x2c,
-                 kind == 18                 ? 38
-                 : kind == 19 || kind == 20 ? 37
-                 : kind == 21               ? 39
+                 kind == 18                 ? 51
+                 : kind == 19 || kind == 20 ? 50
+                 : kind == 21               ? 52
                                             : 3);
             if (kind == 8) {
                 word(base, nl + 4, gauge);
@@ -444,10 +444,20 @@ int main() {
             call_script(ctx.data(), base);
             check(ctx[0] == 0xfeed, "diagnostic observer preserves original return context");
         };
-        bool allowAcquisition = false;
+        bool allowAcquisition = false, driveLevels = false;
         traceOriginal = [&](void *ctx, uint8_t *) {
             auto nf = ui_argument(ctx, 4), nl = cue_word(base + nf + 0x1c),
                  nn = cue_word(base + nf + 0x10), kind = cue_word(base + nn + 0x2c) - 14;
+            if (kind == 16 && driveLevels) {
+                invoke(23, pc);
+                invoke(21, actor);
+                invoke(24, pc);
+                return;
+            }
+            if (kind == 23)
+                word(base, pc + 0x8e8, 1);
+            if (kind == 24)
+                word(base, pc + 0x8e8, 0);
             if (kind == 16) {
                 invoke(8, pc);
                 if (cue_word(base + 0x15000 + 8 * 0x100 + 0x34)) {
@@ -482,8 +492,9 @@ int main() {
         for (unsigned i = 0; i < 100; ++i)
             invoke(16, pc);
         auto waiting = source.take_lock_trace();
-        check(waiting.records.empty() && waiting.started == 0 && waiting.attempted == 0,
-              "opening rejected searches do not start or spend the baseline capture");
+        check(waiting.records.size() == 101 && waiting.started != 0 && waiting.dropped == 0,
+              "candidate probes start capture without flooding it with rejected checks");
+        source.lock_diagnostics(true, false);
         allowAcquisition = true;
         invoke(16, pc);
         invoke(16, pc);
@@ -495,7 +506,7 @@ int main() {
                 lockBatch.records[1].accepted &&
                 lockBatch.records[2].kind == LockTraceKind::marker_add &&
                 lockBatch.records[3].kind == LockTraceKind::sound &&
-                lockBatch.records[3].sound_name.index == 40 &&
+                lockBatch.records[3].sound_name.index == 53 &&
                 lockBatch.records[4].kind == LockTraceKind::remove &&
                 lockBatch.records[4].angular && lockBatch.records[4].result &&
                 lockBatch.records[4].angle > lockBatch.records[4].limit,
@@ -510,6 +521,24 @@ int main() {
               "opt-in stable cap acts before the simulated native marker/sound side effects");
         check(std::bit_cast<float>(cue_word(base + pc + 0x7d8)) == 50,
               "native observer restores Episode 1 angle after capped acquisition");
+        driveLevels = true;
+        word(base, pc + 0x8e8, 0);
+        word(base, pc + 0x8ec, 1);
+        word(base, pc + 0x7fc, 4);
+        word(base, pc + 0x800 + 40 + 0x20, 0x19000);
+        source.lock_diagnostics(true, false);
+        invoke(16, pc);
+        lockBatch = source.take_lock_trace();
+        check(
+            lockBatch.records.size() == 4 &&
+                lockBatch.records[1].kind == LockTraceKind::level_change &&
+                lockBatch.records[1].level_before == 0 && lockBatch.records[1].level_after == 1 &&
+                lockBatch.records[1].sound_name.index == 53 &&
+                lockBatch.records[2].kind == LockTraceKind::sound &&
+                lockBatch.records[2].target == 0 &&
+                lockBatch.records[3].kind == LockTraceKind::level_change &&
+                lockBatch.records[3].level_after == 0 && !lockBatch.records[3].sound,
+            "level cues, resets and sound requests outside marker callbacks remain distinguishable");
         source.lock_diagnostics(false, false);
         traceOriginal = {};
         source.capture(false);

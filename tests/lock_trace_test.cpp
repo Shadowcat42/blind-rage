@@ -109,13 +109,14 @@ int main() {
         for (unsigned i = 0; i < 10000; ++i)
             trace.push(failed, 1001);
         batch = trace.take();
-        check(batch.records.empty() && batch.attempted == 0 && batch.filtered == 10000 &&
+        check(batch.records.size() == 1 && batch.attempted == 1 && batch.filtered == 9999 &&
                   trace.armed(),
-              "rejected search candidates cannot consume the record budget");
+              "ten thousand rejected candidates produce one sample without consuming the budget");
         failed.cap_applied = true;
         for (unsigned i = 0; i < 1000; ++i)
             trace.push(failed, 1002);
-        check(trace.take().records.size() == 1, "capped rejection is sampled per identity");
+        check(trace.take().records.empty(),
+              "capped and native rejection share a global sample budget");
         failed.kind = LockTraceKind::remove;
         failed.cap_applied = false;
         for (unsigned i = 0; i < 1000; ++i)

@@ -12,7 +12,7 @@ namespace a11y {
 class GameplayHooks {
   public:
     using Function = void (*)(void *, uint8_t *);
-    static constexpr std::array<const char *, 23> function_names{"RequestInputJudge",
+    static constexpr std::array<const char *, 25> function_names{"RequestInputJudge",
                                                                  "RequestButtonIcon",
                                                                  "UpdateButtonIcon",
                                                                  "CheckActivate",
@@ -34,7 +34,9 @@ class GameplayHooks {
                                                                  "ShowLockonMarker",
                                                                  "CallShowLockonMarker",
                                                                  "PlayGFxUISound",
-                                                                 "SearchLockOnShotTarget"};
+                                                                 "SearchLockOnShotTarget",
+                                                                 "UpdateLockOnLevel",
+                                                                 "ResetLockOnLevel"};
     static GameplayHooks &instance() {
         static auto *value = new GameplayHooks;
         return *value;
@@ -155,7 +157,9 @@ class GameplayHooks {
         marker,
         marker_call,
         sound,
-        search
+        search,
+        level,
+        level_reset
     };
     struct LockFrame {
         LockFrame *previous{};
@@ -278,6 +282,10 @@ class GameplayHooks {
             route = Route::shoot_tick;
         else if (cls == "BCPlayerController_HeavyShoot" && function == "CheckRemoveLockOnTarget")
             route = Route::remove;
+        else if (cls == "BCPlayerController_HeavyShoot" && function == "UpdateLockOnLevel")
+            route = Route::level;
+        else if (cls == "BCPlayerController_HeavyShoot" && function == "ResetLockOnLevel")
+            route = Route::level_reset;
         else if (cls == "BCPlayerController_HeavyShoot" && function == "SearchLockOnShotTarget")
             route = Route::search;
         else if (cls == "Camera" && function == "GetCameraViewPoint")
@@ -480,6 +488,9 @@ class GameplayHooks {
             record.frame = state.locks->serial;
             record.controller = state.locks->pc;
             record.controller_index = state.locks->index;
+            record.level_after = int32_t(memory.u32(state.locks->pc + 0x8e8));
+            record.level_target = int32_t(memory.u32(state.locks->pc + 0x8ec));
+            record.level_max = int32_t(memory.u32(state.locks->pc + 0x7fc));
             record.aim = state.locks->aim;
             auto camera = lock_camera(memory, state.locks->pc);
             record.camera_valid = camera.valid;
@@ -545,6 +556,10 @@ class GameplayHooks {
             return true;
         }
         if (route == Route::aim) {
+            if (state.locks && state.locks->active && !state.locks->tracing && trace_.armed()) {
+                state.locks->tracing = trace_.begin(GetTickCount64());
+                trace_record(lock_record(memory, state, LockTraceKind::frame), state);
+            }
             if (!stable_cone_.load() && !(state.locks && state.locks->active && trace_.armed())) {
                 AcquisitionScope scope(
                     memory,
@@ -609,15 +624,6 @@ class GameplayHooks {
                                        (record.effective_max - record.effective_min) * distance,
                                    record.effective_min, record.effective_max);
             }
-            // Wait for a real new lock instead of spending the capture on the
-            // thousands of rejected targets searched during the opening shot.
-            // A capped candidate is also useful evidence when the candidate fix
-            // prevents every lock; its repeated failures are sampled by LockTrace.
-            if (state.locks && state.locks->active && !state.locks->tracing &&
-                ((record.accepted && record.result) || record.cap_applied)) {
-                state.locks->tracing = trace_.begin(GetTickCount64());
-                trace_record(lock_record(memory, state, LockTraceKind::frame), state);
-            }
             trace_record(record, state);
             return true;
         }
@@ -676,15 +682,42 @@ class GameplayHooks {
             return true;
         }
         if (route == Route::sound) {
-            if (state.marker && locals) {
-                auto record =
-                    lock_record(memory, state, LockTraceKind::sound, state.marker->target);
+            if (state.locks && state.locks->tracing && locals) {
+                auto record = lock_record(memory, state, LockTraceKind::sound,
+                                          state.marker ? state.marker->target : 0);
                 record.sound = memory.u32(locals);
                 record.sound_name = {memory.u32(record.sound + 0x2c),
                                      memory.u32(record.sound + 0x30)};
                 trace_record(record, state);
             }
             original_[0](context, base);
+            return true;
+        }
+        if (route == Route::level || route == Route::level_reset) {
+            const bool observe =
+                trace_.armed() && state.locks && state.locks->active && state.locks->pc == source;
+            auto before = observe ? int32_t(memory.u32(source + 0x8e8)) : -1;
+            original_[0](context, base);
+            if (observe) {
+                auto after = int32_t(memory.u32(source + 0x8e8));
+                if (before != after) {
+                    if (!state.locks->tracing) {
+                        state.locks->tracing = trace_.begin(GetTickCount64());
+                        trace_record(lock_record(memory, state, LockTraceKind::frame), state);
+                    }
+                    auto record = lock_record(memory, state, LockTraceKind::level_change);
+                    record.level_before = before;
+                    // UpdateLockOnLevel's verified script dispatches this cue after
+                    // increasing the level. This is path/state evidence, distinct
+                    // from an observed PlayGFxUISound request (event "sound").
+                    if (route == Route::level && after == before + 1 && after >= 0 && after < 5) {
+                        record.sound = memory.u32(source + 0x800 + uint32_t(after) * 40 + 0x20);
+                        record.sound_name = {memory.u32(record.sound + 0x2c),
+                                             memory.u32(record.sound + 0x30)};
+                    }
+                    trace_record(record, state);
+                }
+            }
             return true;
         }
         if (route == Route::search) {

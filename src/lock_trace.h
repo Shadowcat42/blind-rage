@@ -66,12 +66,13 @@ inline std::optional<float> stable_lock_radius(const LockCamera &camera, LockVec
         return {};
     return std::max(0.f, (camera.fov + 5.f) / 2.f - *offset - .5f);
 }
-enum class LockTraceKind { frame, acquire, remove, marker_add, marker_remove, sound };
+enum class LockTraceKind { frame, acquire, remove, marker_add, marker_remove, sound, level_change };
 struct LockTraceRecord {
     LockTraceKind kind{};
     uint64_t sequence{}, tick{}, frame{};
     uint32_t controller{}, controller_index{}, target{}, target_index{}, sound{};
     CueName sound_name;
+    int32_t level_before{-1}, level_after{-1}, level_target{-1}, level_max{-1};
     bool result{}, accepted{}, angular{}, angle_valid{}, camera_valid{}, geometry_supported{},
         cap_applied{};
     float native_min{}, native_max{}, effective_min{}, effective_max{}, fov{}, angle{}, limit{},
@@ -93,6 +94,7 @@ class LockTrace {
         started_ = attempted_ = dropped_ = sequence_ = 0;
         filtered_ = 0;
         samples_ = {};
+        last_acquire_sample_ = 0;
         count_ = 0;
         done_ = false;
         reason_ = enabled ? "waiting" : "disabled";
@@ -120,9 +122,14 @@ class LockTrace {
             record.kind == LockTraceKind::acquire && !(record.accepted && record.result);
         const bool retainCheck = record.kind == LockTraceKind::remove && !record.result;
         if (acquireCheck || retainCheck) {
-            if (acquireCheck && !record.cap_applied) {
-                ++filtered_;
-                return;
+            if (acquireCheck) {
+                // One rejected candidate per second globally: a large candidate
+                // set must not defeat a bounded identity cache by cycling it.
+                if (last_acquire_sample_ && now - last_acquire_sample_ < 1000) {
+                    ++filtered_;
+                    return;
+                }
+                last_acquire_sample_ = now;
             }
             // Keep one diagnostic sample per identity and kind each second.
             // Real acquisitions, removals and sounds are always recorded.
@@ -211,12 +218,13 @@ class LockTrace {
     };
     std::array<Sample, 64> samples_{};
     uint64_t started_{}, attempted_{}, dropped_{}, sequence_{}, filtered_{};
+    uint64_t last_acquire_sample_{};
     bool done_{};
     const char *reason_ = "disabled";
 };
 inline std::string lock_trace_line(const LockTraceRecord &r, std::string sound) {
-    constexpr const char *names[]{"frame",      "acquire",       "remove",
-                                  "marker_add", "marker_remove", "sound"};
+    constexpr const char *names[]{"frame",         "acquire", "remove",      "marker_add",
+                                  "marker_remove", "sound",   "level_change"};
     // Cue names are metadata identifiers. Encode unusual characters without
     // permitting a cue name to inject JSON or extra log lines.
     std::string escaped;
@@ -238,6 +246,8 @@ inline std::string lock_trace_line(const LockTraceRecord &r, std::string sound) 
         << ",\"angle_valid\":" << r.angle_valid << ",\"camera_valid\":" << r.camera_valid;
     out << ",\"accepted\":" << r.accepted << ",\"geometry_supported\":" << r.geometry_supported
         << ",\"cap_applied\":" << r.cap_applied;
+    out << ",\"level_before\":" << r.level_before << ",\"level_after\":" << r.level_after
+        << ",\"level_target\":" << r.level_target << ",\"level_max\":" << r.level_max;
     auto number = [&](const char *key, float value) {
         out << ",\"" << key << "\":";
         if (std::isfinite(value))

@@ -52,6 +52,14 @@ class AnalysisTests(unittest.TestCase):
         rows[-1]["dropped"] = 7
         self.assertFalse(analysis.analyze(rows)["lossless"])
 
+    def test_level_cue_path_is_not_an_observed_ui_sound_request(self):
+        rows = [dict(event="level_change", seq=1, frame=1, pc=10, pc_index=1,
+                     level_before=0, level_after=1, cue="LevelUp_Cue", sound=30)]
+        report = analysis.analyze(rows)
+        self.assertEqual(report["level_changes"][0]["configured_cue"], "LevelUp_Cue")
+        self.assertFalse(report["ui_sound_requests"])
+        self.assertFalse(report["confirmed_sequences"])
+
     def test_invalid_order_rejected(self):
         rows = fixture()
         rows[2]["seq"] = 1

@@ -8,6 +8,8 @@ from pathlib import Path
 
 def analyze(records):
     counts = collections.Counter()
+    sound_requests = collections.Counter()
+    level_changes = collections.Counter()
     grouped = collections.defaultdict(list)
     session, footer = {}, {}
     previous = 0
@@ -20,6 +22,10 @@ def analyze(records):
         if kind == "end":
             footer = record
             continue
+        if kind == "sound" and record.get("cue"):
+            sound_requests[record["cue"]] += 1
+        if kind == "level_change":
+            level_changes[(record.get("level_before"), record.get("level_after"), record.get("cue", ""))] += 1
         seq = record.get("seq", 0)
         if not isinstance(seq, int) or seq <= previous:
             raise ValueError("Trace sequence is missing, duplicated or unordered")
@@ -54,6 +60,9 @@ def analyze(records):
     return {
         "session": session,
         "events": dict(counts),
+        "ui_sound_requests": dict(sound_requests),
+        "level_changes": [dict(before=key[0], after=key[1], configured_cue=key[2], count=value)
+                          for key, value in level_changes.items()],
         "stop_reason": footer.get("reason", "missing_footer"),
         "dropped": footer.get("dropped"),
         "lossless": bool(footer) and footer.get("dropped") == 0,
