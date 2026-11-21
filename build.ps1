@@ -54,11 +54,13 @@ try {
  if($LASTEXITCODE){throw 'DLL compilation failed'}
  & $compiler @common '-municode' 'src/launcher.cpp' '-o' 'dist/BlindRage.exe' '-lbcrypt' '-luser32'
  if($LASTEXITCODE){throw 'Launcher compilation failed'}
- & $compiler @common 'tests/reader_test.cpp' '-o' 'dist/reader_test.exe'
+ & $compiler @common 'tests/reader_test.cpp' '-o' 'build/tests/reader_test.exe'
  if($LASTEXITCODE){throw 'Test compilation failed'}
- & $compiler @common '-municode' 'tests/speech_test.cpp' '-o' 'dist/speech_test.exe' '-lbcrypt' '-lole32' '-luser32'
+ & $compiler @common '-municode' 'tests/speech_test.cpp' '-o' 'build/tests/speech_test.exe' '-lbcrypt' '-lole32' '-luser32'
  if($LASTEXITCODE){throw 'Speech test compilation failed'}
  Copy-Item -LiteralPath vendor/dynamic/release/bin/prism.dll -Destination dist/prism.dll
+ # Keep manual speech diagnostics outside the installable distribution.
+ Copy-Item -LiteralPath vendor/dynamic/release/bin/prism.dll -Destination build/tests/prism.dll
  New-Item -ItemType Directory -Force dist/licenses | Out-Null
  Copy-Item -LiteralPath vendor/NOTICE -Destination dist/licenses/Prism-NOTICE.txt
  Copy-Item -LiteralPath vendor/LICENSES -Destination dist/licenses -Recurse -Force
@@ -66,7 +68,7 @@ try {
  Copy-Item -LiteralPath "$hookRoot/LICENSE.txt" -Destination dist/licenses/MinHook-LICENSE.txt
  if($Test){
   & ./build/tests/shooting_beacons_test.exe; if($LASTEXITCODE){throw 'Shooting beacon tests failed'}
-  & ./dist/reader_test.exe; if($LASTEXITCODE){throw 'Reader tests failed'}
+  & ./build/tests/reader_test.exe; if($LASTEXITCODE){throw 'Reader tests failed'}
   & ./build/hooks/hook_test.exe; if($LASTEXITCODE){throw 'Hook tests failed'}
   & ./build/hooks/ui_changes_test.exe; if($LASTEXITCODE){throw 'UI change tests failed'}
   & ./build/hooks/ui_hook_source_test.exe; if($LASTEXITCODE){throw 'UI hook source tests failed'}

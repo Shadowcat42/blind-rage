@@ -16,6 +16,8 @@ function Read-Ini([string[]]$lines){
   if($text -eq '' -or $text.StartsWith(';') -or $text.StartsWith('#')){continue}
   $equals=$text.IndexOf('=');if($equals -lt 1){continue}
   $key=$text.Substring(0,$equals).Trim().ToLowerInvariant()
+  # Retired experimental toggle: the autoaim repair is unconditional now.
+  if($section -eq 'gameplay' -and $key -eq 'stable_lock_cone'){continue}
   if(!$order.Contains($section)){$order[$section]=[Collections.Generic.List[string]]::new()}
   $id="$section`n$key"
   # GetPrivateProfile* uses the first occurrence of a key.
@@ -32,6 +34,17 @@ if(!(Test-Path -LiteralPath $Target)){
 $targetPath=(Resolve-Path -LiteralPath $Target).Path
 $targetLines=[IO.File]::ReadAllLines($targetPath)
 $local=Read-Ini $targetLines
+# Migrate before merging defaults, so adding shooting_mode never changes a
+# legacy user's assistance choice to the new-install beacon default.
+$modeId="gameplay`nshooting_mode";$legacyId="gameplay`nshooting_assist"
+if(!$local.Values.ContainsKey($modeId) -and $local.Values.ContainsKey($legacyId)){
+ $raw=$local.Values[$legacyId].Split('=',2)[1].Split([char[]]';#')[0].Trim()
+ $legacy=0;[void][int]::TryParse($raw,[ref]$legacy)
+ $mode=if($legacy -ne 0){'autoaim'}else{'native'}
+ $local.Values[$modeId]="shooting_mode=$mode"
+ $local.Order['gameplay'].Add('shooting_mode')
+}
+
 $defaults=Read-Ini $templateLines
 $used=@{};$added=0
 $output=[Collections.Generic.List[string]]::new()

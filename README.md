@@ -56,7 +56,7 @@ The menu implementation has passed synthetic, private replay, and user-led live 
 
 The `experiment/gameplay-text-reader` branch adds subtitle/tutorial narration and the first Episode 1 gameplay prototype. It follows the recomp's effective Xbox, PlayStation or keyboard display and current remapped button labels. Subtitle and tutorial narration default to enabled, including existing installations without new settings. Add `[gameplay]` settings `subtitles=0` or `tutorials=0` to `mods/accessibility/accessibility.ini` to disable either. Text and status speech queue by default (`interrupt=0`); urgent new QTE instructions may interrupt (`qte_interrupt=1`). Disappearing cues do not stop NVDA.
 
-Shared QTE readers cover resolved presses, mashes, holds, grouped stick commands and rotations, plus the separate Synchronic input window. Health/Burst status is available on Back/Select during active gameplay, with low-health warnings and native Burst-button readiness. This follows the recomp's Back binding (default Tab on keyboard), preserves the game's original handler and stays silent in cutscenes or pause/menu screens. Set `status_button=0` to disable it; Ctrl+Alt+F4 remains an alternative. The optional shooting aid widens the game's acquisition cone while retaining its eligibility, range, occlusion, lock limits, homing and manual firing. Defaults are `qtes=1`, `status_warnings=1`, `shooting_mode=beacons` and `shooting_cone_degrees=45`. D-pad Up changes shooting mode during active shooting; other INI changes take effect after restarting the mod/game.
+Shared QTE readers cover resolved presses, mashes, holds, grouped stick commands and rotations, plus the separate Synchronic input window. Health/Burst status is available on Back/Select during active gameplay, with low-health warnings and native Burst-button readiness. This follows the recomp's Back binding (default Tab on keyboard), preserves the game's original handler and stays silent in cutscenes or pause/menu screens. Set `status_button=0` to disable it; Ctrl+Alt+F4 remains an alternative. The optional shooting aid widens the game's acquisition cone while retaining its eligibility, range, occlusion, lock limits, homing and manual firing. New-install defaults are `qtes=1`, `status_warnings=1`, `shooting_mode=beacons` and `shooting_cone_degrees=45`. D-pad Up changes shooting mode during active shooting; other INI changes take effect after restarting the mod/game.
 
 This build has offline validation and is ready for the first user-led gameplay test. Live coverage, speech latency and complete Episode 1 playability have not yet been established. Start the mod before entering gameplay. See the [test instructions](docs/EPISODE_1_TESTING.md), [implementation/evidence](docs/EPISODE_1_GROUNDWORK.md), [text-reader limits](docs/GAMEPLAY_TEXT_READER.md) and [QTE research](docs/QTE_INPUT_RESEARCH.md). Image-only text, other conversation/interlude routes, later combat assistance and encounter-specific exceptions remain future work.
 
@@ -86,7 +86,7 @@ When developing directly in an installation's `mods/accessibility` folder, the b
 
 ## Diagnostics and contributions
 
-Logs and timestamped UI dumps stay locally under the installation's `userdata/accessibility`. Dumps can contain game memory and must not be committed or automatically uploaded. Optional private replay uses `dist/reader_test.exe research/snapshot-name`, or `dist/reader_test.exe --profile=updated research/snapshot-name` for title-update captures. Snapshots are not required for CI and are excluded from Git.
+Logs and timestamped UI dumps stay locally under the installation's `userdata/accessibility`. Dumps can contain game memory and must not be committed or automatically uploaded. Optional private replay uses `build/tests/reader_test.exe research/snapshot-name`, or `build/tests/reader_test.exe --profile=updated research/snapshot-name` for title-update captures. Snapshots are not required for CI and are excluded from Git. Development test executables and their speech dependency stay under `build/tests`; `dist` contains only the launcher, runtime mod libraries and notices. Packaging removes its temporary staging directory after success or failure.
 
 Each game process starts with a fresh mod log and removes prior `dump-<number>.txt` and `.pages` captures from that directory. Copy captures you want to retain elsewhere before restarting. Restarting the mod worker within the same game process preserves its session files. Unrelated files and subdirectories are retained.
 
@@ -103,5 +103,8 @@ Manual shooting guidance is a prototype: stereo position points left/right, pitc
 indicates elevation, and pulses accelerate as aim approaches the selected cluster.
 You still aim and fire. Native lock feedback is retained; guidance pauses at full
 volley capacity. See [shooting modes and testing](docs/SHOOTING_BEACONS.md).
-Autoaim always includes the
+Release defaults come from `config/accessibility.ini`; the installation still uses
+only `mods/accessibility/accessibility.ini`, which is a local file (untracked; created from
+the template by `install.ps1`) and is never overwritten at startup. Existing `shooting_assist` choices are
+migrated when no explicit `shooting_mode` is present. Autoaim always includes the
 confirmed stability repair; the old `stable_lock_cone` setting is removed.

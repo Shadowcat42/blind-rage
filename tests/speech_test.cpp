@@ -4,7 +4,7 @@
 using namespace a11y;
 int wmain(int argc, wchar_t **argv) {
     auto dir = module_path().parent_path();
-    auto root = dir.parent_path().parent_path().parent_path();
+    auto root = dir.parent_path().parent_path().parent_path().parent_path();
     SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
     auto cookie = AddDllDirectory((root / L"bin_disc").c_str());
     auto co = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);

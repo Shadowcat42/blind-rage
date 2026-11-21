@@ -11,7 +11,7 @@
 !/package.ps1
 !/install.ps1
 !/sync_ini.ps1
-!/accessibility.ini
+!/config/
 !/src/
 !/tests/
 !/docs/
