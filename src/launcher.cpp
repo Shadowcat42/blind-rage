@@ -53,7 +53,7 @@ int wmain(int argc, wchar_t **argv) {
                     throw std::runtime_error("Unknown build; choose auto, disc, or updated");
             } else
                 throw std::runtime_error(
-                    "Usage: BlindRage.exe [--build auto|disc|updated] [--check] [--attach PID] [--command test|repeat|stop|mute|dump|shutdown|status]");
+                    "Usage: BlindRage.exe [--build auto|disc|updated] [--check] [--attach PID] [--command test|repeat|stop|mute|dump|shutdown|status|aimmode|aimprev|aimnext]");
         }
         if (restartCommand && !restartParent)
             throw std::runtime_error("Restart arguments require a restart parent");

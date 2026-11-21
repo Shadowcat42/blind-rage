@@ -10,6 +10,7 @@
 #include "gameplay_status.h"
 #include "gameplay_hooks.h"
 #include "synchronic_reader.h"
+#include "beacon_audio.h"
 #include "restart_hook.h"
 #include <atomic>
 #include <mutex>
@@ -116,14 +117,15 @@ static DWORD WINAPI run(void *) {
         // One settings file: mods/accessibility/accessibility.ini, the parent of dist.
         auto ini = (dir.parent_path() / L"accessibility.ini").wstring();
         write("CONFIG " + utf8(ini) + (fs::exists(ini) ? "" : " (missing; defaults in use)"));
-        std::vector<std::wstring> commands = {L"test", L"repeat",   L"stop",  L"mute",
-                                              L"dump", L"shutdown", L"status"};
+        std::vector<std::wstring> commands = {L"test",    L"repeat",   L"stop",   L"mute",
+                                              L"dump",    L"shutdown", L"status", L"aimmode",
+                                              L"aimprev", L"aimnext"};
         std::vector<HANDLE> events;
         for (auto &c : commands)
             events.push_back(
                 CreateEventW(nullptr, FALSE, FALSE, event_name(GetCurrentProcessId(), c).c_str()));
-        const int defaults[] = {VK_F1, VK_F2, VK_F3, VK_F5, VK_F8, 0, VK_F4};
-        int hotkeys[7]{};
+        const int defaults[] = {VK_F1, VK_F2, VK_F3, VK_F5, VK_F8, 0, VK_F4, VK_F9, VK_F10, VK_F12};
+        int hotkeys[10]{};
         for (size_t i = 0; i < commands.size(); i++)
             hotkeys[i] =
                 GetPrivateProfileIntW(L"hotkeys", commands[i].c_str(), defaults[i], ini.c_str());
@@ -175,21 +177,107 @@ static DWORD WINAPI run(void *) {
         bool qteEnabled = setting(L"qtes", 1), interruptQte = setting(L"qte_interrupt", 1);
         int shootingDegrees = std::clamp<int>(
             GetPrivateProfileIntW(L"gameplay", L"shooting_cone_degrees", 45, ini.c_str()), 1, 89);
-        gameHooks.options(textHooks && qteEnabled,
-                          setting(L"shooting_assist", 1) ? float(shootingDegrees) : 0.f,
+        wchar_t modeText[32]{};
+        GetPrivateProfileStringW(L"gameplay", L"shooting_mode", L"", modeText, 32, ini.c_str());
+        auto legacy = int(GetPrivateProfileIntW(L"gameplay", L"shooting_assist", -1, ini.c_str()));
+        auto shootingMode = shooting_mode(utf8(modeText), legacy);
+        // Legacy choices carry over and new configurations default to beacons. The
+        // file is only touched when the key is absent; a typo is logged and never
+        // overwritten, so the user's text survives for them to correct.
+        if (modeText[0] && !shooting_mode_recognized(utf8(modeText)))
+            write("SHOOTING_MODE unrecognized value ignored; using " +
+                  std::string(shooting_mode_name(shootingMode)));
+        else if (!modeText[0])
+            WritePrivateProfileStringW(L"gameplay", L"shooting_mode",
+                                       wide(shooting_mode_name(shootingMode)).c_str(), ini.c_str());
+        gameHooks.options(textHooks && qteEnabled, float(shootingDegrees),
                           setting(L"status_button", 1));
+        gameHooks.shooting(shootingMode);
         bool lockTraceEnabled =
             GetPrivateProfileIntW(L"diagnostics", L"lock_trace", 0, ini.c_str()) != 0;
-        bool stableCone = setting(L"stable_lock_cone", 0);
-        gameHooks.lock_diagnostics(lockTraceEnabled, stableCone);
+        bool stableCone = shootingMode == ShootingMode::autoaim;
+        write("SHOOTING_MODE " + std::string(shooting_mode_name(shootingMode)) + " configured");
+        gameHooks.lock_diagnostics(lockTraceEnabled);
+        ShootingBeacons beacons;
+        BeaconAudio beaconAudio;
+        std::optional<AimSnapshot> lastAim;
+        float beaconGain =
+            float(std::clamp<int>(
+                GetPrivateProfileIntW(L"gameplay", L"beacon_volume", 30, ini.c_str()), 0, 100)) *
+            .004f;
+        AudioRetry audioRetry;
+        bool audioReady = false, audioAnnounced = false;
+        auto beacon_output = [&](BeaconCue cue) {
+            if (!notifications.focused() || muted || shootingMode != ShootingMode::beacons)
+                cue.active = false;
+            // Start on first need and rebuild after a device error, with backoff.
+            if (cue.active && !(audioReady && beaconAudio.healthy()) &&
+                audioRetry.due(GetTickCount64())) {
+                if (audioReady)
+                    write("BEACON_AUDIO lost; restarting");
+                beaconAudio.close();
+                audioReady = beaconAudio.start(beaconGain);
+                if (audioReady)
+                    audioRetry.success();
+                else
+                    audioRetry.failure(GetTickCount64());
+                write(audioReady ? "BEACON_AUDIO ready"
+                                 : "BEACON_AUDIO unavailable; aiming remains manual");
+                if (!audioReady && !audioAnnounced && speaking) {
+                    audioAnnounced = true;
+                    speech.speak("Beacon audio unavailable. Aiming remains manual.", false);
+                }
+            }
+            if (audioReady && beaconAudio.healthy())
+                beaconAudio.update(cue);
+        };
+        auto drain_beacons = [&] {
+            if (auto sample = gameHooks.take_aim()) {
+                lastAim = *sample;
+                beacon_output(beacons.update(*sample));
+            }
+        };
+        auto shooting_command = [&](int command) {
+            if (command == 3) {
+                gameHooks.stop_lock_trace();
+                shootingMode = shootingMode == ShootingMode::beacons   ? ShootingMode::autoaim
+                               : shootingMode == ShootingMode::autoaim ? ShootingMode::native
+                                                                       : ShootingMode::beacons;
+                gameHooks.shooting(shootingMode);
+                beacons.reset();
+                lastAim.reset();
+                beaconAudio.silence();
+                WritePrivateProfileStringW(L"gameplay", L"shooting_mode",
+                                           wide(shooting_mode_name(shootingMode)).c_str(),
+                                           ini.c_str());
+                std::string text =
+                    shootingMode == ShootingMode::beacons   ? "Manual aiming, cluster beacons."
+                    : shootingMode == ShootingMode::autoaim ? "Autoaim."
+                                                            : "Native aiming, guidance off.";
+                write("SHOOTING_MODE " + std::string(shooting_mode_name(shootingMode)));
+                if (notifications.focused() && !muted && speaking)
+                    speech.speak(text, false);
+            } else if (shootingMode == ShootingMode::beacons && lastAim &&
+                       GetTickCount64() - lastAim->tick <= 200) {
+                auto cue = beacons.update(*lastAim, command == 1 ? -1 : 1);
+                beacon_output(cue);
+                std::string text = lastAim->locks >= lastAim->maximum
+                                       ? "Volley full. Fire to continue."
+                                   : cue.active ? "Target cluster selected."
+                                                : "No unlocked target clusters.";
+                write("BEACON_CLUSTER " + text);
+                if (notifications.focused() && !muted && speaking)
+                    speech.speak(text, false);
+            }
+        };
         std::optional<LockTraceWriter> lockWriter;
         if (lockTraceEnabled) {
             lockWriter.emplace(logs / L"lock-trace.jsonl", profile->id,
-                               setting(L"shooting_assist", 1) ? shootingDegrees : 0, stableCone,
-                               GetCurrentProcessId());
+                               shootingMode == ShootingMode::autoaim ? shootingDegrees : 0,
+                               stableCone, GetCurrentProcessId());
             if (!lockWriter->valid()) {
                 write("LOCK_TRACE cannot open diagnostic file");
-                gameHooks.lock_diagnostics(false, stableCone);
+                gameHooks.lock_diagnostics(false);
             }
         }
         write("LOCK_DIAGNOSTICS trace=" + std::to_string(lockTraceEnabled) +
@@ -228,7 +316,7 @@ static DWORD WINAPI run(void *) {
             gameHooks.capture(true);
             write("Gameplay state observer started; qtes=" + std::to_string(qteEnabled) +
                   " shooting_degrees=" +
-                  std::to_string(setting(L"shooting_assist", 1) ? shootingDegrees : 0));
+                  std::to_string(shootingMode == ShootingMode::autoaim ? shootingDegrees : 0));
         }
         auto narrate_text = [&] {
             for (const auto &line : gameplay.take()) {
@@ -368,9 +456,12 @@ static DWORD WINAPI run(void *) {
                 for (unsigned i = 0; i < UiHookSource::hook_count; i++)
                     counts += " " + std::to_string(source.notifications(i));
                 write("EVENT_SOURCES" + counts);
-                write("GAMEPLAY_STATS captured=" + std::to_string(gameHooks.captured()) +
-                      " capture_failures=" + std::to_string(gameHooks.failures()) +
-                      " widened_checks=" + std::to_string(gameHooks.widenings()));
+                write(
+                    "GAMEPLAY_STATS captured=" + std::to_string(gameHooks.captured()) +
+                    " capture_failures=" + std::to_string(gameHooks.failures()) +
+                    " widened_checks=" + std::to_string(gameHooks.widenings()) +
+                    " lock_position_matches=" + std::to_string(gameHooks.position_matches()) +
+                    " lock_position_mismatches=" + std::to_string(gameHooks.position_mismatches()));
                 return;
             }
             auto menus = base ? reader.menus(memory) : std::vector<Menu>{};
@@ -488,6 +579,13 @@ static DWORD WINAPI run(void *) {
                 inspect(true);
             if (i == 5)
                 stopping = true;
+            // Keyboard equivalents of the D-pad shooting controls.
+            if (i == 7)
+                shooting_command(3);
+            if (i == 8)
+                shooting_command(1);
+            if (i == 9)
+                shooting_command(2);
             if (i == 6 && speaking && !muted) {
                 auto runtimeInstance = instance();
                 auto base = runtimeInstance ? membase(runtimeInstance) : nullptr;
@@ -526,9 +624,12 @@ static DWORD WINAPI run(void *) {
                     changed();
                 else if (index > commands.size()) {
                     drain_lock_trace();
+                    drain_beacons();
                     bool overflow = false, nativeOverflow = false;
                     auto batch = presentations.take(overflow);
                     auto native = gameHooks.take(nativeOverflow);
+                    if (batch.empty() && native.empty() && !overflow && !nativeOverflow)
+                        continue;
                     auto now = GetTickCount64();
                     bool stale =
                         std::any_of(batch.begin(), batch.end(),
@@ -543,6 +644,9 @@ static DWORD WINAPI run(void *) {
                         status.reset();
                         qtes.reset();
                         timing.reset();
+                        beacons.reset();
+                        beaconAudio.silence();
+                        lastAim.reset();
                         if (textHooks)
                             presentations.capture(true);
                         if (nativeGameplay)
@@ -629,6 +733,11 @@ static DWORD WINAPI run(void *) {
                                                 forceContext = false;
                                             }
                                         }
+                                } else if (event.shooting_command) {
+                                    if (notifications.focused() &&
+                                        capture_status_context(memory, event.status.input, false) ==
+                                            event.status)
+                                        shooting_command(event.shooting_command);
                                 } else if (event.menu_changed)
                                     changed();
                                 else if (event.menu_repeat)
@@ -697,6 +806,8 @@ static DWORD WINAPI run(void *) {
                     if (message.message == WindowNotifications::focus_message) {
                         bool was = notifications.focused();
                         bool focused = notifications.update();
+                        if (!focused)
+                            beaconAudio.silence();
                         if (focused && !was) {
                             forceContext = true;
                             source.request_discovery();
@@ -716,6 +827,7 @@ static DWORD WINAPI run(void *) {
             }
         }
         gameHooks.capture(false);
+        beaconAudio.close();
         drain_lock_trace();
         presentations.capture(false);
         source.capture(false);

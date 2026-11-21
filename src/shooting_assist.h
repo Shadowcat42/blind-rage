@@ -25,10 +25,10 @@ class AcquisitionScope {
         };
         if (safeRadius && (!std::isfinite(*safeRadius) || *safeRadius < 0 || *safeRadius > 180))
             return;
-        put(0, safeRadius ? std::min(std::max(minimum, degrees), *safeRadius)
-                          : std::max(minimum, degrees));
-        put(4, safeRadius ? std::min(std::max(maximum, degrees), *safeRadius)
-                          : std::max(maximum, degrees));
+        // A safety bound limits only added assistance. Never narrow either native
+        // threshold, even when the base game itself can acquire an unstable lock.
+        put(0, std::max(minimum, safeRadius ? std::min(degrees, *safeRadius) : degrees));
+        put(4, std::max(maximum, safeRadius ? std::min(degrees, *safeRadius) : degrees));
         if (widened_ != original_) {
             changed_ = write_(at_, widened_.data(), widened_.size());
             if (!changed_)

@@ -47,15 +47,15 @@ int main() {
         {
             AcquisitionScope scope(memory, write, pc, 20, 7);
             check(scope.changed() && std::bit_cast<float>(memory.u32(pc + 0x7d4)) == 7 &&
-                      std::bit_cast<float>(memory.u32(pc + 0x7d8)) == 7,
-                  "cap also constrains native 50-degree near cone before acquisition");
+                      std::bit_cast<float>(memory.u32(pc + 0x7d8)) == 50,
+                  "cap limits added assistance without narrowing the native near cone");
         }
         check(std::bit_cast<float>(memory.u32(pc + 0x7d8)) == 50,
               "candidate cap restores native fields");
         {
             AcquisitionScope scope(memory, write, pc, 20, 0);
-            check(std::bit_cast<float>(memory.u32(pc + 0x7d8)) == 0,
-                  "zero radius rejects acquisition without post-filtering side effects");
+            check(std::bit_cast<float>(memory.u32(pc + 0x7d8)) == 50,
+                  "zero safe radius preserves native acquisition thresholds");
             put(pc + 0x7d8, 60);
         }
         check(std::bit_cast<float>(memory.u32(pc + 0x7d8)) == 60,
@@ -64,6 +64,34 @@ int main() {
             AcquisitionScope scope(memory, write, pc, 0, 7);
             check(!scope.changed() && std::bit_cast<float>(memory.u32(pc + 0x7d8)) == 60,
                   "aid off never caps native acquisition");
+        }
+        {
+            // Component world origin: fourth row of the reflected LocalToWorld matrix.
+            const uint32_t component = 0x4000;
+            put(component + 0x90 + 48, 1000.f);
+            put(component + 0x90 + 52, 0.f);
+            put(component + 0x90 + 56, 0.f);
+            LockVector position{};
+            check(lock_target_position(memory, component, position) && position.x == 1000.f,
+                  "component world position is read from the matrix origin row");
+            check(!lock_target_position(memory, 0, position),
+                  "a missing component has no position");
+            put(component + 0x90 + 52, std::numeric_limits<float>::quiet_NaN());
+            check(!lock_target_position(memory, component, position),
+                  "a non-finite position is rejected");
+            put(component + 0x90 + 52, 0.f);
+            LockCamera view{{0, 0, 0}, {1, 0, 0}, 65, true};
+            auto angle = lock_direction_angle({0, 0, 0}, {1, 0, 0}, {866.0254f, 500.f, 0});
+            check(angle && std::abs(*angle - 30.f) < .01f,
+                  "direction angle measures from the supplied origin");
+            auto margin = lock_view_margin(view, {866.0254f, 500.f, 0});
+            check(margin && std::abs(*margin - 5.f) < .01f,
+                  "margin is the native (FOV + 5) / 2 limit minus the camera angle");
+            margin = lock_view_margin(view, {500.f, 866.0254f, 0});
+            check(margin && *margin < 0, "a target past the native limit has negative margin");
+            check(!lock_view_margin(view, {0, 0, 0}) &&
+                      !lock_view_margin(LockCamera{{0, 0, 0}, {1, 0, 0}, 65, false}, {1, 0, 0}),
+                  "degenerate geometry and an invalid camera give no margin");
         }
         word(pc + 0x370, 0x3000);
         put(0x330c, 0);
@@ -126,9 +154,16 @@ int main() {
         trace.push(failed, 1004);
         trace.push(failed, 1004);
         check(trace.take().records.size() == 2, "actual removals are never coalesced");
-        check(!trace.begin(31000), "wall-clock capture expires without a polling timer");
+        check(trace.begin(600000) && trace.armed(),
+              "a long pause between active ticks does not spend the capture window");
+        uint64_t now = 600000;
+        bool running = true;
+        for (unsigned i = 0; i < 2000 && running; ++i)
+            running = trace.begin(now += 33);
         batch = trace.take();
-        check(batch.done && std::string(batch.reason) == "time_limit", "time limit is explicit");
+        check(!running && batch.done && std::string(batch.reason) == "time_limit" &&
+                  batch.active >= 30000 && batch.active < 30100,
+              "time limit counts thirty seconds of active shooting ticks");
         trace.configure(true);
         trace.begin(0);
         trace.push(record, 0);

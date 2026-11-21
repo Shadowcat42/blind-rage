@@ -23,7 +23,7 @@ try {
  if($LASTEXITCODE){throw 'UI change test compilation failed'}
  & $compiler @common "-I$hookRoot/include" 'tests/ui_hook_source_test.cpp' @hookObjects '-o' 'build/hooks/ui_hook_source_test.exe' '-luser32'
  if($LASTEXITCODE){throw 'UI hook source test compilation failed'}
- New-Item -ItemType Directory -Force build/speech | Out-Null
+ New-Item -ItemType Directory -Force build/speech,build/tests | Out-Null
  & $compiler @common '-shared' 'tests/fake_prism.cpp' '-o' 'build/speech/prism.dll'
  if($LASTEXITCODE){throw 'Fake speech backend compilation failed'}
  & $compiler @common 'tests/diagnostics_test.cpp' '-o' 'build/speech/diagnostics_test.exe' '-lbcrypt' '-luser32'
@@ -46,6 +46,8 @@ try {
  if($LASTEXITCODE){throw 'Presentation hook test compilation failed'}
  & $compiler @common '-municode' 'tests/restart_test.cpp' '-o' 'build/hooks/restart_test.exe' '-lshell32' '-lbcrypt'
  if($LASTEXITCODE){throw 'Restart test compilation failed'}
+ & $compiler @common 'tests/shooting_beacons_test.cpp' '-o' 'build/tests/shooting_beacons_test.exe'
+ if($LASTEXITCODE){throw 'Shooting beacon compilation failed'}
  & $compiler @common 'tests/lock_trace_test.cpp' '-o' 'build/hooks/lock_trace_test.exe'
  if($LASTEXITCODE){throw 'Lock trace test compilation failed'}
  & $compiler @common "-I$hookRoot/include" '-shared' 'src/dll.cpp' @hookObjects '-o' 'dist/asura_accessibility.dll' '-lbcrypt' '-lole32' '-luser32'
@@ -63,6 +65,7 @@ try {
  Copy-Item -LiteralPath tools/llvm-mingw-20261117-ucrt-x86_64/LICENSE.TXT -Destination dist/licenses/LLVM-LICENSE.txt
  Copy-Item -LiteralPath "$hookRoot/LICENSE.txt" -Destination dist/licenses/MinHook-LICENSE.txt
  if($Test){
+  & ./build/tests/shooting_beacons_test.exe; if($LASTEXITCODE){throw 'Shooting beacon tests failed'}
   & ./dist/reader_test.exe; if($LASTEXITCODE){throw 'Reader tests failed'}
   & ./build/hooks/hook_test.exe; if($LASTEXITCODE){throw 'Hook tests failed'}
   & ./build/hooks/ui_changes_test.exe; if($LASTEXITCODE){throw 'UI change tests failed'}

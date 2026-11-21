@@ -13,7 +13,10 @@ struct StatusContext {
 // unpaused, noncinematic game with an open gauge and no active menu scene.
 // The game keeps updating gauge values even when its display is hidden.
 // Called only on a button press and before delivery, never on a timer.
-inline std::optional<StatusContext> capture_status_context(const Memory &m, uint32_t input) {
+// The shooting commands use the same checks without the health gauge, which a
+// shooting HUD may not show; only Health/Burst reads need an open gauge.
+inline std::optional<StatusContext> capture_status_context(const Memory &m, uint32_t input,
+                                                           bool require_gauge = true) {
     auto word = [&](uint32_t object, uint32_t offset, uint32_t &out) {
         std::array<uint8_t, 4> bytes{};
         if (!object || uint64_t(object) + offset + 4 > 0x100000000ull ||
@@ -35,6 +38,8 @@ inline std::optional<StatusContext> capture_status_context(const Memory &m, uint
         return {};
     if (manager && (!word(manager, 0x98, scene) || scene))
         return {};
+    if (!require_gauge)
+        return value;
     if (!word(hud, 0x488, value.gauge) || !word(value.gauge, 0x20, value.gauge_index) ||
         !value.gauge_index || !word(value.gauge, 0xc8, flags) || !(flags & 0x80000000))
         return {};
@@ -80,6 +85,7 @@ struct GameplayEvent {
     CapturedString<513> record_text;
     bool timing{}, status_request{}, menu_repeat{}, menu_changed{};
     uint32_t repeat_movie{}, repeat_index{};
+    int shooting_command{};
     QteGroup group;
     TimingState sync;
     StatusContext status;

@@ -19,6 +19,70 @@ def fixture():
 
 
 class AnalysisTests(unittest.TestCase):
+    def test_repair_gate_rejects_empty_capture_despite_complete_timer(self):
+        rows = [dict(event="session", stable_cone=1, shooting_degrees=45),
+                dict(event="end", reason="time_limit", active_ms=30000, dropped=0)]
+        validation = analysis.analyze(rows)["repair_validation"]
+        self.assertFalse(validation["trace_checks_pass"])
+        self.assertFalse(validation["checks"]["ordinary_locks_and_ui_sounds_present"])
+        self.assertFalse(validation["checks"]["repair_exercised"])
+
+    def test_repair_gate_requires_positive_evidence_and_complete_capture(self):
+        rows = [dict(event="session", stable_cone=1, shooting_degrees=45)]
+        rows += [r.copy() for r in fixture() if r["event"] != "end"]
+        for row in rows:
+            if row["event"] == "remove":
+                row["result"] = 0
+                row["angle"] = 20
+            if row["event"] == "acquire":
+                row.update(position_verified=1, native_min=3.6, effective_min=45,
+                           target_angle=20, angle=20)
+        rows.append(dict(event="acquire", seq=13, frame=4, pc=10, pc_index=1,
+                         target=99, target_index=3, result=0, accepted=0, view_gated=1,
+                         position_verified=1, native_min=3.6, effective_min=3.6,
+                         angle_valid=1, target_angle=60, angle=60))
+        rows.append(dict(event="end", reason="time_limit", active_ms=30000, dropped=0))
+        self.assertTrue(analysis.analyze(rows)["repair_validation"]["trace_checks_pass"])
+        for key, value in (("reason", "byte_limit"), ("active_ms", 20000), ("dropped", 1)):
+            incomplete = [r.copy() for r in rows]
+            incomplete[-1][key] = value
+            self.assertFalse(analysis.analyze(incomplete)["repair_validation"]["trace_checks_pass"])
+        for key, value in (("stable_cone", 0), ("shooting_degrees", 0)):
+            disabled = [r.copy() for r in rows]
+            disabled[0][key] = value
+            self.assertFalse(analysis.analyze(disabled)["repair_validation"]["trace_checks_pass"])
+        mismatch = [r.copy() for r in rows]
+        mismatch[1]["target_angle"] = 5
+        self.assertFalse(analysis.analyze(mismatch)["repair_validation"]["trace_checks_pass"])
+
+    def test_repair_gate_rejects_a_confirmed_loop(self):
+        rows = [dict(event="session", stable_cone=1, shooting_degrees=45)] + fixture()
+        rows[-1]["active_ms"] = 30000
+        validation = analysis.analyze(rows)["repair_validation"]
+        self.assertFalse(validation["trace_checks_pass"])
+        self.assertFalse(validation["checks"]["repeating_sequences_classified"])
+
+    def test_native_loop_is_reported_without_failing_mod_loop_check(self):
+        rows = fixture()
+        for row in rows:
+            if row["event"] == "acquire":
+                row.update(angle=3.15, native_min=3.6, native_max=50,
+                           effective_min=3.6, effective_max=50, limit=3.6)
+        report = analysis.analyze(rows)
+        self.assertEqual(report["confirmed_sequences"][0]["acquisition_origins"], {"native": 3})
+        self.assertTrue(report["repair_validation"]["checks"]["no_assist_only_repeating_sequence"])
+        self.assertTrue(report["repair_validation"]["checks"]["repeating_sequences_classified"])
+
+    def test_widened_loop_still_fails_mod_loop_check(self):
+        rows = fixture()
+        for row in rows:
+            if row["event"] == "acquire":
+                row.update(angle=20, native_min=3.6, native_max=50,
+                           effective_min=45, effective_max=50, limit=45)
+        report = analysis.analyze(rows)
+        self.assertEqual(report["confirmed_sequences"][0]["acquisition_origins"], {"assist_only": 3})
+        self.assertFalse(report["repair_validation"]["checks"]["no_assist_only_repeating_sequence"])
+
     def test_exact_repeating_sequence(self):
         report = analysis.analyze(fixture())
         self.assertEqual(report["confirmed_sequences"][0]["cycles"], 3)

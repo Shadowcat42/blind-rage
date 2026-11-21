@@ -66,6 +66,45 @@ inline std::optional<float> stable_lock_radius(const LockCamera &camera, LockVec
         return {};
     return std::max(0.f, (camera.fov + 5.f) / 2.f - *offset - .5f);
 }
+// PrimitiveComponent.LocalToWorld (reflected +0x90) is a row-major FMatrix and the
+// component's world origin is its fourth row. Treated as a hypothesis: callers
+// must confirm it against the native angle before relying on it.
+inline bool lock_target_position(const Memory &m, uint32_t component, LockVector &out) {
+    return component && component < UINT32_MAX - 0x100 &&
+           lock_vector(m, component + 0x90 + 48, out);
+}
+// Angle between a direction and the vector from origin to a world position.
+inline std::optional<float> lock_direction_angle(LockVector origin, LockVector direction,
+                                                 LockVector target) {
+    return lock_angle(direction,
+                      LockVector{target.x - origin.x, target.y - origin.y, target.z - origin.z});
+}
+// The native retention predicate (CheckRemoveLockOnTarget) rejects a target when
+// its angle from camera forward exceeds (FOV + 5) / 2 degrees. This is the
+// remaining margin; negative means the game would drop the lock on its next check.
+inline std::optional<float> lock_view_margin(const LockCamera &camera, LockVector target) {
+    if (!camera.valid)
+        return {};
+    auto angle = lock_direction_angle(camera.location, camera.forward, target);
+    if (!angle)
+        return {};
+    return (camera.fov + 5.f) / 2.f - *angle;
+}
+// CheckLockOnShotTarget writes JustLockon through an out parameter (token 0x48),
+// so its own frame slot never changes. A completed lock is instead the verified
+// script transition of BCLockOnShotTargetInfo.LockOnCnt from below one to at
+// least one. Read the controller's LockOnShotTargetList (+0x7e4, 12-byte
+// {Target, LockOnCnt, LockOnTimeToGo} elements) before the call; FindStruct
+// uses the first matching target, and an absent target starts at zero.
+inline int32_t lock_shot_count(const Memory &m, uint32_t pc, uint32_t target) {
+    auto data = m.u32(pc + 0x7e4), count = m.u32(pc + 0x7e8);
+    if (!target || !data || count > 64)
+        return 0;
+    for (uint32_t i = 0; i < count; ++i)
+        if (m.u32(data + i * 12) == target)
+            return int32_t(m.u32(data + i * 12 + 4));
+    return 0;
+}
 enum class LockTraceKind { frame, acquire, remove, marker_add, marker_remove, sound, level_change };
 struct LockTraceRecord {
     LockTraceKind kind{};
@@ -74,14 +113,16 @@ struct LockTraceRecord {
     CueName sound_name;
     int32_t level_before{-1}, level_after{-1}, level_target{-1}, level_max{-1};
     bool result{}, accepted{}, angular{}, angle_valid{}, camera_valid{}, geometry_supported{},
-        cap_applied{};
+        cap_applied{}, view_gated{}, position_verified{};
+    float target_angle{std::numeric_limits<float>::quiet_NaN()},
+        view_margin{std::numeric_limits<float>::quiet_NaN()};
     float native_min{}, native_max{}, effective_min{}, effective_max{}, fov{}, angle{}, limit{},
         aim_offset{};
     LockVector camera_location, camera_forward, aim;
 };
 struct LockTraceBatch {
     std::vector<LockTraceRecord> records;
-    uint64_t started{}, attempted{}, dropped{}, filtered{};
+    uint64_t started{}, attempted{}, dropped{}, filtered{}, active{};
     bool done{};
     const char *reason = "waiting";
 };
@@ -92,7 +133,7 @@ class LockTrace {
         std::lock_guard lock(mutex_);
         enabled_ = enabled;
         started_ = attempted_ = dropped_ = sequence_ = 0;
-        filtered_ = 0;
+        filtered_ = active_ = last_active_ = 0;
         samples_ = {};
         last_acquire_sample_ = 0;
         count_ = 0;
@@ -111,6 +152,12 @@ class LockTrace {
             return false;
         if (!started_)
             started_ = now;
+        // Callers begin only from active, unpaused shooting ticks. Count time
+        // between consecutive ticks; a pause or hitch longer than the gap limit
+        // does not spend the capture window.
+        if (last_active_ && now >= last_active_ && now - last_active_ <= max_tick_gap_)
+            active_ += now - last_active_;
+        last_active_ = now;
         return check(now);
     }
     void push(LockTraceRecord record, uint64_t now) {
@@ -191,14 +238,15 @@ class LockTrace {
         batch.attempted = attempted_;
         batch.dropped = dropped_;
         batch.filtered = filtered_;
+        batch.active = active_;
         batch.done = done_;
         batch.reason = reason_;
         return batch;
     }
 
   private:
-    bool check(uint64_t now) {
-        if (now - started_ >= 30000) {
+    bool check(uint64_t) {
+        if (active_ >= 30000) {
             done_ = true;
             reason_ = "time_limit";
             enabled_ = false;
@@ -218,7 +266,8 @@ class LockTrace {
     };
     std::array<Sample, 64> samples_{};
     uint64_t started_{}, attempted_{}, dropped_{}, sequence_{}, filtered_{};
-    uint64_t last_acquire_sample_{};
+    uint64_t last_acquire_sample_{}, active_{}, last_active_{};
+    static constexpr uint64_t max_tick_gap_ = 250;
     bool done_{};
     const char *reason_ = "disabled";
 };
@@ -245,7 +294,8 @@ inline std::string lock_trace_line(const LockTraceRecord &r, std::string sound) 
         << ",\"result\":" << r.result << ",\"angular_reached\":" << r.angular
         << ",\"angle_valid\":" << r.angle_valid << ",\"camera_valid\":" << r.camera_valid;
     out << ",\"accepted\":" << r.accepted << ",\"geometry_supported\":" << r.geometry_supported
-        << ",\"cap_applied\":" << r.cap_applied;
+        << ",\"cap_applied\":" << r.cap_applied << ",\"view_gated\":" << r.view_gated
+        << ",\"position_verified\":" << r.position_verified;
     out << ",\"level_before\":" << r.level_before << ",\"level_after\":" << r.level_after
         << ",\"level_target\":" << r.level_target << ",\"level_max\":" << r.level_max;
     auto number = [&](const char *key, float value) {
@@ -263,6 +313,8 @@ inline std::string lock_trace_line(const LockTraceRecord &r, std::string sound) 
     number("angle", r.angle);
     number("limit", r.limit);
     number("aim_offset", r.aim_offset);
+    number("target_angle", r.target_angle);
+    number("view_margin", r.view_margin);
     number("camera_x", r.camera_location.x);
     number("camera_y", r.camera_location.y);
     number("camera_z", r.camera_location.z);
@@ -319,7 +371,8 @@ class LockTraceWriter {
             return;
         stream_ << "{\"event\":\"end\",\"reason\":\"" << reason
                 << "\",\"attempted\":" << batch.attempted << ",\"dropped\":" << batch.dropped
-                << ",\"filtered_checks\":" << batch.filtered << "}\n";
+                << ",\"filtered_checks\":" << batch.filtered << ",\"active_ms\":" << batch.active
+                << "}\n";
         ended_ = true;
         stream_.flush();
     }

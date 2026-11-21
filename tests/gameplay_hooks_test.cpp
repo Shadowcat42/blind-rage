@@ -152,10 +152,10 @@ int main() {
         word(base, actor + 0x7d8, std::bit_cast<uint32_t>(8.f));
         context[0] = actor;
         call_script(context.data(), base);
-        check(aimObserved && std::bit_cast<float>(cue_word(base + actor + 0x7d4)) == 3.f &&
+        check(!aimObserved && std::bit_cast<float>(cue_word(base + actor + 0x7d4)) == 3.f &&
                   std::bit_cast<float>(cue_word(base + actor + 0x7d8)) == 8.f &&
-                  source.widenings() == 1,
-              "native angular parameters widen only while the original test executes");
+                  source.widenings() == 0,
+              "autoaim does not widen outside a verified active shooting frame");
         changeAim = true;
         context[0] = actor;
         call_script(context.data(), base);
@@ -167,7 +167,7 @@ int main() {
         aimObserved = false;
         context[0] = actor;
         call_script(context.data(), base);
-        check(!aimObserved && source.widenings() == 2,
+        check(!aimObserved && source.widenings() == 0,
               "disabled shooting aid does not modify the game");
         word(base, node + 0x2c, indices[10]);
         word(base, owner + 0x2c, 4);
@@ -281,6 +281,61 @@ int main() {
                 events[0].status_request && events[0].status.controller == pc &&
                 events[0].status.gauge == gauge,
             "Back requests status independently of QTE option and preserves original handler return");
+        word(base, pc + 0x34, 0x1d800);
+        word(base, 0x1d800 + 0x2c, 3);
+        name(12, "DPAD_LEFT");
+        name(13, "DPAD_RIGHT");
+        name(60, "DPAD_UP");
+        constexpr uint32_t inputRows = 0x1e000;
+        word(base, input + 0x3f0, inputRows);
+        word(base, input + 0x3f4, 24);
+        word(base, input + 0x3f8, 24);
+        std::array<unsigned, 3> dpadRows{11, 13, 10};
+        for (unsigned i = 0; i < 3; ++i)
+            word(base, inputRows + dpadRows[i] * 0x24, i == 2 ? 60 : 12 + i);
+        word(base, node + 0x2c, indices[29]);
+        for (unsigned i = 0; i < 3; ++i) {
+            auto flags = inputRows + dpadRows[i] * 0x24 + 0x18;
+            word(base, flags, 0);
+            context[0] = input;
+            call_script(context.data(), base);
+            check(source.take(overflow).empty(), "neutral input tick emits no command");
+            word(base, flags, 0x80000000);
+            word(base, gauge + 0xc8, 0);
+            context[0] = input;
+            originalCalls = calls;
+            call_script(context.data(), base);
+            auto commands = source.take(overflow);
+            check(calls == originalCalls + 1 && context[0] == 0xfeed && commands.size() == 1 &&
+                      commands[0].shooting_command == int(i + 1),
+                  "native button-state edge works without a delegate event or health gauge");
+            context[0] = input;
+            call_script(context.data(), base);
+            check(source.take(overflow).empty(), "held D-pad does not repeat each input tick");
+            word(base, flags, 0);
+            context[0] = input;
+            call_script(context.data(), base);
+            check(source.take(overflow).empty(), "D-pad release emits no command");
+            for (const auto &guard : std::array<std::array<uint32_t, 3>, 3>{
+                     {{pc + 0x378, 0x8000, 0}, {world + 0x368, 1, 0}, {manager + 0x98, 1, 0}}}) {
+                word(base, guard[0], guard[1]);
+                word(base, flags, 0x80000000);
+                context[0] = input;
+                call_script(context.data(), base);
+                check(source.take(overflow).empty(), "paused/menu/cinematic presses stay native");
+                word(base, guard[0], guard[2]);
+                context[0] = input;
+                call_script(context.data(), base);
+                check(source.take(overflow).empty(),
+                      "holding across context return cannot issue a command");
+                word(base, flags, 0);
+                context[0] = input;
+                call_script(context.data(), base);
+                source.take(overflow);
+            }
+            word(base, gauge + 0xc8, 0x80000000);
+        }
+        word(base, node + 0x2c, indices[14]);
         auto capturedStatus = events[0].status;
         Memory memory([&](uint32_t at, void *out, size_t size) {
             if (uint64_t(at) + size > 0x21000)
@@ -493,8 +548,13 @@ int main() {
         word(base, 0x1d300 + 0x28, 0x1d200);
         word(base, 0x1d300 + 0x2c, indices[18]);
         word(base, 0x1d300 + 0x88, 0x82260d78);
+        word(base, pc + 0x7bc, 16);
         word(base, pc + 0x7d4, std::bit_cast<uint32_t>(3.6f));
         word(base, pc + 0x7d8, std::bit_cast<uint32_t>(50.f));
+        // The component whose world position the lock model reads, and the angle the
+        // simulated native function reports for it.
+        const uint32_t lockTarget = 0x1d600;
+        float simAngle = 45.f, simAimDegrees = 0.f, simDistance = 1.f;
         std::function<void(unsigned, uint32_t)> invoke;
         invoke = [&](unsigned kind, uint32_t object) {
             uint32_t nf = 0x14000 + kind * 0x40, nn = 0x1e000 + kind * 0x40,
@@ -510,10 +570,12 @@ int main() {
                  : kind == 21               ? 52
                                             : 3);
             if (kind == 8) {
-                word(base, nl + 4, gauge);
+                word(base, nl + 4, lockTarget);
                 for (unsigned off : {8u, 12u, 16u, 24u, 28u})
                     word(base, nl + off, 0);
-                word(base, nl + 20, std::bit_cast<uint32_t>(1.f));
+                auto radians = simAimDegrees * 3.14159265f / 180.f;
+                word(base, nl + 20, std::bit_cast<uint32_t>(std::cos(radians)));
+                word(base, nl + 24, std::bit_cast<uint32_t>(std::sin(radians)));
             }
             if (kind == 17)
                 word(base, nl, gauge);
@@ -530,7 +592,9 @@ int main() {
             call_script(ctx.data(), base);
             check(ctx[0] == 0xfeed, "diagnostic observer preserves original return context");
         };
-        bool allowAcquisition = false, driveLevels = false;
+        bool allowAcquisition = false, driveLevels = false, driveSearch = false,
+             fireReturnsTarget = true, endSearchInMenu = false;
+        float observedMinimum = 0;
         traceOriginal = [&](void *ctx, uint8_t *) {
             auto nf = ui_argument(ctx, 4), nl = cue_word(base + nf + 0x1c),
                  nn = cue_word(base + nf + 0x10), kind = cue_word(base + nn + 0x2c) - 14;
@@ -540,10 +604,30 @@ int main() {
                 invoke(24, pc);
                 return;
             }
+            if (kind == 28)
+                word(base, ui_argument(ctx, 5), fireReturnsTarget ? lockTarget : 0);
             if (kind == 23)
                 word(base, pc + 0x8e8, 1);
             if (kind == 24)
                 word(base, pc + 0x8e8, 0);
+            if (kind == 16 && driveSearch) {
+                invoke(22, pc);
+                if (endSearchInMenu)
+                    word(base, manager + 0x98, 1);
+                return;
+            }
+            if (kind == 22 && driveSearch) {
+                for (unsigned off : {0x1cu, 0x20u, 0x24u, 0x2cu, 0x30u})
+                    word(base, nl + off, 0);
+                word(base, nl + 0x28, std::bit_cast<uint32_t>(1.f));
+                word(base, nl + 0x50, 0x1d900);
+                word(base, nl + 0x54, 1);
+                word(base, nl + 0x58, 1);
+                word(base, 0x1d900, lockTarget);
+                invoke(8, pc);
+                // The script ends the search with TargetCompList.Remove(0, Length).
+                word(base, nl + 0x54, 0);
+            }
             if (kind == 16) {
                 invoke(8, pc);
                 if (cue_word(base + 0x15000 + 8 * 0x100 + 0x34)) {
@@ -552,12 +636,20 @@ int main() {
                 }
             }
             if (kind == 8) {
-                bool accepted =
-                    allowAcquisition && std::bit_cast<float>(cue_word(base + pc + 0x7d8)) > 45;
-                word(base, nl + 0x24, accepted ? 1 : 0);
-                word(base, nl + 0x34, accepted ? gauge : 0);
-                word(base, nl + 0x50, std::bit_cast<uint32_t>(45.f));
-                word(base, nl + 0x54, std::bit_cast<uint32_t>(1.f));
+                auto minimum = std::bit_cast<float>(cue_word(base + pc + 0x7d4));
+                observedMinimum = minimum;
+                auto maximum = std::bit_cast<float>(cue_word(base + pc + 0x7d8));
+                auto limit =
+                    std::clamp(minimum + (maximum - minimum) * simDistance, minimum, maximum);
+                bool accepted = allowAcquisition && simAngle < limit;
+                // JustLockon is an out parameter written in the caller's frame;
+                // the callee slot keeps its entry value. ResultInfo carries the
+                // verified LockOnCnt increment.
+                word(base, nl + 0x24, 0);
+                word(base, nl + 0x34, accepted ? lockTarget : 0);
+                word(base, nl + 0x38, accepted ? 1 : 0);
+                word(base, nl + 0x50, std::bit_cast<uint32_t>(simAngle));
+                word(base, nl + 0x54, std::bit_cast<uint32_t>(simDistance));
                 word(base, nl + 0x58, std::bit_cast<uint32_t>(.7071068f));
                 word(base, nl + 0x5c, std::bit_cast<uint32_t>(.7071068f));
             }
@@ -574,13 +666,13 @@ int main() {
             }
         };
         source.options(false, 20);
-        source.lock_diagnostics(true, false);
+        source.lock_diagnostics(true);
         for (unsigned i = 0; i < 100; ++i)
             invoke(16, pc);
         auto waiting = source.take_lock_trace();
         check(waiting.records.size() == 101 && waiting.started != 0 && waiting.dropped == 0,
               "candidate probes start capture without flooding it with rejected checks");
-        source.lock_diagnostics(true, false);
+        source.lock_diagnostics(true);
         allowAcquisition = true;
         invoke(16, pc);
         invoke(16, pc);
@@ -599,20 +691,177 @@ int main() {
             "trace preserves acquisition, actual sound request and angular removal in frame order");
         check(lockBatch.records[0].frame + 1 == lockBatch.records[5].frame,
               "successive shooting ticks have distinct frame identities");
-        source.lock_diagnostics(true, true);
+        word(base, pc + 0x7e4, 0x1d400);
+        word(base, pc + 0x7e8, 1);
+        word(base, 0x1d400, lockTarget);
+        word(base, 0x1d404, 1);
         invoke(16, pc);
         lockBatch = source.take_lock_trace();
-        check(lockBatch.records.size() == 2 && !lockBatch.records[1].accepted &&
-                  std::abs(lockBatch.records[1].effective_max - 37) < .001f,
-              "opt-in stable cap acts before the simulated native marker/sound side effects");
+        check(std::none_of(lockBatch.records.begin(), lockBatch.records.end(),
+                           [](const LockTraceRecord &r) {
+                               return r.kind == LockTraceKind::acquire && r.result;
+                           }),
+              "a retained lock returned again is not reported as a new lock");
+        word(base, pc + 0x7e4, 0);
+        word(base, pc + 0x7e8, 0);
+        source.lock_diagnostics(true);
+        invoke(16, pc);
+        lockBatch = source.take_lock_trace();
+        check(lockBatch.records.size() == 5 && lockBatch.records[1].accepted &&
+                  lockBatch.records[1].effective_min == 20.f &&
+                  lockBatch.records[1].effective_max == 50.f,
+              "conservative cap preserves locks admitted by the native near cone");
         check(std::bit_cast<float>(cue_word(base + pc + 0x7d8)) == 50,
               "native observer restores Episode 1 angle after capped acquisition");
+        check(!source.position_verified() && source.position_mismatches() == 0,
+              "an unplaced target neither verifies nor contradicts the position model");
+        // Place the component at `degrees` from the aim line and camera forward (+X).
+        auto place = [&](float degrees) {
+            auto radians = degrees * 3.14159265f / 180.f;
+            word(base, lockTarget + 0x90 + 48, std::bit_cast<uint32_t>(1000.f * std::cos(radians)));
+            word(base, lockTarget + 0x90 + 52, std::bit_cast<uint32_t>(1000.f * std::sin(radians)));
+            word(base, lockTarget + 0x90 + 56, 0);
+            simAngle = degrees;
+        };
+        source.lock_diagnostics(true);
+        place(20.f);
+        for (unsigned i = 0; i < 3; ++i)
+            invoke(16, pc);
+        source.take_lock_trace();
+        check(source.position_verified() && source.position_matches() == 3,
+              "three native angles agreeing with the component position verify the model");
+        source.lock_diagnostics(true);
+        invoke(16, pc);
+        lockBatch = source.take_lock_trace();
+        check(lockBatch.records.size() >= 2 && lockBatch.records[1].position_verified &&
+                  !lockBatch.records[1].view_gated && !lockBatch.records[1].cap_applied &&
+                  std::abs(lockBatch.records[1].view_margin - 17.5f) < .01f &&
+                  lockBatch.records[1].effective_min == 20.f &&
+                  lockBatch.records[1].effective_max == 50.f,
+              "a target the camera keeps is widened fully, not by the conservative bound");
+        place(45.f);
+        invoke(16, pc);
+        lockBatch = source.take_lock_trace();
+        check(lockBatch.records.size() >= 2 && lockBatch.records[1].view_gated &&
+                  lockBatch.records[1].view_margin < 0 &&
+                  lockBatch.records[1].effective_min == 3.6f &&
+                  lockBatch.records[1].effective_max == 50.f && lockBatch.records[1].accepted,
+              "unsafe target keeps native acquisition, including its original side effects");
+        check(std::bit_cast<float>(cue_word(base + pc + 0x7d4)) == std::bit_cast<float>(3.6f),
+              "gated candidates restore native fields after the check");
+        source.lock_diagnostics(true);
+        place(37.2f);
+        invoke(16, pc);
+        lockBatch = source.take_lock_trace();
+        check(lockBatch.records.size() >= 2 && lockBatch.records[1].view_gated &&
+                  lockBatch.records[1].effective_min == 3.6f &&
+                  lockBatch.records[1].effective_max == 50.f,
+              "the half-degree reserve disables widening without narrowing native acquisition");
+        // Live regression: native acquisition accepts 3.15 degrees from the aim
+        // line, while the target is 35.25 degrees from the camera (limit 35).
+        word(base, 0x1b000 + 0x324, std::bit_cast<uint32_t>(65.f));
+        place(35.25f);
+        simAimDegrees = 32.1f;
+        simAngle = 3.15f;
+        simDistance = 0.f;
+        source.lock_diagnostics(true);
+        invoke(16, pc);
+        lockBatch = source.take_lock_trace();
+        check(lockBatch.records.size() == 5 && lockBatch.records[1].accepted &&
+                  lockBatch.records[1].effective_min > simAngle,
+              "native cone admits the live unsafe candidate when the repair is disabled");
+        source.lock_diagnostics(true);
+        for (unsigned i = 0; i < 7; ++i)
+            invoke(16, pc);
+        lockBatch = source.take_lock_trace();
+        unsigned nativeLocks = 0, nativeSounds = 0;
+        for (const auto &record : lockBatch.records) {
+            if (record.kind == LockTraceKind::sound)
+                ++nativeSounds;
+            if (record.kind == LockTraceKind::acquire) {
+                ++nativeLocks;
+                check(record.position_verified && record.view_gated && !record.cap_applied &&
+                          record.view_margin < 0 && record.accepted && record.result &&
+                          record.effective_min == 3.6f && record.effective_max == 50.f,
+                      "repair preserves the live native-cone lock even outside retention view");
+            }
+        }
+        check(nativeLocks == 7 && nativeSounds == 7 &&
+                  std::bit_cast<float>(cue_word(base + pc + 0x7d4)) == 3.6f &&
+                  std::bit_cast<float>(cue_word(base + pc + 0x7d8)) == 50.f,
+              "native repeated locks and sounds are deliberately preserved");
+        word(base, 0x1b000 + 0x324, std::bit_cast<uint32_t>(70.f));
+        simAimDegrees = 0.f;
+        simDistance = 1.f;
+        // A missing target position must use the geometric bound, not a target gate.
+        word(base, lockTarget + 0xc0, std::bit_cast<uint32_t>(NAN));
+        source.lock_diagnostics(true);
+        invoke(16, pc);
+        lockBatch = source.take_lock_trace();
+        check(lockBatch.records.size() >= 2 && !lockBatch.records[1].view_gated &&
+                  lockBatch.records[1].cap_applied && lockBatch.records[1].effective_max == 50.f,
+              "unknown target geometry falls back to the conservative camera bound");
+        place(20.f);
+        word(base, lockTarget + 0x1e4, 0x40000000);
+        word(base, lockTarget + 0x20, 105);
+        word(base, pawn + 0x20, 44);
+        source.shooting(ShootingMode::beacons);
+        source.lock_diagnostics(false);
+        driveSearch = true;
+        invoke(16, pc);
+        auto aimFrame = source.take_aim();
+        check(aimFrame && aimFrame->active && aimFrame->valid && aimFrame->count == 1 &&
+                  observedMinimum == 3.6f,
+              "manual mode copies native search candidates without widening acquisition");
+        auto serial = aimFrame->fired;
+        endSearchInMenu = true;
+        invoke(16, pc);
+        aimFrame = source.take_aim();
+        check(aimFrame && !aimFrame->active,
+              "same-tick transition into a menu cancels copied guidance");
+        endSearchInMenu = false;
+        word(base, manager + 0x98, 0);
+        invoke(28, pc);
+        invoke(16, pc);
+        aimFrame = source.take_aim();
+        check(aimFrame && aimFrame->fired == serial + 1,
+              "native volley target consumption resumes full-volley guidance");
+        fireReturnsTarget = false;
+        invoke(28, pc);
+        invoke(16, pc);
+        aimFrame = source.take_aim();
+        check(aimFrame && aimFrame->fired == serial + 1,
+              "empty fire iteration cannot pretend a volley was fired");
+        word(base, world + 0x368, 1);
+        invoke(16, pc);
+        aimFrame = source.take_aim();
+        check(aimFrame && !aimFrame->active, "paused native frame invalidates manual guidance");
+        word(base, world + 0x368, 0);
+        driveSearch = false;
+        source.shooting(ShootingMode::autoaim);
+        // A disagreement permanently falls back to the conservative bound.
+        source.lock_diagnostics(true);
+        simAngle = 10.f;
+        word(base, lockTarget + 0x90 + 48, std::bit_cast<uint32_t>(1000.f));
+        word(base, lockTarget + 0x90 + 52, std::bit_cast<uint32_t>(500.f));
+        invoke(16, pc);
+        source.take_lock_trace();
+        check(!source.position_verified() && source.position_mismatches() == 1,
+              "a native angle that disagrees with the position model is counted");
+        source.lock_diagnostics(true);
+        place(20.f);
+        invoke(16, pc);
+        lockBatch = source.take_lock_trace();
+        check(lockBatch.records.size() >= 2 && !lockBatch.records[1].position_verified &&
+                  !lockBatch.records[1].view_gated && lockBatch.records[1].effective_min == 20.f &&
+                  lockBatch.records[1].effective_max == 50.f,
+              "after any disagreement the model is never trusted and the bound applies");
         driveLevels = true;
         word(base, pc + 0x8e8, 0);
         word(base, pc + 0x8ec, 1);
         word(base, pc + 0x7fc, 4);
         word(base, pc + 0x800 + 40 + 0x20, 0x19000);
-        source.lock_diagnostics(true, false);
+        source.lock_diagnostics(true);
         invoke(16, pc);
         lockBatch = source.take_lock_trace();
         check(
@@ -625,7 +874,7 @@ int main() {
                 lockBatch.records[3].kind == LockTraceKind::level_change &&
                 lockBatch.records[3].level_after == 0 && !lockBatch.records[3].sound,
             "level cues, resets and sound requests outside marker callbacks remain distinguishable");
-        source.lock_diagnostics(false, false);
+        source.lock_diagnostics(false);
         traceOriginal = {};
         source.capture(false);
         context[0] = track;

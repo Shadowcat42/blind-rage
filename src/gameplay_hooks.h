@@ -5,6 +5,7 @@
 #include "presentation_events.h"
 #include "shooting_assist.h"
 #include "lock_trace.h"
+#include "shooting_beacons.h"
 #include <atomic>
 #include <windows.h>
 
@@ -12,7 +13,7 @@ namespace a11y {
 class GameplayHooks {
   public:
     using Function = void (*)(void *, uint8_t *);
-    static constexpr std::array<const char *, 28> function_names{"RequestInputJudge",
+    static constexpr std::array<const char *, 30> function_names{"RequestInputJudge",
                                                                  "RequestButtonIcon",
                                                                  "UpdateButtonIcon",
                                                                  "CheckActivate",
@@ -39,7 +40,9 @@ class GameplayHooks {
                                                                  "ResetLockOnLevel",
                                                                  "PlayCloseAnimation",
                                                                  "OnOpenAnimationComplete",
-                                                                 "OnGetRecordInfo"};
+                                                                 "OnGetRecordInfo",
+                                                                 "IterateLockOnShotTargetComp",
+                                                                 "InputCheckTick"};
     static GameplayHooks &instance() {
         static auto *value = new GameplayHooks;
         return *value;
@@ -106,9 +109,21 @@ class GameplayHooks {
         angle_ = shootingDegrees;
         status_button_ = statusButton;
     }
-    void lock_diagnostics(bool enabled, bool stableCone = false) {
+    void lock_diagnostics(bool enabled) {
         trace_.configure(enabled);
-        stable_cone_ = stableCone;
+    }
+    void shooting(ShootingMode mode) {
+        mode_ = mode;
+        aim_mailbox_.clear();
+    }
+    ShootingMode shooting() const {
+        return mode_.load();
+    }
+    std::optional<AimSnapshot> take_aim() {
+        return aim_mailbox_.take();
+    }
+    bool autoaim() const {
+        return mode_.load() == ShootingMode::autoaim && angle_.load() > 0;
     }
     LockTraceBatch take_lock_trace() {
         return trace_.take();
@@ -120,6 +135,7 @@ class GameplayHooks {
         enabled_ = false;
         ++epoch_;
         queue_.clear();
+        aim_mailbox_.clear();
         if (!enabled)
             trace_.stop();
         enabled_ = enabled;
@@ -136,6 +152,17 @@ class GameplayHooks {
     uint64_t widenings() const {
         return widenings_.load();
     }
+    // The target-position model is trusted only after several native comparisons
+    // agree and never after any disagreement.
+    bool position_verified() const {
+        return position_matches_.load() >= 3 && position_mismatches_.load() == 0;
+    }
+    uint64_t position_matches() const {
+        return position_matches_.load();
+    }
+    uint64_t position_mismatches() const {
+        return position_mismatches_.load();
+    }
     uint64_t failures() const {
         return failures_.load();
     }
@@ -144,6 +171,7 @@ class GameplayHooks {
     enum class Route {
         ignore,
         record_info,
+        input_tick,
         qte_bind,
         qte_update,
         judge_update,
@@ -156,6 +184,7 @@ class GameplayHooks {
         animation_mash,
         animation_hold,
         status_button,
+        volley_fire,
         menu_lifecycle,
         shoot_tick,
         remove,
@@ -171,8 +200,10 @@ class GameplayHooks {
         LockFrame *previous{};
         uint32_t pc{}, index{};
         uint64_t serial{};
-        bool active{}, tracing{};
+        bool active{}, tracing{}, captured{};
+        uint32_t search_locals{};
         LockVector aim{};
+        AimSnapshot snapshot;
     };
     struct Removal {
         Removal *previous{};
@@ -222,6 +253,8 @@ class GameplayHooks {
         LockFrame *locks{};
         Removal *removal{};
         Marker *marker{};
+        uint32_t input_source{}, input_index{};
+        uint8_t input_held{};
     };
     static Thread &thread() {
         static thread_local Thread state;
@@ -268,7 +301,9 @@ class GameplayHooks {
             return cached.route;
         auto cls = state.reader.name(memory, ownerName), function = state.reader.name(memory, name);
         Route route = Route::ignore;
-        if (cls == "BCGFxUI_ChapterMenu" && function == "OnGetRecordInfo")
+        if (cls == "BCPlayerInput" && function == "InputCheckTick")
+            route = Route::input_tick;
+        else if (cls == "BCGFxUI_ChapterMenu" && function == "OnGetRecordInfo")
             route = Route::record_info;
         else if (cls == "BCSeqAct_InputDivergence" && function == "RequestInputJudge")
             route = Route::qte_bind;
@@ -284,6 +319,9 @@ class GameplayHooks {
             route = Route::aim;
         else if (cls == "BCPlayerInput" && function == "HandleButtonInput_Back")
             route = Route::status_button;
+        else if (cls == "BCPlayerController_HeavyShoot" &&
+                 function == "IterateLockOnShotTargetComp")
+            route = Route::volley_fire;
         else if (cls == "BCGFxMoviePlayer" &&
                  (function == "PlayCloseAnimation" || function == "OnOpenAnimationComplete"))
             route = Route::menu_lifecycle;
@@ -544,14 +582,18 @@ class GameplayHooks {
     bool observe_lock(Route route, void *context, uint8_t *base, const Memory &memory,
                       Thread &state, uint32_t source, uint32_t locals) {
         if (route == Route::shoot_tick) {
-            if ((!trace_.armed() && !stable_cone_.load()) ||
+            if ((!trace_.armed() && !autoaim() && mode_.load() != ShootingMode::beacons) ||
                 !subclass(memory, state.reader, source, "BCPlayerController_HeavyShoot") ||
                 (state.locks && state.locks->pc == source)) {
                 original_[0](context, base);
                 return true;
             }
             auto world = memory.u32(source + 0xd4);
-            LockFrame frame{state.locks, source, memory.u32(source + 0x20), ++lock_frames_};
+            LockFrame frame{};
+            frame.previous = state.locks;
+            frame.pc = source;
+            frame.index = memory.u32(source + 0x20);
+            frame.serial = ++lock_frames_;
             frame.active = frame.index && world && memory.u32(source + 0x5c4) &&
                            !(memory.u32(source + 0x378) & 0x8000) && !memory.u32(world + 0x368);
             frame.tracing = frame.active && trace_.begin(GetTickCount64(), false);
@@ -560,27 +602,33 @@ class GameplayHooks {
             trace_record(lock_record(memory, state, LockTraceKind::frame), state);
             original_[0](context, base);
             state.locks = frame.previous;
+            if (mode_.load() == ShootingMode::beacons) {
+                if (!frame.snapshot.tick)
+                    frame.snapshot.tick = GetTickCount64();
+                frame.snapshot.active =
+                    frame.snapshot.active && enabled_.load() &&
+                    aim_context_active(memory, frame.snapshot.controller, frame.snapshot.pawn);
+                aim_mailbox_.put(frame.snapshot);
+                SetEvent(event_);
+            }
             if (trace_.pending())
                 SetEvent(event_);
             return true;
         }
         if (route == Route::aim) {
+            if (mode_.load() == ShootingMode::beacons && state.locks && state.locks->pc == source &&
+                state.locks->active && !state.locks->captured && state.locks->search_locals &&
+                position_mismatches_.load() == 0 && base_camera_view(memory, state, source)) {
+                state.locks->captured = true;
+                state.locks->snapshot = capture_aim(memory, source, state.locks->search_locals,
+                                                    fired_.load(), GetTickCount64());
+            }
             if (state.locks && state.locks->active && !state.locks->tracing && trace_.armed()) {
                 state.locks->tracing = trace_.begin(GetTickCount64());
                 trace_record(lock_record(memory, state, LockTraceKind::frame), state);
             }
-            if (!stable_cone_.load() && !(state.locks && state.locks->active && trace_.armed())) {
-                AcquisitionScope scope(
-                    memory,
-                    [&](uint32_t at, const void *bytes, size_t n) {
-                        SIZE_T wrote{};
-                        return WriteProcessMemory(GetCurrentProcess(), base + at, bytes, n,
-                                                  &wrote) &&
-                               wrote == n;
-                    },
-                    source, angle_.load());
-                if (scope.changed())
-                    ++widenings_;
+            if (!autoaim() && mode_.load() != ShootingMode::beacons &&
+                !(state.locks && state.locks->active && trace_.armed())) {
                 original_[0](context, base);
                 return true;
             }
@@ -594,13 +642,49 @@ class GameplayHooks {
             record.geometry_supported = base_camera_view(memory, state, source);
             record.native_min = std::bit_cast<float>(memory.u32(source + 0x7d4));
             record.native_max = std::bit_cast<float>(memory.u32(source + 0x7d8));
-            auto degrees = angle_.load();
+            auto degrees = autoaim() ? angle_.load() : 0.f;
             std::optional<float> cap;
-            if (stable_cone_.load()) {
-                if (record.geometry_supported && vectors && state.locks && state.locks->active)
-                    cap = stable_lock_radius(lock_camera(memory, source), origin, aim);
-                if (!cap)
-                    degrees = 0;
+            // The candidate's world position is computed on every check so the model
+            // can be compared with the native angle after the call.
+            LockVector position{};
+            const bool havePosition =
+                vectors && lock_target_position(memory, record.target, position);
+            if (havePosition)
+                if (auto computed = lock_direction_angle(origin, aim, position))
+                    record.target_angle = *computed;
+            record.position_verified = position_verified();
+            if (autoaim()) {
+                const bool geometry =
+                    record.geometry_supported && vectors && state.locks && state.locks->active;
+                if (geometry && record.position_verified) {
+                    // Widen only where native retention would keep the lock. Unsafe
+                    // candidates keep the original cone, including any native lock/drop
+                    // behavior: this repair only constrains assistance added by the mod.
+                    auto camera = lock_camera(memory, source);
+                    LockVector gap{origin.x - camera.location.x, origin.y - camera.location.y,
+                                   origin.z - camera.location.z};
+                    std::optional<float> margin;
+                    if (havePosition && lock_length(gap) <= .001f)
+                        margin = lock_view_margin(camera, position);
+                    if (margin)
+                        record.view_margin = *margin;
+                    if (margin && *margin < kLockViewReserve) {
+                        degrees = 0;
+                        record.view_gated = true;
+                    } else if (!margin) {
+                        // Unknown candidate geometry is not evidence for a target gate.
+                        cap = stable_lock_radius(camera, origin, aim);
+                        if (!cap)
+                            degrees = 0;
+                    }
+                } else {
+                    // Until the position model has agreed with the native angle (or if it
+                    // ever disagrees), fall back to the conservative aim/camera bound.
+                    if (geometry)
+                        cap = stable_lock_radius(lock_camera(memory, source), origin, aim);
+                    if (!cap)
+                        degrees = 0;
+                }
             }
             record.cap_applied = cap.has_value() && degrees > 0;
             AcquisitionScope scope(
@@ -615,15 +699,24 @@ class GameplayHooks {
             record.effective_max = std::bit_cast<float>(memory.u32(source + 0x7d8));
             if (scope.changed())
                 ++widenings_;
+            const auto countBefore = lock_shot_count(memory, source, record.target);
             original_[0](context, base);
             if (locals) {
-                record.result = memory.u32(locals + 0x24) == 1;
                 record.accepted = record.target && memory.u32(locals + 0x34) == record.target;
+                record.result =
+                    record.accepted && countBefore < 1 && int32_t(memory.u32(locals + 0x38)) >= 1;
                 LockVector line{};
                 record.angle_valid =
                     lock_vector(memory, locals + 0x58, line) && lock_length(line) > .5f;
                 record.angular = record.angle_valid;
                 record.angle = std::bit_cast<float>(memory.u32(locals + 0x50));
+                if (record.angle_valid && std::isfinite(record.target_angle)) {
+                    // Self-check of the position model against the game's own angle.
+                    if (std::abs(record.target_angle - record.angle) < .25f)
+                        ++position_matches_;
+                    else
+                        ++position_mismatches_;
+                }
                 auto distance = std::bit_cast<float>(memory.u32(locals + 0x54));
                 record.limit = std::numeric_limits<float>::quiet_NaN();
                 if (std::isfinite(record.effective_min) && std::isfinite(record.effective_max) &&
@@ -729,8 +822,22 @@ class GameplayHooks {
             }
             return true;
         }
-        if (route == Route::search) {
+        if (route == Route::volley_fire) {
+            auto result = ui_argument(context, 5);
             original_[0](context, base);
+            if (result && memory.u32(result))
+                ++fired_;
+            return true;
+        }
+        if (route == Route::search) {
+            // The script empties TargetCompList before returning, so the candidates
+            // are captured on the first acquisition check, while the list is full.
+            auto *lock = state.locks && state.locks->pc == source ? state.locks : nullptr;
+            if (lock)
+                lock->search_locals = locals;
+            original_[0](context, base);
+            if (lock)
+                lock->search_locals = 0;
             return true;
         }
         return false;
@@ -758,6 +865,8 @@ class GameplayHooks {
             state.locks = nullptr;
             state.removal = nullptr;
             state.marker = nullptr;
+            state.input_source = state.input_index = 0;
+            state.input_held = 0;
             state.epoch = epoch;
         }
         Memory memory(Read{base});
@@ -767,6 +876,47 @@ class GameplayHooks {
             return;
         }
         auto source = ui_argument(context, 3), locals = memory.u32(frame + 0x1c);
+        if (route == Route::input_tick) {
+            // These are the game's already-updated logical button states. Empty
+            // delegate handlers may never enter either script/event dispatcher.
+            // Observe on the native input tick, with no OS polling or new timer.
+            auto array = memory.u32(source + 0x3f0), count = memory.u32(source + 0x3f4),
+                 capacity = memory.u32(source + 0x3f8), index = memory.u32(source + 0x20);
+            uint8_t held = 0;
+            bool valid = index && array && count >= 14 && count <= 64 && count <= capacity &&
+                         capacity <= 64 &&
+                         uint64_t(array) + uint64_t(count) * 0x24 <= 0x100000000ull;
+            constexpr std::array<unsigned, 3> rows{11, 13, 10};
+            constexpr std::array<std::string_view, 3> names{"DPAD_LEFT", "DPAD_RIGHT", "DPAD_UP"};
+            for (unsigned i = 0; valid && i < rows.size(); ++i) {
+                std::array<uint8_t, 0x24> row{};
+                valid = memory.copy(array + rows[i] * row.size(), row.data(), row.size()) &&
+                        state.reader.name(memory, cue_word(row.data())) == names[i];
+                if (valid && (cue_word(row.data() + 0x18) & 0x80000000))
+                    held |= uint8_t(1 << i);
+            }
+            if (state.input_source != source || state.input_index != index) {
+                state.input_source = source;
+                state.input_index = index;
+                state.input_held = 0;
+            }
+            auto pressed = valid ? uint8_t(held & ~state.input_held) : uint8_t(0);
+            state.input_held = valid ? held : uint8_t(7);
+            auto before = pressed ? capture_status_context(memory, source, false) : std::nullopt;
+            bool active = before && subclass(memory, state.reader, before->controller,
+                                             "BCPlayerController_HeavyShoot");
+            self.original_[0](context, base);
+            if (active && self.enabled_.load() && epoch == self.epoch_.load() &&
+                capture_status_context(memory, source, false) == before)
+                for (unsigned i = 0; i < rows.size(); ++i)
+                    if (pressed & (1 << i)) {
+                        GameplayEvent event;
+                        event.shooting_command = int(i + 1);
+                        event.status = *before;
+                        self.publish(event);
+                    }
+            return;
+        }
         if (self.observe_lock(route, context, base, memory, state, source, locals))
             return;
         if (route == Route::menu_lifecycle) {
@@ -949,7 +1099,11 @@ class GameplayHooks {
     std::atomic<uint64_t> epoch_{}, captured_{}, failures_{}, widenings_{}, generation_{};
     GameplayQueue queue_;
     LockTrace trace_;
-    std::atomic<bool> stable_cone_{};
+    static constexpr float kLockViewReserve = .5f;
+    std::atomic<uint64_t> position_matches_{}, position_mismatches_{};
+    std::atomic<ShootingMode> mode_{ShootingMode::autoaim};
+    AimMailbox aim_mailbox_;
+    std::atomic<uint64_t> fired_{};
     std::atomic<uint64_t> lock_frames_{};
 };
 }

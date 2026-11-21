@@ -15,7 +15,7 @@ The requested endpoint is an implementation ready for a user-led Episode 1 test.
 - [x] Add optional wider native shooting acquisition while preserving eligibility, line of sight, range, lock limits, homing and manual firing.
 - [x] Verify added hook targets/layouts for both supported builds, run relevant offline tests, build/install/package the complete test artifact, and document the user-led validation sequence and known limits.
 
-The requested first shooting aid expands native acquisition. Target snapping/cycling, audio-guided manual aiming, dedicated earcons and later encounter/hazard work remain later tasks. Do not substitute those for this implementation or add them as completion gates. The user will navigate the game; implementation and offline checks must not focus it or send input.
+The requested first shooting aid expands native acquisition. That was the initial scope. The subsequent manual-beacon iteration is documented in `SHOOTING_BEACONS.md`; later encounter/hazard work remains separate. The user will navigate the game; implementation and offline checks must not focus it or send input.
 
 ## Health and Burst evidence
 
@@ -57,7 +57,7 @@ The reader provides a timing-button preparation and announces the physical Y equ
 
 ## Native shooting acquisition
 
-Only the shared `BCPlayerController_HeavyShoot.CheckLockOnShotTarget` execution receives a scoped change. Its `LockOnDegMinVal`/`MaxVal` fields at `+0x7d4/+0x7d8` are raised to at least the configured angle while the original function runs, then restored. A legitimate game-side change during the call is retained. The observed defaults are approximately 3.6/14 degrees; the prototype defaults to 45. `shooting_assist=0` disables it, and `shooting_cone_degrees` accepts 1–89.
+Only the shared `BCPlayerController_HeavyShoot.CheckLockOnShotTarget` execution receives a scoped change. Its `LockOnDegMinVal`/`MaxVal` fields at `+0x7d4/+0x7d8` are raised to at least the configured angle while the original function runs, then restored. A legitimate game-side change during the call is retained. The observed defaults are approximately 3.6/14 degrees; the prototype defaults to 45. `shooting_mode=native` or `shooting_mode=beacons` disables widening, and `shooting_cone_degrees` accepts 1–89.
 
 Decoded game behavior still performs its original candidate/range exclusion, occlusion/owner checks, acquisition timer, native counts/caps and projectile handling. No target position, player input, firing, damage, vulnerability or phase flag is changed. Existing acquired volleys retain their native component homing. Expanding acquisition does not prove every targetable part is currently vulnerable; later encounter exceptions remain possible.
 
