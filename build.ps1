@@ -23,35 +23,66 @@ try {
  if($LASTEXITCODE){throw 'UI change test compilation failed'}
  & $compiler @common "-I$hookRoot/include" 'tests/ui_hook_source_test.cpp' @hookObjects '-o' 'build/hooks/ui_hook_source_test.exe' '-luser32'
  if($LASTEXITCODE){throw 'UI hook source test compilation failed'}
- New-Item -ItemType Directory -Force build/speech | Out-Null
+ New-Item -ItemType Directory -Force build/speech,build/tests | Out-Null
  & $compiler @common '-shared' 'tests/fake_prism.cpp' '-o' 'build/speech/prism.dll'
  if($LASTEXITCODE){throw 'Fake speech backend compilation failed'}
  & $compiler @common 'tests/diagnostics_test.cpp' '-o' 'build/speech/diagnostics_test.exe' '-lbcrypt' '-luser32'
  if($LASTEXITCODE){throw 'Diagnostic test compilation failed'}
  & $compiler @common 'tests/build_profile_test.cpp' '-o' 'build/hooks/build_profile_test.exe'
  if($LASTEXITCODE){throw 'Build profile test compilation failed'}
+ & $compiler @common 'tests/gameplay_text_test.cpp' '-o' 'build/hooks/gameplay_text_test.exe'
+ if($LASTEXITCODE){throw 'Gameplay text test compilation failed'}
+ & $compiler @common 'tests/recomp_prompts_test.cpp' '-o' 'build/hooks/recomp_prompts_test.exe'
+ if($LASTEXITCODE){throw 'Recomp prompt test compilation failed'}
+ & $compiler @common 'tests/gameplay_status_test.cpp' '-o' 'build/hooks/gameplay_status_test.exe'
+ if($LASTEXITCODE){throw 'Gameplay status test compilation failed'}
+ & $compiler @common 'tests/qte_reader_test.cpp' '-o' 'build/hooks/qte_reader_test.exe'
+ if($LASTEXITCODE){throw 'QTE reader test compilation failed'}
+ & $compiler @common 'tests/synchronic_reader_test.cpp' '-o' 'build/hooks/synchronic_reader_test.exe'
+ if($LASTEXITCODE){throw 'Synchronic reader test compilation failed'}
+ & $compiler @common "-I$hookRoot/include" 'tests/gameplay_hooks_test.cpp' @hookObjects '-o' 'build/hooks/gameplay_hooks_test.exe'
+ if($LASTEXITCODE){throw 'Gameplay hook test compilation failed'}
+ & $compiler @common "-I$hookRoot/include" 'tests/presentation_hooks_test.cpp' @hookObjects '-o' 'build/hooks/presentation_hooks_test.exe' '-luser32'
+ if($LASTEXITCODE){throw 'Presentation hook test compilation failed'}
+ & $compiler @common '-municode' 'tests/restart_test.cpp' '-o' 'build/hooks/restart_test.exe' '-lshell32' '-lbcrypt'
+ if($LASTEXITCODE){throw 'Restart test compilation failed'}
+ & $compiler @common 'tests/shooting_beacons_test.cpp' '-o' 'build/tests/shooting_beacons_test.exe'
+ if($LASTEXITCODE){throw 'Shooting beacon compilation failed'}
+ & $compiler @common 'tests/lock_trace_test.cpp' '-o' 'build/hooks/lock_trace_test.exe'
+ if($LASTEXITCODE){throw 'Lock trace test compilation failed'}
  & $compiler @common "-I$hookRoot/include" '-shared' 'src/dll.cpp' @hookObjects '-o' 'dist/asura_accessibility.dll' '-lbcrypt' '-lole32' '-luser32'
  if($LASTEXITCODE){throw 'DLL compilation failed'}
  & $compiler @common '-municode' 'src/launcher.cpp' '-o' 'dist/BlindRage.exe' '-lbcrypt' '-luser32'
  if($LASTEXITCODE){throw 'Launcher compilation failed'}
- & $compiler @common 'tests/reader_test.cpp' '-o' 'dist/reader_test.exe'
+ & $compiler @common 'tests/reader_test.cpp' '-o' 'build/tests/reader_test.exe'
  if($LASTEXITCODE){throw 'Test compilation failed'}
- & $compiler @common '-municode' 'tests/speech_test.cpp' '-o' 'dist/speech_test.exe' '-lbcrypt' '-lole32' '-luser32'
+ & $compiler @common '-municode' 'tests/speech_test.cpp' '-o' 'build/tests/speech_test.exe' '-lbcrypt' '-lole32' '-luser32'
  if($LASTEXITCODE){throw 'Speech test compilation failed'}
  Copy-Item -LiteralPath vendor/dynamic/release/bin/prism.dll -Destination dist/prism.dll
- if(!(Test-Path -LiteralPath dist/accessibility.ini)){Copy-Item -LiteralPath accessibility.ini -Destination dist/accessibility.ini}
+ # Keep manual speech diagnostics outside the installable distribution.
+ Copy-Item -LiteralPath vendor/dynamic/release/bin/prism.dll -Destination build/tests/prism.dll
  New-Item -ItemType Directory -Force dist/licenses | Out-Null
  Copy-Item -LiteralPath vendor/NOTICE -Destination dist/licenses/Prism-NOTICE.txt
  Copy-Item -LiteralPath vendor/LICENSES -Destination dist/licenses -Recurse -Force
  Copy-Item -LiteralPath tools/llvm-mingw-20261117-ucrt-x86_64/LICENSE.TXT -Destination dist/licenses/LLVM-LICENSE.txt
  Copy-Item -LiteralPath "$hookRoot/LICENSE.txt" -Destination dist/licenses/MinHook-LICENSE.txt
  if($Test){
-  & ./dist/reader_test.exe; if($LASTEXITCODE){throw 'Reader tests failed'}
+  & ./build/tests/shooting_beacons_test.exe; if($LASTEXITCODE){throw 'Shooting beacon tests failed'}
+  & ./build/tests/reader_test.exe; if($LASTEXITCODE){throw 'Reader tests failed'}
   & ./build/hooks/hook_test.exe; if($LASTEXITCODE){throw 'Hook tests failed'}
   & ./build/hooks/ui_changes_test.exe; if($LASTEXITCODE){throw 'UI change tests failed'}
   & ./build/hooks/ui_hook_source_test.exe; if($LASTEXITCODE){throw 'UI hook source tests failed'}
   & ./build/speech/diagnostics_test.exe; if($LASTEXITCODE){throw 'Diagnostic tests failed'}
   & ./build/hooks/build_profile_test.exe; if($LASTEXITCODE){throw 'Build profile tests failed'}
+  & ./build/hooks/gameplay_text_test.exe; if($LASTEXITCODE){throw 'Gameplay text tests failed'}
+  & ./build/hooks/recomp_prompts_test.exe; if($LASTEXITCODE){throw 'Recomp prompt tests failed'}
+  & ./build/hooks/gameplay_status_test.exe; if($LASTEXITCODE){throw 'Gameplay status tests failed'}
+  & ./build/hooks/qte_reader_test.exe; if($LASTEXITCODE){throw 'QTE reader tests failed'}
+  & ./build/hooks/synchronic_reader_test.exe; if($LASTEXITCODE){throw 'Synchronic reader tests failed'}
+  & ./build/hooks/gameplay_hooks_test.exe; if($LASTEXITCODE){throw 'Gameplay hook tests failed'}
+  & ./build/hooks/presentation_hooks_test.exe; if($LASTEXITCODE){throw 'Presentation hook tests failed'}
+  & ./build/hooks/restart_test.exe; if($LASTEXITCODE){throw 'Restart tests failed'}
+  & ./build/hooks/lock_trace_test.exe; if($LASTEXITCODE){throw 'Lock trace tests failed'}
  }
  if(!$NoInstall){
   if(!$InstallTo -and ((Test-Path -LiteralPath ../../bin_disc/asura_wrath_recomp.exe) -or (Test-Path -LiteralPath ../../bin/asura_wrath_recomp.exe))){$InstallTo=(Resolve-Path ../..).Path}

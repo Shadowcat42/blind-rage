@@ -86,3 +86,23 @@ Gameplay subtitle/tutorial/QTE findings are recorded separately in `GAMEPLAY_CUE
 - Keep Prism calls on the speech worker. Replace periodic hotkey/focus checks with Windows notifications and event waits.
 - Retain the shared reader and all current narration semantics, including choices on dialog entry, settings values, tooltips, collections totals, rediscovery, and focus return.
 - Validate with synthetic tests, captured-state replay, and user-driven live navigation. Offline disassembly alone does not prove event coverage.
+
+## Settings restart handoff
+
+Both supported recomp builds have a native settings `RestartGame` path which sets `MARK2_RESTART_WAIT_PID`, calls `CreateProcessW` with its own executable and current command line, and terminates the old process only after successful creation. On creation failure it logs the error and returns without terminating. Each inspected function contains 347 native instructions.
+
+Blind Rage replaces only the main executable's process-local `CreateProcessW` import slot. Redirection requires both the verified settings call's return address and the current game executable path; other calls pass through. Disc slot/return RVAs are `0x04ca7df0`/`0x047bdcb5`; updated RVAs are `0x04ca7e70`/`0x047bdac5`. Installation also verifies the six-byte indirect-call instruction resolves to that slot. The callback starts the installed mod launcher with the explicit profile, parent PID and losslessly quoted original command line, hiding its console. It preserves the native API result, process information and failure error. A creation failure takes the existing failure branch instead of silently starting an unmodded game.
+
+The launcher verifies/waits for the previous game before selecting or starting a replacement, then performs its existing fingerprint/data checks and injection. Restart mode never attaches to another running game. An already-exited parent is accepted; an active parent from another installation is rejected. A 30-second handoff timeout leaves the previous process alone. The shim remains loaded as a pass-through after mod shutdown, so in-flight callbacks cannot encounter an unloaded trampoline. There is no resident launcher, process polling or game/recomp file replacement. Synthetic tests use a fake process-creation API and a hidden, bounded test child; they do not start the game or speech. Live restart verification remains user-led.
+
+## Pause settings forms
+
+The installed updated executable's embedded ActionScript creates Graphics and Sound with the same `Mark2PausePanel` prototype and `Mark2Build` method; Camera is converted to that prototype and builder too. These forms expose `m2on`, `m_cursor`, `m_details` help records and `m2rows` display references. The shared settings reader uses the active form and each referenced row's visible title, which already includes its current value. Parent menu text and retained hidden forms are excluded.
+
+Controls instead uses `Mark2Op` with `m2active`, `m2type` and a displayed button/action diagram. Its readout uses the visible action text and the existing input-label adapter. Sound and Controls were checked against private updated-build captures; live navigation and changes still require user testing after installation. The shared UI event filter includes these active/type/row fields without adding a polling timer.
+
+## Episode selection and outgoing menus
+
+The original Chapter menu uses a data array with episode number, title, availability and saved rank. Its bar cursor indexes a separate selection array, whose numeric entries index that data array. The decoder follows that mapping rather than treating the root cursor as an episode index. Only the active list phase (state zero) and enabled owner are eligible. The Play/Record submenu retains its existing selector reader; its visible summary is announced on entry and repeated separately with Square/X through the existing menu input observer. Original Chapter input handlers do not bind Square/X.
+
+The original PauseMain and ChapterMain ActionScript input handlers immediately reject input when their owner `m_input` is false. Retained child selectors now respect those owner gates, and decided selectors with disabled input cannot revive during an outgoing transition. This does not impose the same rule on other menus that delegate input differently. Synthetic checks cover decision/cancellation and disabled/reactivated pause owners; private captures cover the episode list and its introduction. User-led transition and repeat checks remain pending.
