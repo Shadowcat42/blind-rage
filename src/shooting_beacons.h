@@ -248,6 +248,9 @@ inline AimSnapshot capture_aim(const Memory &m, uint32_t pc, uint32_t locals, ui
     if (!out.maximum || out.maximum > 4096)
         return out;
     auto frame = aim_frame(m, pc);
+    // CheckLockOnShotTarget rejects targets beyond LockOnShotLockDistance (+0x7c8)
+    // when it is positive, before testing the angle.
+    const auto lockDistance = std::bit_cast<float>(m.u32(pc + 0x7c8));
     std::set<uint32_t> locked;
     for (auto offset : {0x7e4u, 0x7f0u}) {
         auto array = m.u32(pc + offset), n = m.u32(pc + offset + 4), cap = m.u32(pc + offset + 8);
@@ -284,7 +287,8 @@ inline AimSnapshot capture_aim(const Memory &m, uint32_t pc, uint32_t locals, ui
                                     *direction,
                                     locked.contains(target),
                                     distance,
-                                    !frame || frame->contains(position)};
+                                    (!frame || frame->contains(position)) &&
+                                        !(lockDistance > 0 && distance > lockDistance)};
     }
     out.valid = true;
     return out;
@@ -296,6 +300,8 @@ inline AimSnapshot capture_aim(const Memory &m, uint32_t pc, uint32_t locals, ui
 struct StickNudge {
     float right{}, up{};
     AimIdentity target;
+    float yaw{}, pitch{}; // Error from the cursor to the target, in degrees.
+    bool focus{};         // Chosen from the beacon's cluster rather than the fallback.
 };
 // Errors are measured in the cursor's frame: right = up x aim, up' = aim x right.
 // Full deflection is reached at `full` degrees of error and tapers to zero inside
@@ -328,10 +334,12 @@ inline std::optional<StickNudge> tracking_nudge(const AimSnapshot &snapshot, Aim
     };
     const AimTarget *chosen = nullptr;
     std::optional<Error> chosenError;
+    bool chosenFromFocus = false;
     auto inFocus = [&](const AimTarget &target) {
         return std::find(focus.begin(), focus.end(), target.id) != focus.end();
     };
     for (int pass = focus.empty() ? 1 : 0; pass < 2 && !chosen; ++pass) {
+        chosenFromFocus = pass == 0;
         float best = std::numeric_limits<float>::infinity();
         for (unsigned i = 0; i < snapshot.count; ++i) {
             const auto &target = snapshot.targets[i];
@@ -361,7 +369,8 @@ inline std::optional<StickNudge> tracking_nudge(const AimSnapshot &snapshot, Aim
             return 0.f;
         return std::clamp(degrees / full, -1.f, 1.f) * std::min(strength, 1.f);
     };
-    return StickNudge{axis(chosenError->yaw), axis(chosenError->pitch), chosen->id};
+    return StickNudge{axis(chosenError->yaw), axis(chosenError->pitch), chosen->id,
+                      chosenError->yaw,       chosenError->pitch,       chosenFromFocus};
 }
 struct BeaconCue {
     bool active{};

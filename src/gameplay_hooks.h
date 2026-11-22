@@ -280,6 +280,13 @@ class GameplayHooks {
         AimSnapshot tracking;
         AimIdentity tracking_target;
         bool tracking_hold{};
+        struct Blocked {
+            uint32_t index{};
+            uint64_t until{};
+        };
+        std::map<uint32_t, Blocked> blocked;
+        std::optional<StickNudge> tracking_choice;
+        uint64_t last_guide{};
     };
     static Thread &thread() {
         static thread_local Thread state;
@@ -640,6 +647,62 @@ class GameplayHooks {
             if (shooting_assisted(mode_.load())) {
                 if (!frame.snapshot.tick)
                     frame.snapshot.tick = GetTickCount64();
+                // Targets the game declined to lock inside its angle limit are treated
+                // as unreachable until the block expires.
+                const auto now = GetTickCount64();
+                std::erase_if(state.blocked,
+                              [&](const auto &item) { return item.second.until <= now; });
+                for (unsigned i = 0; i < frame.snapshot.count; ++i) {
+                    auto &target = frame.snapshot.targets[i];
+                    auto it = state.blocked.find(target.id.pointer);
+                    if (it != state.blocked.end() && it->second.index == target.id.index)
+                        target.reachable = false;
+                }
+                if (frame.tracing && frame.snapshot.valid && frame.snapshot.count &&
+                    now - state.last_guide >= 250) {
+                    state.last_guide = now;
+                    auto saved = state.locks;
+                    state.locks = &frame;
+                    auto record = lock_record(memory, state, LockTraceKind::guide);
+                    state.locks = saved;
+                    auto &g = record.guide;
+                    g.candidates = frame.snapshot.count;
+                    const auto camera = lock_camera(memory, source);
+                    auto right = aim_unit({-camera.forward.y, camera.forward.x, 0});
+                    auto up =
+                        right ? std::optional(aim_cross(*right, camera.forward)) : std::nullopt;
+                    for (unsigned i = 0; i < frame.snapshot.count; ++i) {
+                        const auto &target = frame.snapshot.targets[i];
+                        if (target.locked)
+                            continue;
+                        ++g.unlocked;
+                        if (!target.reachable) {
+                            ++g.unreachable;
+                            continue;
+                        }
+                        if (!camera.valid || !right || !up)
+                            continue;
+                        auto forward = aim_dot(target.direction, camera.forward);
+                        auto yaw =
+                            std::atan2(aim_dot(target.direction, *right), forward) * 57.29578f;
+                        auto pitch =
+                            std::atan2(aim_dot(target.direction, *up), forward) * 57.29578f;
+                        (yaw < -5 ? g.left : yaw > 5 ? g.right : g.centre)++;
+                        if (pitch > 5)
+                            ++g.above;
+                        else if (pitch < -5)
+                            ++g.below;
+                    }
+                    g.tracking_hold = state.tracking_hold;
+                    if (state.tracking_choice) {
+                        g.tracking_target = state.tracking_choice->target.pointer;
+                        g.tracking_target_index = state.tracking_choice->target.index;
+                        g.tracking_focus = state.tracking_choice->focus;
+                        g.tracking_yaw = state.tracking_choice->yaw;
+                        g.tracking_pitch = state.tracking_choice->pitch;
+                    }
+                    trace_.push(record, now);
+                }
                 frame.snapshot.active =
                     frame.snapshot.active && enabled_.load() &&
                     aim_context_active(memory, frame.snapshot.controller, frame.snapshot.pawn);
@@ -762,6 +825,15 @@ class GameplayHooks {
                         std::clamp(record.effective_min +
                                        (record.effective_max - record.effective_min) * distance,
                                    record.effective_min, record.effective_max);
+                // CheckLockOnShotTarget also requires LockOnShotLockDistance and a
+                // line-of-sight trace that first hits the target's owner. A candidate
+                // inside the angle limit that the game still did not accept failed one
+                // of those, so guidance and tracking skip it for a while instead of
+                // holding the cursor on a target that cannot lock.
+                if (record.target && !record.accepted && record.angle_valid &&
+                    std::isfinite(record.limit) && record.angle < record.limit)
+                    state.blocked[record.target] = {record.target_index,
+                                                    GetTickCount64() + kBlockedMs};
             }
             trace_record(record, state);
             return true;
@@ -907,6 +979,9 @@ class GameplayHooks {
             state.tracking = {};
             state.tracking_target = {};
             state.tracking_hold = false;
+            state.blocked.clear();
+            state.tracking_choice.reset();
+            state.last_guide = 0;
             state.epoch = epoch;
         }
         Memory memory(Read{base});
@@ -953,6 +1028,7 @@ class GameplayHooks {
                                        focus);
             }
             state.tracking_target = nudge ? nudge->target : AimIdentity{};
+            state.tracking_choice = nudge;
             auto input = memory.u32(source + 0x454);
             const uint32_t upAt = input + 0x13c, rightAt = input + 0x140;
             auto readFloat = [&](uint32_t at) { return std::bit_cast<float>(memory.u32(at)); };
@@ -1253,6 +1329,8 @@ class GameplayHooks {
     static constexpr float kLockViewReserve = .5f;
     // Stick deflection beyond this is the player aiming; tracking yields to it.
     static constexpr float kStickPriority = .2f;
+    // How long a target the game declined to lock is skipped by guidance.
+    static constexpr uint64_t kBlockedMs = 1500;
     std::atomic<uint64_t> position_matches_{}, position_mismatches_{};
     std::atomic<ShootingMode> mode_{ShootingMode::boosted};
     AimMailbox aim_mailbox_;

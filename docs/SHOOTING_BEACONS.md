@@ -57,6 +57,13 @@ with the game's own `BCGameInfo.CoordTransformParam` matrix (the one its native
 gameplay captures). Beacons and tracking skip targets outside the frame. Without
 projection data every target counts as reachable, as before.
 
+`CheckLockOnShotTarget` also rejects targets beyond `LockOnShotLockDistance`
+(controller +0x7c8, when positive) and targets whose line-of-sight trace first
+hits something other than their owner. Guidance treats a target beyond the lock
+distance as unreachable, and when the game declines a candidate that is inside its
+angle limit, guidance and tracking skip that target for 1.5 seconds instead of
+holding the cursor on something that cannot lock.
+
 New installation/package defaults are in `config/accessibility.ini` and choose
 beacons. The runtime reads only `mods/accessibility/accessibility.ini`. When an
 existing file has no explicit mode, `shooting_assist=1` migrates to `boosted` and

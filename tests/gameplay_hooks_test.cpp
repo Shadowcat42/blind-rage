@@ -944,6 +944,48 @@ int main() {
         invoke(29, input);
         invoke(33, pc);
         check(seenUp == 0 && seenRight == 0, "releasing L1 stops tracking");
+        {
+            // The game declines a candidate inside its angle limit (occluded or out
+            // of lock range): guidance and tracking must stop treating it as a target.
+            const bool savedAllow = allowAcquisition;
+            allowAcquisition = false;
+            place(2.f);
+            invoke(16, pc);
+            source.take_aim();
+            invoke(16, pc);
+            auto blocked = source.take_aim();
+            check(blocked && blocked->count == 1 && !blocked->targets[0].reachable,
+                  "a target the game will not lock inside its cone is skipped");
+            allowAcquisition = savedAllow;
+            place(20.f);
+            // A new capture epoch clears the blocked list; the lock range alone
+            // (LockOnShotLockDistance, +0x7c8) now decides. The target is 1000 away.
+            source.capture(false);
+            source.capture(true);
+            word(base, pc + 0x7c8, std::bit_cast<uint32_t>(500.f));
+            invoke(16, pc);
+            auto ranged = source.take_aim();
+            check(ranged && ranged->count == 1 && !ranged->targets[0].reachable,
+                  "a target beyond the game's lock distance is skipped");
+            word(base, pc + 0x7c8, std::bit_cast<uint32_t>(-1.f));
+            invoke(16, pc);
+            ranged = source.take_aim();
+            check(ranged && ranged->count == 1 && ranged->targets[0].reachable,
+                  "without a lock distance the target is reachable again");
+            source.lock_diagnostics(true);
+            invoke(16, pc);
+            auto guideBatch = source.take_lock_trace();
+            check(std::any_of(guideBatch.records.begin(), guideBatch.records.end(),
+                              [](const LockTraceRecord &r) {
+                                  return r.kind == LockTraceKind::guide &&
+                                         r.guide.candidates == 1 && r.guide.unlocked == 1 &&
+                                         r.guide.unreachable == 0;
+                              }),
+                  "the lock trace summarizes guidance candidates");
+            source.lock_diagnostics(false);
+            source.take_lock_trace();
+            source.take_aim();
+        }
         driveSearch = false;
         source.shooting(ShootingMode::boosted);
         // A disagreement permanently falls back to the conservative bound.

@@ -105,7 +105,25 @@ inline int32_t lock_shot_count(const Memory &m, uint32_t pc, uint32_t target) {
             return int32_t(m.u32(data + i * 12 + 4));
     return 0;
 }
-enum class LockTraceKind { frame, acquire, remove, marker_add, marker_remove, sound, level_change };
+enum class LockTraceKind {
+    frame,
+    acquire,
+    remove,
+    marker_add,
+    marker_remove,
+    sound,
+    level_change,
+    guide
+};
+// Shooting guidance summary: where unlocked candidates are on screen, which of
+// them guidance may use, and what tracking chose.
+struct GuideInfo {
+    uint32_t candidates{}, unlocked{}, unreachable{}, left{}, centre{}, right{}, above{}, below{};
+    uint32_t tracking_target{}, tracking_target_index{};
+    bool tracking_hold{}, tracking_focus{};
+    float tracking_yaw{std::numeric_limits<float>::quiet_NaN()},
+        tracking_pitch{std::numeric_limits<float>::quiet_NaN()};
+};
 struct LockTraceRecord {
     LockTraceKind kind{};
     uint64_t sequence{}, tick{}, frame{};
@@ -119,6 +137,7 @@ struct LockTraceRecord {
     float native_min{}, native_max{}, effective_min{}, effective_max{}, fov{}, angle{}, limit{},
         aim_offset{};
     LockVector camera_location, camera_forward, aim;
+    GuideInfo guide;
 };
 struct LockTraceBatch {
     std::vector<LockTraceRecord> records;
@@ -272,8 +291,8 @@ class LockTrace {
     const char *reason_ = "disabled";
 };
 inline std::string lock_trace_line(const LockTraceRecord &r, std::string sound) {
-    constexpr const char *names[]{"frame",         "acquire", "remove",      "marker_add",
-                                  "marker_remove", "sound",   "level_change"};
+    constexpr const char *names[]{"frame",         "acquire", "remove",       "marker_add",
+                                  "marker_remove", "sound",   "level_change", "guide"};
     // Cue names are metadata identifiers. Encode unusual characters without
     // permitting a cue name to inject JSON or extra log lines.
     std::string escaped;
@@ -324,6 +343,18 @@ inline std::string lock_trace_line(const LockTraceRecord &r, std::string sound) 
     number("aim_x", r.aim.x);
     number("aim_y", r.aim.y);
     number("aim_z", r.aim.z);
+    if (r.kind == LockTraceKind::guide) {
+        const auto &g = r.guide;
+        out << ",\"candidates\":" << g.candidates << ",\"unlocked\":" << g.unlocked
+            << ",\"unreachable\":" << g.unreachable << ",\"left\":" << g.left
+            << ",\"centre\":" << g.centre << ",\"right\":" << g.right << ",\"above\":" << g.above
+            << ",\"below\":" << g.below << ",\"tracking_hold\":" << g.tracking_hold
+            << ",\"tracking_target\":" << g.tracking_target
+            << ",\"tracking_target_index\":" << g.tracking_target_index
+            << ",\"tracking_focus\":" << g.tracking_focus;
+        number("tracking_yaw", g.tracking_yaw);
+        number("tracking_pitch", g.tracking_pitch);
+    }
     out << ",\"sound\":" << r.sound << ",\"cue\":\"" << escaped << "\"}";
     return out.str();
 }

@@ -46,3 +46,14 @@ Run `python scripts/analyze_lock_trace.py path/to/repaired.jsonl --baseline path
 The command exits with status 2 when trace checks fail. A pass requires a completed 30-second active window, no queue drops, the repair enabled, recorded repair intervention and widened acquisition, position-model verification without an observed mismatch, ordinary new locks and UI sound requests, and no repeated acquire/sound/angular-removal sequence containing a lock that the native angular test would reject. Native-cone sequences remain visible in the report and do not fail that check; missing angular evidence remains inconclusive. Empty, partial and assistance-off captures cannot pass. The report lists each check and its evidence counts.
 
 This gate does not prove the sound was heard or that firing worked. User confirmation of normal stepped/full-lock feedback, manually fired volleys and absence of mod-induced intrusive repetition remains required. The user confirmed the repair before authorizing the manual-beacon prototype; its separate live validation is documented in `SHOOTING_BEACONS.md`.
+
+## Guidance records
+
+In beacons, boosted and tracking modes, a `guide` record is written at most every
+250 ms while candidates exist. It counts candidates, unlocked candidates and those
+guidance may not use (`unreachable`: outside the cursor frame, beyond
+`LockOnShotLockDistance`, or recently declined by the game inside its angle limit),
+and places the usable ones `left`/`centre`/`right` and `above`/`below` of the
+camera forward direction (5-degree bands). Tracking fields give whether L1 was
+held, the chosen target, whether it came from the beacon's cluster
+(`tracking_focus`) and its error from the cursor in degrees.
