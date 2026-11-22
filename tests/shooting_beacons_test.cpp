@@ -119,6 +119,18 @@ int main() {
         frame.targets[0] = {{10, 1}, direction(-15), false, 1000.f};
         frame.targets[1] = {{11, 1}, direction(-17), false, 1000.f};
         frame.targets[2] = {{20, 1}, direction(25), false, 1000.f};
+        {
+            // The beacon applies the same reachability as tracking: off-frame,
+            // out-of-range and game-declined targets are never guided to.
+            AimSnapshot lone = frame;
+            lone.count = 1;
+            lone.targets[0].reachable = false;
+            ShootingBeacons only;
+            check(!only.update(lone).active && only.clusters() == 0,
+                  "the beacon never guides to an unreachable target");
+            lone.targets[0].reachable = true;
+            check(only.update(lone).active, "the same target is guided once reachable");
+        }
         ShootingBeacons beacons;
         auto cue = beacons.update(frame);
         check(cue.active && cue.pan < 0 && beacons.clusters() == 2,
