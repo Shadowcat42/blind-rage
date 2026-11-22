@@ -29,8 +29,8 @@ When an option asks to restart the game, an active Blind Rage session now restar
 | Ctrl+Alt+F1 | Test speech |
 | Back/Select during gameplay | Read Health/Burst status; cutscene skipping is preserved |
 | D-pad Left / Right, during shooting gameplay | Select the previous / next target cluster for the beacon |
-| D-pad Up, during shooting gameplay | Cycle shooting assistance: off, beacons, boosted, tracking; saves the selected mode |
-| Hold L1, during shooting gameplay in tracking mode | Steer the cursor onto unlocked targets; moving the stick takes over |
+| D-pad Up, during shooting gameplay | Cycle shooting assistance: off, beacons, boosted; saves the selected mode |
+| Hold L1, during shooting gameplay | Steer the cursor onto unlocked targets in any mode; moving the stick takes over |
 | Right stick Left / Right, in Episode Menu -> RECORD | Browse difficulty records |
 | Right stick Up / Down, in Episode Menu -> RECORD | Browse overall rank and individual stats; Square/X repeats the selected entry |
 | Square (PlayStation) / X (Xbox), on results | Repeat the current results summary or battle-point breakdown |

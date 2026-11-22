@@ -8,13 +8,14 @@ still required. It does not implement synchronized-QTE sounds or arena navigatio
 
 | `shooting_mode` | Behavior |
 | --- | --- |
-| `off` | No aim assistance. The game's own lock cone and controls only. |
+| `off` | No beacon and no cone change. The game's own lock cone and controls. |
 | `beacons` | Audio guidance for the selected target cluster. The game's cone is unchanged. |
 | `boosted` | Beacons, plus the game's lock cone scaled by `boost_point_blank` and `boost_max_range`. |
-| `tracking` | Beacons, plus cursor steering toward unlocked targets while L1 is held. |
 
-All three assisted modes play beacons. Older values still work: `native` means `off`
-and `autoaim` means `boosted`; configuration synchronization rewrites them.
+In every mode, holding L1 tracks: it steers the cursor onto unlocked targets (see
+Tracking). With `off` that gives plain autoaim without a beacon. Older values still
+work: `native` means `off`, `autoaim` means `boosted`, and `tracking` (formerly a
+separate mode with beacons) means `beacons`; configuration synchronization rewrites them.
 
 ### Boosted cone
 
@@ -31,7 +32,7 @@ retention would drop the lock, and never narrows a native value. The retired
 The lock cone's axis runs from the camera through the on-screen cursor
 (`AimShotAimPoint`). The game moves that cursor in `AimShotAimingCtrl` from the
 stick values `PlayerInput.RawJoyUp/RawJoyRight`, applying its own speed and screen
-frame. While L1 is held in tracking mode, the mod supplies a steering value for
+frame. While L1 is held, in any mode, the mod supplies a steering value for
 that one cursor update and restores the real stick afterwards. It aims at the
 nearest unlocked target in the beacon's selected cluster, so the cursor goes where
 the beacon points and D-pad Left/Right retargets both; only when that cluster has
@@ -76,9 +77,9 @@ existing file has no explicit mode, `shooting_assist=1` migrates to `boosted` an
 
 During active shooting gameplay:
 
-- D-pad Up cycles **off → beacons → boosted → tracking → off**, announces the
-  mode, and saves it for the next launch.
-- In tracking mode, hold L1 to steer onto unlocked targets; move the stick to take over.
+- D-pad Up cycles **off → beacons → boosted → off**, announces the mode, and saves
+  it for the next launch.
+- In any mode, hold L1 to steer onto unlocked targets; move the stick to take over.
 - D-pad Left/Right chooses the previous/next visible unlocked cluster.
 - Keyboard and launcher equivalents: Ctrl+Alt+F9 (mode), F10 (previous cluster), F12
   (next cluster); INI `[hotkeys]` keys `aimmode`, `aimprev`, `aimnext`, and

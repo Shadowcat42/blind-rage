@@ -49,7 +49,7 @@ This gate does not prove the sound was heard or that firing worked. User confirm
 
 ## Guidance records
 
-In beacons, boosted and tracking modes, a `guide` record is written at most every
+In every shooting mode, a `guide` record is written at most every
 250 ms while candidates exist. It counts candidates, unlocked candidates and those
 guidance may not use (`unreachable`: outside the cursor frame, beyond
 `LockOnShotLockDistance`, or recently declined by the game inside its angle limit),

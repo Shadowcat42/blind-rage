@@ -285,9 +285,7 @@ static DWORD WINAPI run(void *) {
                                            ini.c_str());
                 std::string text = shootingMode == ShootingMode::beacons   ? "Beacons."
                                    : shootingMode == ShootingMode::boosted ? "Boosted beacons."
-                                   : shootingMode == ShootingMode::tracking
-                                       ? "Tracking with beacons."
-                                       : "Aim assist off.";
+                                                                           : "Beacons off.";
                 write("SHOOTING_MODE " + std::string(shooting_mode_name(shootingMode)));
                 if (notifications.focused() && !muted && speaking)
                     speech.speak(text, false);

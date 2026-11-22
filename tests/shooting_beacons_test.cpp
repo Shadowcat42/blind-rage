@@ -19,18 +19,16 @@ int main() {
                   shooting_mode("beacons", 1) == ShootingMode::beacons &&
                   shooting_mode("autoaim") == ShootingMode::boosted &&
                   shooting_mode("native") == ShootingMode::off &&
-                  shooting_mode("tracking") == ShootingMode::tracking &&
+                  shooting_mode("tracking") == ShootingMode::beacons &&
                   shooting_mode("bogus", 1) == ShootingMode::boosted &&
                   shooting_mode("bogus") == ShootingMode::beacons &&
                   shooting_mode_recognized("off") && !shooting_mode_recognized("bogus"),
               "configuration migration preserves legacy choices and fails safely");
         check(next_shooting_mode(ShootingMode::off) == ShootingMode::beacons &&
                   next_shooting_mode(ShootingMode::beacons) == ShootingMode::boosted &&
-                  next_shooting_mode(ShootingMode::boosted) == ShootingMode::tracking &&
-                  next_shooting_mode(ShootingMode::tracking) == ShootingMode::off &&
-                  !shooting_assisted(ShootingMode::off) &&
-                  shooting_assisted(ShootingMode::tracking),
-              "modes cycle off, beacons, boosted, tracking");
+                  next_shooting_mode(ShootingMode::boosted) == ShootingMode::off &&
+                  !shooting_assisted(ShootingMode::off) && shooting_assisted(ShootingMode::boosted),
+              "modes cycle off, beacons, boosted; tracking is L1 in every mode");
         {
             AimSnapshot shot;
             shot.valid = shot.active = true;

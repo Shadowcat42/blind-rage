@@ -914,7 +914,8 @@ int main() {
         word(base, world + 0x368, 0);
         // Tracking: steer only while L1 is held, restore the real stick afterwards,
         // and yield entirely to real stick movement.
-        source.shooting(ShootingMode::tracking);
+        // L1 tracking works with the beacon off.
+        source.shooting(ShootingMode::off);
         source.tracking(.7f);
         word(base, pc + 0x454, playerInput);
         word(base, playerInput + 0x13c, 0);

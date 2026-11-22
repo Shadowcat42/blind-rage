@@ -624,8 +624,9 @@ class GameplayHooks {
     bool observe_lock(Route route, void *context, uint8_t *base, const Memory &memory,
                       Thread &state, uint32_t source, uint32_t locals) {
         if (route == Route::shoot_tick) {
-            if ((!trace_.armed() && !shooting_assisted(mode_.load())) ||
-                !subclass(memory, state.reader, source, "BCPlayerController_HeavyShoot") ||
+            // Guidance data is captured in every mode: L1 tracking works in all of
+            // them, and the beacon also needs it in beacons and boosted modes.
+            if (!subclass(memory, state.reader, source, "BCPlayerController_HeavyShoot") ||
                 (state.locks && state.locks->pc == source)) {
                 original_[0](context, base);
                 return true;
@@ -644,7 +645,7 @@ class GameplayHooks {
             trace_record(lock_record(memory, state, LockTraceKind::frame), state);
             original_[0](context, base);
             state.locks = frame.previous;
-            if (shooting_assisted(mode_.load())) {
+            {
                 if (!frame.snapshot.tick)
                     frame.snapshot.tick = GetTickCount64();
                 // Targets the game declined to lock inside its angle limit are treated
@@ -707,8 +708,7 @@ class GameplayHooks {
                     frame.snapshot.active && enabled_.load() &&
                     aim_context_active(memory, frame.snapshot.controller, frame.snapshot.pawn);
                 aim_mailbox_.put(frame.snapshot);
-                if (mode_.load() == ShootingMode::tracking)
-                    state.tracking = frame.snapshot;
+                state.tracking = frame.snapshot;
                 SetEvent(event_);
             }
             if (trace_.pending())
@@ -716,8 +716,8 @@ class GameplayHooks {
             return true;
         }
         if (route == Route::aim) {
-            if (shooting_assisted(mode_.load()) && state.locks && state.locks->pc == source &&
-                state.locks->active && !state.locks->captured && state.locks->search_locals &&
+            if (state.locks && state.locks->pc == source && state.locks->active &&
+                !state.locks->captured && state.locks->search_locals &&
                 position_mismatches_.load() == 0 && base_camera_view(memory, state, source)) {
                 state.locks->captured = true;
                 state.locks->snapshot = capture_aim(memory, source, state.locks->search_locals,
@@ -727,11 +727,8 @@ class GameplayHooks {
                 state.locks->tracing = trace_.begin(GetTickCount64());
                 trace_record(lock_record(memory, state, LockTraceKind::frame), state);
             }
-            if (!shooting_assisted(mode_.load()) &&
-                !(state.locks && state.locks->active && trace_.armed())) {
-                original_[0](context, base);
-                return true;
-            }
+            // Every mode measures candidates: tracking needs the game's verdicts
+            // (declined targets) even when no cone is changed.
             LockVector origin{}, aim{};
             bool vectors = locals && lock_vector(memory, locals + 8, origin) &&
                            lock_vector(memory, locals + 0x14, aim);
@@ -1013,8 +1010,7 @@ class GameplayHooks {
             // movement takes priority and suspends steering for that tick.
             std::optional<StickNudge> nudge;
             const auto &shot = state.tracking;
-            if (self.mode_.load() == ShootingMode::tracking && state.tracking_hold &&
-                self.enabled_.load() && epoch == self.epoch_.load() &&
+            if (state.tracking_hold && self.enabled_.load() && epoch == self.epoch_.load() &&
                 shot.controller.pointer == source &&
                 shot.controller.index == memory.u32(source + 0x20) &&
                 GetTickCount64() - shot.tick <= 200 &&

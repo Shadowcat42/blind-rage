@@ -45,10 +45,11 @@ if(!$local.Values.ContainsKey($modeId) -and $local.Values.ContainsKey($legacyId)
  $local.Values[$modeId]="shooting_mode=$mode"
  $local.Order['gameplay'].Add('shooting_mode')
 }
-# Rename earlier mode values: native is now off, autoaim is now boosted.
+# Rename earlier mode values: native is now off, autoaim is now boosted, and the
+# tracking mode is now L1 in every mode (tracking mode itself had beacons).
 if($local.Values.ContainsKey($modeId)){
  $raw=$local.Values[$modeId].Split('=',2)[1].Split([char[]]';#')[0].Trim()
- $renamed=@{native='off';autoaim='boosted'}
+ $renamed=@{native='off';autoaim='boosted';tracking='beacons'}
  if($renamed.ContainsKey($raw)){$local.Values[$modeId]="shooting_mode=$($renamed[$raw])"}
 }
 

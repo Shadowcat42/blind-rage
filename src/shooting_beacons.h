@@ -5,22 +5,21 @@
 #include <tuple>
 
 namespace a11y {
-// off: no assistance. beacons: audio guidance only. boosted: beacons plus a
-// native acquisition cone scaled by configurable multipliers. tracking: beacons
-// plus a virtual stick nudge that steers the cursor onto unlocked targets.
-enum class ShootingMode { off, beacons, boosted, tracking };
+// off: no beacon or cone change. beacons: audio guidance. boosted: beacons plus a
+// native acquisition cone scaled by configurable multipliers. In every mode,
+// holding L1 steers the cursor onto unlocked targets (tracking).
+enum class ShootingMode { off, beacons, boosted };
 inline const char *shooting_mode_name(ShootingMode mode) {
     switch (mode) {
         case ShootingMode::beacons:
             return "beacons";
         case ShootingMode::boosted:
             return "boosted";
-        case ShootingMode::tracking:
-            return "tracking";
         default:
             return "off";
     }
 }
+// Whether the audio beacon plays. L1 tracking is available in every mode.
 inline bool shooting_assisted(ShootingMode mode) {
     return mode != ShootingMode::off;
 }
@@ -31,8 +30,6 @@ inline ShootingMode next_shooting_mode(ShootingMode mode) {
             return ShootingMode::beacons;
         case ShootingMode::beacons:
             return ShootingMode::boosted;
-        case ShootingMode::boosted:
-            return ShootingMode::tracking;
         default:
             return ShootingMode::off;
     }
@@ -45,8 +42,9 @@ inline std::optional<ShootingMode> parse_shooting_mode(std::string_view value) {
     // "autoaim" is the earlier name of the boosted cone.
     if (value == "boosted" || value == "autoaim")
         return ShootingMode::boosted;
+    // Tracking was a separate mode with beacons; it is now L1 in every mode.
     if (value == "tracking")
-        return ShootingMode::tracking;
+        return ShootingMode::beacons;
     return {};
 }
 inline bool shooting_mode_recognized(std::string_view value) {
