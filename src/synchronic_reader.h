@@ -11,6 +11,13 @@ class SynchronicReader {
         views_.clear();
         tracks_.clear();
         visibility_.clear();
+        grades_.clear();
+    }
+    // The grade text the HUD shows when a key is judged.
+    void grade(int result) {
+        static constexpr std::array<const char *, 4> labels{"", "Good.", "Great.", "Excellent."};
+        if (result >= 1 && result <= 3 && grades_.size() < 8)
+            grades_.push_back(labels[size_t(result)]);
     }
     void apply(const PresentationEvent &event) {
         Movie movie{event.movie, event.index};
@@ -59,7 +66,8 @@ class SynchronicReader {
         it->tag = name(state.name) + std::to_string(state.track);
     }
     std::vector<std::string> take() {
-        std::vector<std::string> out;
+        std::vector<std::string> out = std::move(grades_);
+        grades_.clear();
         for (auto &track : tracks_) {
             auto cue = current(track);
             if (cue.first.empty()) {
@@ -128,11 +136,11 @@ class SynchronicReader {
         if (!selected || label.empty())
             return {};
         auto key = std::to_string(track.data.generation) + ":" + std::to_string(selected->serial) +
-                   ":" + std::to_string(track.data.window);
-        // This window is the native IsInputOk return used by UpdateNormal/Barrage.
-        // It is an accepted input window, not a promise of the best score tier.
+                   ":" + std::to_string(track.data.cue);
+        // The prompt appears with the HUD element. The press cue comes 0.2 s before
+        // the key's perfect time, ahead of the +/-0.1 s Excellent band.
         std::string text =
-            track.data.window
+            track.data.cue
                 ? (track.data.mash ? "Mash " + label + " now." : label + " now.")
                 : (track.data.mash ? "Prepare to mash " + label + "." : "Timing: " + label + ".");
         if (!text.empty())
@@ -143,6 +151,7 @@ class SynchronicReader {
     uint64_t serial_{};
     std::vector<View> views_;
     std::vector<Track> tracks_;
+    std::vector<std::string> grades_;
     std::map<std::pair<uint32_t, uint32_t>, bool> visibility_;
 };
 }

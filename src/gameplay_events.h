@@ -49,11 +49,15 @@ struct TimingState {
     uint32_t source{}, index{}, track{};
     CueName name;
     uint64_t generation{};
-    bool active{}, window{}, mash{};
+    // cue: the moment to press. For a tap key it is 0.2 s before the key's
+    // perfect time (BCSynchronicTrackKey.StartTime), measured on the track's own
+    // clock (UpdateNormal's NowTime); for a mash key it is the input window.
+    bool active{}, window{}, mash{}, cue{};
     bool operator==(const TimingState &) const = default;
 };
+inline constexpr float kSynchronicCueLead = .2f;
 inline bool capture_timing(const Memory &m, uint32_t source, int32_t track, bool window,
-                           TimingState &state) {
+                           TimingState &state, std::optional<float> now = {}) {
     state = {};
     state.source = source;
     state.index = m.u32(source + 0x20);
@@ -75,6 +79,12 @@ inline bool capture_timing(const Memory &m, uint32_t source, int32_t track, bool
         state.active = state.active && (m.u32(rows + uint32_t(track - 1) * 24 + 20) & 0x80000000);
     state.mash = row[0] == 1;
     state.window = state.active && window;
+    if (state.mash)
+        state.cue = state.window;
+    else if (state.window && now && std::isfinite(*now)) {
+        auto perfect = std::bit_cast<float>(cue_word(row.data() + 8));
+        state.cue = std::isfinite(perfect) && perfect - *now <= kSynchronicCueLead;
+    }
     return true;
 }
 struct GameplayEvent {
@@ -86,6 +96,8 @@ struct GameplayEvent {
     CapturedString<65> record_story;
     CapturedString<513> record_text;
     bool timing{}, status_request{}, menu_repeat{}, menu_changed{};
+    // The synchronic grade the HUD shows: 1 Good, 2 Great, 3 Excellent.
+    int sync_grade{};
     uint32_t repeat_movie{}, repeat_index{};
     int shooting_command{};
     QteGroup group;

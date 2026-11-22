@@ -21,9 +21,17 @@ Chaining: a later key's `IsActiveTrack` requires the previous key to be judged. 
 
 The Episode 1 finale has three keys about 0.65 s apart. The mod's log showed the prompt event 203 ms before the window event (the model predicts 200 ms: 1.1 s minus 0.9 s). All three window ends fell within about 30 ms of K + 0.2 s, which is the timeout time, so none of those presses may have registered in time. The log does not record presses.
 
+## Displayed grades
+
+The grade is shown on screen. Both a press (`BCInterpTrackSynchronic.ShowButton`) and a timeout (`SetResult`) end the key through `BCGFxUI_Synchronic.EndSynchronic(SyncTag, Result)` (`Result` at frame +0xc). It maps Result 1/2/3 to rank 0/1/2 and calls the movie's ActionScript `End(tag, rank)`; a press also calls `Push(tag, hitCnt, rank)`. In the `Huds_SF` Synchronic movie both start `mcInst_Rank` for rank 0 or higher, and `GetTextRank` looks up `BCGame.Synchronic.SynchronicRankC/B/A` with fallbacks GOOD, GREAT and EXCELLENT. A miss (Result 0) shows no grade. Result 3 also counts `AddSynchronicImpact_Excellent` in the save.
+
+## Narration
+
+The prompt ("Timing: Triangle.") is read when the HUD element appears, 1.1 s before the key. "Triangle now." is read when `UpdateNormal(Idx, NowTime)` (Idx at +0, NowTime at +4) reports the key's `StartTime` (+8 in the 24-byte `BCSynchronicTrackKey`) within 0.2 s of `NowTime` while the native input window is open. This uses the track's own clock, with no timer. The grade the HUD shows is read as "Good.", "Great." or "Excellent." when the key ends.
+
 ## Not traced
 
-HUD graphics and rank text (the Scaleform movie), barrage tracks, the keyboard mapping of the button, and whether other episodes override the timing defaults.
+Barrage tracks (none are used), the keyboard mapping of the button, localized grade text (the mod reads the English fallbacks), and whether other episodes override the timing defaults.
 
 ## Open design questions
 

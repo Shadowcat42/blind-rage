@@ -788,13 +788,17 @@ static DWORD WINAPI run(void *) {
                                     menuRepeat = {{event.repeat_movie, event.repeat_index}};
                                 else if (event.status_request)
                                     statusRequest = event.status;
-                                else if (event.timing) {
+                                else if (event.sync_grade) {
+                                    timing.grade(event.sync_grade);
+                                    write("SYNC_GRADE " + std::to_string(event.sync_grade));
+                                } else if (event.timing) {
                                     timing.apply(event.sync, event.order, name);
                                     write(
                                         "TIMING_STATE source=" + std::to_string(event.sync.source) +
                                         " track=" + std::to_string(event.sync.track) +
                                         " active=" + std::to_string(event.sync.active) +
-                                        " window=" + std::to_string(event.sync.window));
+                                        " window=" + std::to_string(event.sync.window) +
+                                        " cue=" + std::to_string(event.sync.cue));
                                 } else {
                                     qtes.apply(event.group, event.order, name);
                                     unsigned visible = 0;

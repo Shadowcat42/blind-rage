@@ -60,7 +60,7 @@ int main() {
                        row = 0x5000, requests = 0x6000, buttons = 0x7000, info = 0xc000,
                        track = 0x2000;
         word(base, disc_profile.layout.names_global, names);
-        word(base, disc_profile.layout.names_global + 4, 64);
+        word(base, disc_profile.layout.names_global + 4, 80);
         auto name = [&](unsigned index, const char *text) {
             word(base, names + index * 4, entries + index * 0x80);
             std::memcpy(base + entries + index * 0x80 + 8, text, std::strlen(text) + 1);
@@ -181,6 +181,8 @@ int main() {
         word(base, 0x18000 + 20, 0x40000000);
         word(base, locals, 0);
         word(base, locals + 4, std::bit_cast<uint32_t>(1.f));
+        // The key's perfect time is 1.5 s on the track clock; NowTime is 1.0 s.
+        word(base, 0x18000 + 8, std::bit_cast<uint32_t>(1.5f));
         driveWindow = true;
         context[0] = track;
         context[5] = 0x19000;
@@ -189,12 +191,41 @@ int main() {
         check(events.size() == 1 && events[0].timing && events[0].sync.active &&
                   events[0].sync.window && context[0] == 0xfeed,
               "timing cue follows the actual native input predicate result");
+        check(!events[0].sync.cue, "the open window alone does not cue the press");
+        word(base, locals + 4, std::bit_cast<uint32_t>(1.31f));
+        context[0] = track;
+        call_script(context.data(), base);
+        events = source.take(overflow);
+        check(events.size() == 1 && events[0].sync.window && events[0].sync.cue,
+              "the press cue fires 0.2 s before the perfect time on the track clock");
         windowResult = false;
         context[0] = track;
         call_script(context.data(), base);
         events = source.take(overflow);
         check(events.size() == 1 && !events[0].sync.window && events[0].sync.active,
               "native window closure is not guessed from ring percentage");
+        {
+            // BCGFxUI_Synchronic.EndSynchronic(SyncTag, Result): Result at +0xc.
+            name(59, "BCGFxUI_Synchronic");
+            driveWindow = false;
+            word(base, owner + 0x2c, 59);
+            word(base, node + 0x2c, indices[34]);
+            for (uint8_t result : {uint8_t(3), uint8_t(0)}) {
+                base[locals + 0xc] = result;
+                context[0] = actor;
+                const auto before = calls;
+                call_script(context.data(), base);
+                events = source.take(overflow);
+                check(
+                    calls == before + 1 && context[0] == 0xfeed &&
+                        (result ? events.size() == 1 && events[0].sync_grade == 3 : events.empty()),
+                    "the displayed synchronic grade is published once; a miss shows none");
+            }
+            base[locals + 0xc] = 0;
+            word(base, owner + 0x2c, 4);
+            word(base, node + 0x2c, indices[10]);
+            driveWindow = true;
+        }
         windowResult = true;
         judgeAfterInput = true;
         context[0] = track;
@@ -459,7 +490,7 @@ int main() {
             "Gamepad_RightStick_Left", "Gamepad_RightStick_Right", "Gamepad_RightStick_Up",
             "Gamepad_RightStick_Down"};
         for (unsigned i = 0; i < recordKeys.size(); ++i) {
-            auto recordKeyIndex = i < 2 ? 48 + i : 55 + i;
+            auto recordKeyIndex = 64 + i;
             name(recordKeyIndex, recordKeys[i]);
             word(base, locals + 4, recordKeyIndex);
             context[0] = actor;

@@ -13,7 +13,7 @@ namespace a11y {
 class GameplayHooks {
   public:
     using Function = void (*)(void *, uint8_t *);
-    static constexpr std::array<const char *, 34> function_names{"RequestInputJudge",
+    static constexpr std::array<const char *, 35> function_names{"RequestInputJudge",
                                                                  "RequestButtonIcon",
                                                                  "UpdateButtonIcon",
                                                                  "CheckActivate",
@@ -46,7 +46,8 @@ class GameplayHooks {
                                                                  "CallStart",
                                                                  "CallEnd",
                                                                  "OnCloseAnimationComplete",
-                                                                 "AimShotAimingCtrl"};
+                                                                 "AimShotAimingCtrl",
+                                                                 "EndSynchronic"};
     static GameplayHooks &instance() {
         static auto *value = new GameplayHooks;
         return *value;
@@ -183,6 +184,7 @@ class GameplayHooks {
     enum class Route {
         ignore,
         aim_control,
+        sync_grade,
         script_scene_start,
         script_scene_end,
         record_info,
@@ -322,6 +324,8 @@ class GameplayHooks {
         Route route = Route::ignore;
         if (function == "AimShotAimingCtrl")
             route = Route::aim_control;
+        else if (cls == "BCGFxUI_Synchronic" && function == "EndSynchronic")
+            route = Route::sync_grade;
         else if (script_scene_protocol(cls) && function == "CallStart")
             route = Route::script_scene_start;
         else if ((script_scene_protocol(cls) && function == "CallEnd") ||
@@ -498,7 +502,7 @@ class GameplayHooks {
         }
     }
     void timing(const Memory &memory, Thread &state, uint32_t source, int32_t track, bool window,
-                bool reset = false) {
+                bool reset = false, std::optional<float> now = {}) {
         if (track < 0) {
             for (auto &binding : state.timings)
                 if (binding.source == source) {
@@ -517,7 +521,7 @@ class GameplayHooks {
             return;
         }
         TimingState value;
-        if (!capture_timing(memory, source, track, window, value)) {
+        if (!capture_timing(memory, source, track, window, value, now)) {
             ++failures_;
             return;
         }
@@ -1087,6 +1091,21 @@ class GameplayHooks {
             self.original_[0](context, base);
             return;
         }
+        if (route == Route::sync_grade) {
+            // Both a press (ShowButton) and a timeout (SetResult) end the key here.
+            // Result 1-3 shows GOOD/GREAT/EXCELLENT (SynchronicRankC/B/A); a miss
+            // (0) shows no text.
+            uint8_t result = 0;
+            const bool read = locals && memory.copy(locals + 0xc, &result, 1);
+            self.original_[0](context, base);
+            if (read && result >= 1 && result <= 3 && self.enabled_.load() &&
+                epoch == self.epoch_.load()) {
+                GameplayEvent event;
+                event.sync_grade = result;
+                self.publish(event);
+            }
+            return;
+        }
         CueTransaction transaction;
         int32_t track = locals ? int32_t(memory.u32(locals)) : -1;
         TimingScope scope{state.scope, source, frame, track, false};
@@ -1113,10 +1132,15 @@ class GameplayHooks {
         } else if (route == Route::timing_reset)
             self.timing(memory, state, source, -1, false);
         else if (route == Route::timing_start || route == Route::timing_update ||
-                 route == Route::timing_end)
-            self.timing(memory, state, source, track, scope.window, route == Route::timing_start);
-        else if (route == Route::animation_cross || route == Route::animation_mash ||
-                 route == Route::animation_hold) {
+                 route == Route::timing_end) {
+            // UpdateNormal/UpdateBarrage(Idx, NowTime): NowTime is the track clock.
+            std::optional<float> now;
+            if (route == Route::timing_update && locals)
+                now = std::bit_cast<float>(memory.u32(locals + 4));
+            self.timing(memory, state, source, track, scope.window, route == Route::timing_start,
+                        now);
+        } else if (route == Route::animation_cross || route == Route::animation_mash ||
+                   route == Route::animation_hold) {
             auto schema = route == Route::animation_cross  ? QteSchema::animation_cross
                           : route == Route::animation_mash ? QteSchema::animation_mash
                                                            : QteSchema::animation_hold;

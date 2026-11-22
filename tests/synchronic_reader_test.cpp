@@ -41,16 +41,19 @@ int main() {
               "prepare before the accepted window");
         state.window = true;
         reader.apply(state, 4, name);
+        check(reader.take().empty(), "the opening window alone does not cue the press");
+        state.cue = true;
+        reader.apply(state, 4, name);
         lines = reader.take();
         check(lines.size() == 1 && lines[0] == "Triangle now.",
-              "announce the physical timing button at the actual window");
+              "announce the physical timing button at the press cue");
         check(reader.take().empty(), "unchanged timing state is quiet");
         state.active = false;
         state.window = false;
         reader.apply(state, 5, name);
         check(reader.take().empty() && reader.repeat().empty(),
               "judge completion invalidates an instruction without speech stop");
-        state.active = state.window = true;
+        state.active = state.window = state.cue = true;
         state.mash = true;
         state.generation++;
         reader.apply(state, 6, name);
@@ -65,6 +68,13 @@ int main() {
         reader.apply(state, 10, name);
         reader.apply(event(PresentationKind::sync_end, 11));
         check(reader.take().empty(), "dismissal in a queued batch suppresses an unsent cue");
+        reader.grade(3);
+        reader.grade(0);
+        reader.grade(1);
+        lines = reader.take();
+        check(lines.size() == 2 && lines[0] == "Excellent." && lines[1] == "Good.",
+              "displayed grades are read and a miss shows no grade");
+        check(reader.take().empty(), "a grade is read once");
         std::vector<uint8_t> data(0x8000);
         auto word = [&](uint32_t at, uint32_t value) {
             for (unsigned i = 0; i < 4; ++i)
@@ -86,6 +96,14 @@ int main() {
         TimingState copied;
         check(capture_timing(memory, 0x1000, 0, true, copied) && copied.active && copied.window,
               "first active unjudged track can accept native window");
+        // Key 0's perfect time (BCSynchronicTrackKey.StartTime, +8) is 5.0 s.
+        word(0x2000 + 8, std::bit_cast<uint32_t>(5.f));
+        check(capture_timing(memory, 0x1000, 0, true, copied, 4.5f) && copied.window && !copied.cue,
+              "no press cue earlier than 0.2 s before the perfect time");
+        check(capture_timing(memory, 0x1000, 0, true, copied, 4.81f) && copied.cue,
+              "press cue 0.2 s before the perfect time");
+        check(capture_timing(memory, 0x1000, 0, false, copied, 4.9f) && !copied.cue,
+              "no press cue outside the native input window");
         check(capture_timing(memory, 0x1000, 1, true, copied) && !copied.active && !copied.window,
               "future track waits for predecessor judgment");
         word(0x2000 + 20, 0xc0000000);
