@@ -1319,7 +1319,7 @@ class GameplayHooks {
     uint32_t names_global_ = disc_profile.layout.names_global;
     bool installed_{};
     std::atomic<bool> configured_{}, enabled_{}, qtes_{true}, status_button_{true};
-    std::atomic<float> point_blank_{1}, max_range_{1}, tracking_strength_{.7f};
+    std::atomic<float> point_blank_{1}, max_range_{1}, tracking_strength_{1.f};
     std::atomic<uint64_t> tracking_nudges_{};
     std::mutex tracking_focus_mutex_;
     std::vector<AimIdentity> tracking_focus_;

@@ -48,8 +48,9 @@ int main() {
             shot.count = 3;
             auto nudge = tracking_nudge(shot, {}, 1.f);
             check(nudge && nudge->target == AimIdentity{0x200, 2} && nudge->right < 0 &&
-                      nudge->up > 0 && std::abs(nudge->right + .5f) < .01f,
-                  "tracking picks the nearest unlocked target and steers proportionally");
+                      nudge->up > 0 && std::abs(std::hypot(nudge->right, nudge->up) - 1) < .01f &&
+                      std::abs(nudge->right / nudge->up + 2) < .05f,
+                  "tracking picks the nearest unlocked target and steers straight at full speed");
             nudge = tracking_nudge(shot, {0x100, 1}, .5f);
             check(nudge && nudge->target == AimIdentity{0x100, 1} && nudge->right == .5f &&
                       nudge->up == 0,

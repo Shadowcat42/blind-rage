@@ -304,15 +304,13 @@ struct StickNudge {
     bool focus{};         // Chosen from the beacon's cluster rather than the fallback.
 };
 // Errors are measured in the cursor's frame: right = up x aim, up' = aim x right.
-// Full deflection is reached at `full` degrees of error and tapers to zero inside
-// `settle`, so the cursor eases onto the target instead of overshooting.
 // `focus` is the beacon's selected cluster: tracking steers to the nearest
 // unlocked, reachable target in it, so the cursor goes where the beacon points.
 // Only when that cluster has nothing left does it fall back to the nearest target.
 inline std::optional<StickNudge> tracking_nudge(const AimSnapshot &snapshot, AimIdentity keep,
                                                 float strength,
                                                 const std::vector<AimIdentity> &focus = {},
-                                                float full = 8.f, float settle = .3f) {
+                                                float full = 1.5f, float settle = .3f) {
     if (!snapshot.valid || !snapshot.active || !std::isfinite(strength) || strength <= 0 ||
         !snapshot.maximum || snapshot.locks >= snapshot.maximum)
         return {};
@@ -364,13 +362,18 @@ inline std::optional<StickNudge> tracking_nudge(const AimSnapshot &snapshot, Aim
     }
     if (!chosen)
         return {};
-    auto axis = [&](float degrees) {
-        if (std::abs(degrees) <= settle)
-            return 0.f;
-        return std::clamp(degrees / full, -1.f, 1.f) * std::min(strength, 1.f);
-    };
-    return StickNudge{axis(chosenError->yaw), axis(chosenError->pitch), chosen->id,
-                      chosenError->yaw,       chosenError->pitch,       chosenFromFocus};
+    // Steer in a straight line at full speed: a target locks as soon as the cursor is
+    // inside its cone (Episode 1's LockOnShotLockTime is 0), so slowing down on the
+    // approach only wastes time. Taper only in the last `full` degrees.
+    float stickRight = 0, stickUp = 0;
+    const auto distance = std::hypot(chosenError->yaw, chosenError->pitch);
+    if (distance > settle) {
+        const auto speed = std::min(distance / full, 1.f) * std::min(strength, 1.f);
+        stickRight = chosenError->yaw / distance * speed;
+        stickUp = chosenError->pitch / distance * speed;
+    }
+    return StickNudge{stickRight,         stickUp,        chosen->id, chosenError->yaw,
+                      chosenError->pitch, chosenFromFocus};
 }
 struct BeaconCue {
     bool active{};

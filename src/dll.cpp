@@ -207,7 +207,7 @@ static DWORD WINAPI run(void *) {
               boostMaxRange = multiplier(L"boost_max_range", 3.f);
         float trackingStrength =
             float(std::clamp<int>(
-                GetPrivateProfileIntW(L"gameplay", L"tracking_strength", 70, ini.c_str()), 0,
+                GetPrivateProfileIntW(L"gameplay", L"tracking_strength", 100, ini.c_str()), 0,
                 100)) /
             100.f;
         wchar_t modeText[32]{};

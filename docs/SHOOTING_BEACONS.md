@@ -37,11 +37,14 @@ nearest unlocked target in the beacon's selected cluster, so the cursor goes whe
 the beacon points and D-pad Left/Right retargets both; only when that cluster has
 nothing left does it take the nearest target overall. It keeps its current target
 while that stays eligible, eases
-in within eight degrees, settles inside 0.3 degrees and stops at a full volley.
+steers in a straight line at the game's full cursor speed (a target locks the moment
+the cursor enters its cone, as Episode 1's lock time is 0), tapers only in the last
+1.5 degrees, settles inside 0.3 degrees and stops at a full volley.
 Any stick deflection beyond 0.2 takes priority and suspends steering. L1's own
 lock-on returns immediately in shooting mode (PDE mode 4), which Episode 1's rail
 sections use, and the mod never blocks the button. `tracking_strength` (0-100)
-caps the steering deflection. Locks still come from the game's own sweep.
+sets the steering speed as a share of the game's cursor speed (default 100).
+Tracking uses the game's own cone; it does not need the boosted cone.
 
 ### Reachable targets
 
