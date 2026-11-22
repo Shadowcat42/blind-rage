@@ -40,6 +40,20 @@ lock-on returns immediately in shooting mode (PDE mode 4), which Episode 1's rai
 sections use, and the mod never blocks the button. `tracking_strength` (0-100)
 caps the steering deflection. Locks still come from the game's own sweep.
 
+### Reachable targets
+
+`AimShotAimingCtrl` clamps the cursor to the screen's title-safe frame
+(`GetSafeFramePoint`: `TitleSafeZone.MaxPercentX/Y`, shifted for a letterboxed
+HUD), and in shooting mode the camera does not turn, so the cursor can never leave
+that frame. Lock candidates, however, extend to the camera retention limit of
+(FOV + 5) / 2 degrees in every direction. In the Episode 1 captures the frame is
+85% of 1280x720 with a horizontal FOV near 59 degrees, so the cursor reaches about
+25 degrees left/right but only about 15 degrees up/down. Each candidate is projected
+with the game's own `BCGameInfo.CoordTransformParam` matrix (the one its native
+`WorldLoc2ScreenLoc` uses; its row-vector convention was checked against two
+gameplay captures). Beacons and tracking skip targets outside the frame. Without
+projection data every target counts as reachable, as before.
+
 New installation/package defaults are in `config/accessibility.ini` and choose
 beacons. The runtime reads only `mods/accessibility/accessibility.ini`. When an
 existing file has no explicit mode, `shooting_assist=1` migrates to `boosted` and

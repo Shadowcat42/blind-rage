@@ -63,6 +63,30 @@ int main() {
             shot.locks = 0;
             shot.targets[0].locked = shot.targets[1].locked = true;
             check(!tracking_nudge(shot, {}, 1.f), "locked targets are not tracked");
+            shot.targets[0].locked = shot.targets[1].locked = false;
+            shot.targets[1].reachable = false;
+            nudge = tracking_nudge(shot, {0x200, 2}, 1.f);
+            check(nudge && nudge->target == AimIdentity{0x100, 1},
+                  "tracking skips a target the cursor cannot reach, even its current one");
+            shot.targets[1].reachable = true;
+        }
+        {
+            // The Episode 1 projection seen in captures: forward +X, right +Y, up +Z,
+            // 1280x720 and an 85% title-safe frame.
+            AimFrame frame;
+            frame.clip_x = 1280;
+            frame.clip_y = 720;
+            frame.min_x = 1280 * .075f;
+            frame.max_x = 1280 - frame.min_x;
+            frame.min_y = 720 * .075f;
+            frame.max_y = 720 - frame.min_y;
+            frame.matrix = {0, 0, .999f, 1, 2.4142f, 0, 0, 0, 0, 4.2919f, 0, 0, 0, 0, -9.99f, 0};
+            check(frame.contains({1000, 0, 0}), "a target straight ahead is reachable");
+            check(frame.contains({1000, 350, 0}) && !frame.contains({1000, 400, 0}),
+                  "the frame edge follows the title-safe width");
+            check(frame.contains({1000, 0, 195}) && !frame.contains({1000, 0, 210}),
+                  "the frame edge follows the title-safe height");
+            check(!frame.contains({-1000, 0, 0}), "a target behind the camera is not reachable");
         }
         AudioRetry retry;
         check(retry.due(0), "first audio start is immediate");

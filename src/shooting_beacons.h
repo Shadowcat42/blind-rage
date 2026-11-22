@@ -107,7 +107,64 @@ struct AimTarget {
     LockVector direction;
     bool locked{};
     float distance{}; // Camera-to-component range in native world units.
+    // Inside the cursor's safe frame, so the player can actually aim at it.
+    bool reachable = true;
 };
+// The cursor is clamped to the screen's title-safe frame (GetSafeFramePoint in
+// BCPlayerCombat.AimShotAimingCtrl), and in shooting mode the camera does not turn.
+// Targets are projected with the game's own BCGameInfo.CoordTransformParam (the
+// matrix its native WorldLoc2ScreenLoc uses): row vector (x, y, z, 1) * M gives
+// clip X, Y and W; screen = Clip / 2 * (1 + X/W, 1 - Y/W).
+struct AimFrame {
+    float clip_x{}, clip_y{}, min_x{}, min_y{}, max_x{}, max_y{};
+    std::array<float, 16> matrix{};
+    bool contains(LockVector p) const {
+        auto at = [&](int column) {
+            return p.x * matrix[size_t(column)] + p.y * matrix[size_t(4 + column)] +
+                   p.z * matrix[size_t(8 + column)] + matrix[size_t(12 + column)];
+        };
+        auto w = at(3);
+        if (!(w > 0))
+            return false;
+        auto x = clip_x / 2 * (1 + at(0) / w), y = clip_y / 2 * (1 - at(1) / w);
+        return x >= min_x && x <= max_x && y >= min_y && y <= max_y;
+    }
+};
+inline std::optional<AimFrame> aim_frame(const Memory &m, uint32_t pc) {
+    auto f32 = [&](uint32_t at) { return std::bit_cast<float>(m.u32(at)); };
+    auto world = m.u32(pc + 0xd4), game = world ? m.u32(world + 0x3b8) : 0;
+    auto player = m.u32(pc + 0x36c), viewport = player ? m.u32(player + 0x68) : 0;
+    auto hud = m.u32(pc + 0x3c8);
+    if (!game || !viewport || !hud || !(m.u32(game + 0x3d0) & 0x80000000))
+        return {};
+    AimFrame frame;
+    frame.clip_x = f32(game + 0x3d4);
+    frame.clip_y = f32(game + 0x3d8);
+    for (unsigned i = 0; i < 16; ++i)
+        frame.matrix[i] = f32(game + 0x3e0 + i * 4);
+    auto percentX = f32(viewport + 0xb4), percentY = f32(viewport + 0xb8);
+    if (!(frame.clip_x > 0 && frame.clip_x < 100000) ||
+        !(frame.clip_y > 0 && frame.clip_y < 100000) || !(percentX > 0 && percentX <= 1) ||
+        !(percentY > 0 && percentY <= 1) ||
+        !std::all_of(frame.matrix.begin(), frame.matrix.end(),
+                     [](float v) { return std::isfinite(v); }))
+        return {};
+    frame.min_x = frame.clip_x * (1 - percentX) / 2;
+    frame.max_x = frame.clip_x - frame.min_x;
+    frame.min_y = frame.clip_y * (1 - percentY) / 2;
+    // Letterboxed HUD (BCHUD.bDrawBlind) shifts the frame as GetSafeFramePoint does.
+    if (m.u32(hud + 0x44c) & 0x4000) {
+        auto offset = f32(hud + 0x528) - f32(hud + 0x530);
+        if (!std::isfinite(offset))
+            return {};
+        frame.min_y += offset / 2;
+        frame.max_y = f32(hud + 0x530) - frame.min_y + offset;
+    } else
+        frame.max_y = frame.clip_y - frame.min_y;
+    if (!std::isfinite(frame.max_y) || frame.max_y <= frame.min_y)
+        return {};
+    return frame;
+}
 struct AimSnapshot {
     static constexpr unsigned capacity = 512;
     AimIdentity controller, pawn;
@@ -190,6 +247,7 @@ inline AimSnapshot capture_aim(const Memory &m, uint32_t pc, uint32_t locals, ui
     out.maximum = m.u32(pc + 0x7bc);
     if (!out.maximum || out.maximum > 4096)
         return out;
+    auto frame = aim_frame(m, pc);
     std::set<uint32_t> locked;
     for (auto offset : {0x7e4u, 0x7f0u}) {
         auto array = m.u32(pc + offset), n = m.u32(pc + offset + 4), cap = m.u32(pc + offset + 8);
@@ -222,7 +280,11 @@ inline AimSnapshot capture_aim(const Memory &m, uint32_t pc, uint32_t locals, ui
         auto margin = lock_view_margin(camera, position);
         if (!direction || !margin || *margin < .5f)
             continue;
-        out.targets[out.count++] = {{target, index}, *direction, locked.contains(target), distance};
+        out.targets[out.count++] = {{target, index},
+                                    *direction,
+                                    locked.contains(target),
+                                    distance,
+                                    !frame || frame->contains(position)};
     }
     out.valid = true;
     return out;
@@ -265,7 +327,7 @@ inline std::optional<StickNudge> tracking_nudge(const AimSnapshot &snapshot, Aim
     float best = std::numeric_limits<float>::infinity();
     for (unsigned i = 0; i < snapshot.count; ++i) {
         const auto &target = snapshot.targets[i];
-        if (target.locked)
+        if (target.locked || !target.reachable)
             continue;
         auto e = error(target);
         if (!e)
@@ -342,7 +404,7 @@ class ShootingBeacons {
             auto target = snapshot.targets[i];
             auto unit = aim_unit(target.direction);
             if (!target.id.pointer || !target.id.index || !unit || target.locked ||
-                !std::isfinite(target.distance) || target.distance <= 0 ||
+                !target.reachable || !std::isfinite(target.distance) || target.distance <= 0 ||
                 !seen.insert(target.id).second || aim_dot(*unit, *aim) <= 0)
                 continue;
             target.direction = *unit;
