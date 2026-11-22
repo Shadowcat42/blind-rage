@@ -161,13 +161,18 @@ confirmation cannot borrow this permission because its choices do not match.
 The captured screen verifies initial selection, the other action, hidden-dialog
 suppression and scene completion.
 
-The narration worker also remembers the background selection covered by a modal
-dialog. Dismissal does not reannounce that selection if it is unchanged, including
-through empty animation frames. This prevents a save dialog from reviving the
-same Options item during exit and the quit confirmation from reviving QUIT GAME
-before shutdown. A changed value/focus, explicit repeat/context request and
-ordinary nonmodal submenu return remain eligible. This complements native closing
-gates; it does not add a delay or cancel speech already handed to NVDA.
+When a dialog closes onto the unchanged menu item it covered, the narration
+worker uses the dialog's last choice to decide whether to announce that item.
+The game's question dialogs confirm with choice 0 and cancel with any other
+choice: PauseMenu checks `BCDialog.GetCursorIdx() == 0` and Result checks
+`BCDialog.IsClosed() == 0` before running the item's action, and captured
+confirmations list Yes at index 0. A cancelled question returns the player to
+the menu, so the item is announced. A confirmation, a one-choice acknowledgement
+(such as the save message on leaving Options) or a multi-choice selection leads
+onward, so the briefly revealed item (QUIT GAME before shutdown, the Options item
+after saving) is not. Changed focus or values are always announced. The dialog
+state is tracked on every read, so its final cursor is known when it closes. A
+Back-button cancel while the cursor is on choice 0 is treated as a confirmation.
 
 The interpreter observer reports actual state changes from the shared base
 `PlayCloseAnimation` and `OnOpenAnimationComplete` methods, so the worker rechecks

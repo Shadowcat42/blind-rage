@@ -12,20 +12,50 @@ static void check(bool v, const char *message) {
 }
 int main(int argc, char **argv) {
     try {
-        ModalReturnHistory returns;
-        check(!returns.observe("title:quit", false), "initial selection remains speakable");
-        check(!returns.observe("dialog:quit:no", true), "dialog starting choice remains speakable");
-        returns.observe("dialog:quit:yes", true);
-        returns.observe("", false);
-        check(returns.observe("title:quit", false),
-              "dialog dismissal cannot replay unchanged background focus before quit");
-        check(!returns.observe("title:options", false), "real focus movement remains speakable");
-        returns.observe("dialog:saved", true);
-        check(!returns.observe("title:options:new value", false),
-              "a changed setting still announces after a dialog");
-        returns.observe("extras:gauges", false);
-        check(!returns.observe("extras:list", false),
-              "ordinary submenu returns still announce focus");
+        {
+            Menu question;
+            question.modal = true;
+            question.items = {{"Yes", "", true}, {"No", "", true}};
+            auto dialog = [&](DialogReturn &returns, int cursor) {
+                question.cursor = cursor;
+                returns.observe("dialog:" + std::to_string(cursor), &question);
+            };
+            DialogReturn cancelled;
+            cancelled.observe("title:quit", nullptr);
+            check(!cancelled.quiet("title:quit"), "initial focus is announced");
+            dialog(cancelled, 1);
+            dialog(cancelled, 0);
+            dialog(cancelled, 1);
+            cancelled.observe("", nullptr);
+            cancelled.observe("title:quit", nullptr);
+            check(!cancelled.quiet("title:quit"),
+                  "cancelling a question re-announces the unchanged item");
+            DialogReturn confirmed;
+            confirmed.observe("title:quit", nullptr);
+            dialog(confirmed, 1);
+            dialog(confirmed, 0);
+            confirmed.observe("title:quit", nullptr);
+            check(confirmed.quiet("title:quit"),
+                  "confirming with choice 0 keeps the briefly revealed item quiet");
+            confirmed.observe("title:options", nullptr);
+            check(!confirmed.quiet("title:options") && !confirmed.quiet("title:quit"),
+                  "moving after a confirmation announces normally again");
+            DialogReturn changed;
+            changed.observe("options:volume:100", nullptr);
+            dialog(changed, 0);
+            changed.observe("options:volume:90", nullptr);
+            check(!changed.quiet("options:volume:90"), "a changed value is always announced");
+            Menu message;
+            message.modal = true;
+            message.cursor = 0;
+            message.items = {{"Save successful", "", true}};
+            DialogReturn acknowledged;
+            acknowledged.observe("options:difficulty", nullptr);
+            acknowledged.observe("dialog:saved", &message);
+            acknowledged.observe("options:difficulty", nullptr);
+            check(acknowledged.quiet("options:difficulty"),
+                  "a one-choice acknowledgement keeps the revealed item quiet");
+        }
         Menu declared, choices;
         declared.movie = choices.movie = 1;
         declared.choices_only = true;

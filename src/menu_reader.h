@@ -153,27 +153,44 @@ inline bool declared_choices_match(const Menu &declaration, const Menu &choice) 
             return false;
     return true;
 }
-class ModalReturnHistory {
+// Decides whether the unchanged menu item revealed when a dialog closes should
+// be announced. The game's question dialogs confirm with choice 0 and cancel with
+// any other choice (BCDialog.GetCursorIdx() == 0 in PauseMenu, IsClosed() == 0 in
+// Result). A cancel returns the player to the menu, so it is announced. A
+// confirmation, a one-choice acknowledgement or a multi-choice selection leads
+// onward (quit, return to title, save on exit), so the briefly revealed item is
+// not. Any changed focus or value is announced as usual. Feed every decoded
+// state so the dialog's last cursor position is known when it closes.
+class DialogReturn {
   public:
-    bool observe(const std::string &selection, bool modal) {
-        // An empty animation frame does not make retained background focus new.
+    void observe(const std::string &selection, const Menu *top) {
         if (selection.empty())
-            return false;
-        if (modal) {
+            return;
+        if (top && top->modal) {
             if (!modal_)
-                suspended_ = underlying_;
+                covered_ = underlying_;
             modal_ = true;
-            return false;
+            choices_ = top->items.size();
+            cursor_ = top->cursor;
+            return;
         }
-        bool unchanged = modal_ && !suspended_.empty() && selection == suspended_;
-        modal_ = false;
-        suspended_.clear();
+        if (modal_) {
+            const bool cancelled = choices_ == 2 && cursor_ != 0;
+            quiet_ = !cancelled && selection == covered_ ? selection : std::string();
+            modal_ = false;
+            covered_.clear();
+        } else if (selection != quiet_)
+            quiet_.clear();
         underlying_ = selection;
-        return unchanged;
+    }
+    bool quiet(const std::string &selection) const {
+        return !quiet_.empty() && selection == quiet_;
     }
 
   private:
-    std::string underlying_, suspended_;
+    std::string underlying_, covered_, quiet_;
+    size_t choices_{};
+    int cursor_ = -1;
     bool modal_{};
 };
 inline std::string result_rank(unsigned rank) {

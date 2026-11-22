@@ -160,7 +160,7 @@ static DWORD WINAPI run(void *) {
         source.capture(true);
         Reader reader(profile->layout);
         std::string last, pending, lastSpeech, lastContext, spoken;
-        ModalReturnHistory modalReturns;
+        DialogReturn dialogReturn;
         bool muted = false, forceContext = notifications.focused(), scheduled = false,
              discovered = false, metadataReady = false;
         unsigned stable = 0, retries = 0;
@@ -518,6 +518,7 @@ static DWORD WINAPI run(void *) {
                 context = menu_context(menu);
                 current = menu_selection_state(menu);
             }
+            dialogReturn.observe(current, menus.empty() ? nullptr : &menus.back());
             if (current == pending)
                 stable++;
             else {
@@ -532,8 +533,6 @@ static DWORD WINAPI run(void *) {
                            (current.empty() ? GetTickCount64() - emptySince >= 250 : stable >= 1);
             if (settled) {
                 scheduled = false;
-                bool unchangedReturn =
-                    modalReturns.observe(current, !menus.empty() && menus.back().modal);
                 if (current != last) {
                     bool entered = lastContext != context;
                     lastContext = context;
@@ -553,10 +552,10 @@ static DWORD WINAPI run(void *) {
                     (spoken != current || forceContext)) {
                     if (forceContext)
                         lastSpeech = describe(menus.back(), true, true);
-                    if (!unchangedReturn || forceContext)
+                    if (forceContext || !dialogReturn.quiet(current))
                         speech.speak(lastSpeech);
                     else
-                        write("MENU_RETURN unchanged focus; speech suppressed");
+                        write("MENU_RETURN unchanged after a confirmed dialog; not announced");
                     spoken = current;
                 }
                 forceContext = false;
@@ -746,7 +745,7 @@ static DWORD WINAPI run(void *) {
                                             // already complete, so no animation settling delay is needed.
                                             lastContext = menu_context(*menu);
                                             last = pending = menu_selection_state(*menu);
-                                            modalReturns.observe(last, false);
+                                            dialogReturn.observe(last, nullptr);
                                             stable = 1;
                                             lastSpeech = record_navigation_text(
                                                 *menu, event.record_command <= 2);
