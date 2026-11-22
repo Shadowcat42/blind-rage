@@ -2,7 +2,7 @@
 
 This is the first manual-aiming prototype for native HeavyShoot sections, including
 Episode 1's opening shooting encounter. Live audio and gameplay calibration are
-still required. It does not implement synchronized-QTE sounds or arena navigation.
+still required. It does not implement arena navigation; the synchronized-QTE count-in is described in `SYNCHRONIC_TIMING.md`.
 
 ## Modes
 
@@ -134,7 +134,9 @@ lock reset. Targets already locked or awaiting a projectile hit are skipped. The
 mod never fires, moves the reticle, chooses damage, modifies vulnerability, or
 mutes native lock sounds.
 
-`beacon_volume=30` sets cue loudness on a 0–100 scale; 0 silences it. A restart
+`audio_cue_volume=30` sets cue loudness on a 0–100 scale; 0 silences it. The
+synchronic count-in uses the same level. Older files' `beacon_volume` is migrated
+on install. A restart
 applies volume changes. Narration mute and focus loss also silence the beacon.
 
 ## Data and lifecycle

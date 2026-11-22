@@ -138,6 +138,9 @@ class QteReader {
                     icon.revision = event.revision;
                 } else if (event.kind == PresentationKind::button_active) {
                     icon.enabled = event.flag;
+                    icon.activated = event.flag;
+                    if (!event.flag)
+                        icon.announced = false;
                     icon.order = event.order;
                     icon.revision = event.revision;
                 } else if (event.kind == PresentationKind::button_success ||
@@ -181,6 +184,14 @@ class QteReader {
             if (std::find(out.begin(), out.end(), cue.second) == out.end())
                 out.push_back(std::move(cue.second));
         }
+        for (auto &icon : icons_) {
+            auto text = action_prompt(icon);
+            if (text.empty())
+                continue;
+            icon.announced = true;
+            if (std::find(out.begin(), out.end(), text) == out.end())
+                out.push_back(std::move(text));
+        }
         return out;
     }
     std::string repeat() const {
@@ -216,7 +227,32 @@ class QteReader {
         std::string tag, input;
         bool visible{}, enabled{};
         uint64_t order{}, serial{}, revision{};
+        // Gameplay prompts outside QTE groups: activated is an explicit SetActive(true);
+        // announced keeps one announcement per appearance or activation.
+        bool activated{}, announced{};
     };
+    // Melee prompts shown without a QTE group, spoken once when they become usable.
+    // Finisher (BCPlayerController.StartFinishAttackButton): a Finish_ icon over each
+    // downed enemy; only the one in range is SetActive(true), the rest are guides.
+    // Counter (ShowReactionSnatchButton): a SnatchButton_ icon for the snatch window.
+    std::string action_prompt(const Icon &icon) const {
+        if (icon.announced || !icon.visible || !icon.enabled)
+            return {};
+        auto visible = visibility_.find({icon.movie.pointer, icon.movie.index});
+        if (visible != visibility_.end() && !visible->second)
+            return {};
+        std::string action;
+        if (icon.input.starts_with("Finish_") && icon.activated)
+            action = "Special attack";
+        else if (icon.tag.starts_with("SnatchButton"))
+            action = "Counter";
+        else
+            return {};
+        auto input = describe_qte_icon(icon.input, buttons_, gestures_);
+        if (input.label.empty() || input.action != InputAction::press)
+            return {};
+        return action + ", " + input.label + ".";
+    }
     struct Group {
         QteGroup data;
         uint64_t order{};

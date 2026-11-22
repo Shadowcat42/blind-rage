@@ -151,6 +151,36 @@ int main() {
         reader.apply(group, 26, names);
         check(reader.take().size() == 1,
               "the actual action boundary authorizes its current presentation revision");
+        QteReader melee(buttons);
+        auto active = [](std::string_view tag, bool flag, uint64_t order) {
+            auto event = icon("", tag, order);
+            event.kind = PresentationKind::button_active;
+            event.flag = flag;
+            return event;
+        };
+        melee.apply(icon("Finish_Y", "BCTargetComponent_7", 1));
+        check(melee.take().empty(), "a created finisher icon waits for the game to activate it");
+        melee.apply(active("BCTargetComponent_7", false, 2));
+        check(melee.take().empty(), "an out-of-range finisher guide stays quiet");
+        melee.apply(active("BCTargetComponent_7", true, 3));
+        lines = melee.take();
+        check(lines.size() == 1 && lines[0] == "Special attack, triangle.",
+              "the usable finisher is announced with its button");
+        melee.apply(active("BCTargetComponent_7", true, 4));
+        check(melee.take().empty(), "a finisher stays quiet while it remains usable");
+        melee.apply(active("BCTargetComponent_7", false, 5));
+        melee.apply(active("BCTargetComponent_7", true, 6));
+        check(melee.take().size() == 1, "a finisher that becomes usable again is announced again");
+        auto done = icon("", "BCTargetComponent_7", 7);
+        done.kind = PresentationKind::button_finish;
+        melee.apply(done);
+        melee.apply(icon("Y4", "SnatchButton_0", 8));
+        lines = melee.take();
+        check(lines.size() == 1 && lines[0] == "Counter, triangle.",
+              "a counter window is announced once with its button");
+        check(melee.take().empty(), "an open counter window is not repeated");
+        melee.apply(icon("Y4", "SnatchButton_1", 9));
+        check(melee.take().size() == 1, "the next counter window is announced");
         std::vector<uint8_t> data(0x10000);
         auto word = [&](uint32_t at, uint32_t value) {
             for (unsigned i = 0; i < 4; ++i)

@@ -25,9 +25,13 @@ The Episode 1 finale has three keys about 0.65 s apart. The mod's log showed the
 
 The grade is shown on screen. Both a press (`BCInterpTrackSynchronic.ShowButton`) and a timeout (`SetResult`) end the key through `BCGFxUI_Synchronic.EndSynchronic(SyncTag, Result)` (`Result` at frame +0xc). It maps Result 1/2/3 to rank 0/1/2 and calls the movie's ActionScript `End(tag, rank)`; a press also calls `Push(tag, hitCnt, rank)`. In the `Huds_SF` Synchronic movie both start `mcInst_Rank` for rank 0 or higher, and `GetTextRank` looks up `BCGame.Synchronic.SynchronicRankC/B/A` with fallbacks GOOD, GREAT and EXCELLENT. A miss (Result 0) shows no grade. Result 3 also counts `AddSynchronicImpact_Excellent` in the save.
 
-## Narration
+## Narration and count-in
 
-The prompt ("Timing: Triangle.") is read when the HUD element appears, 1.1 s before the key. "Triangle now." is read when `UpdateNormal(Idx, NowTime)` (Idx at +0, NowTime at +4) reports the key's `StartTime` (+8 in the 24-byte `BCSynchronicTrackKey`) within 0.2 s of `NowTime` while the native input window is open. This uses the track's own clock, with no timer. The grade the HUD shows is read as "Good.", "Great." or "Excellent." when the key ends.
+The prompt ("Timing: Triangle.") is read when the HUD element appears, 1.1 s before the key. A count-in then plays: three beeps at 525 Hz and a fourth at 1050 Hz, 0.33 s apart (onset to onset), each 50 ms long, at the `audio_cue_volume` level. The fourth beep starts on the key's perfect time, so the first falls at K - 0.99 s, before the input window opens (K - 0.9 s); press on the fourth. The spacing is the widest that fits: the mod's first clock reading arrives a frame after the prompt (logged 1.038-1.055 s before K), and the first beep needs room for the audio queue after it. There is no spoken "now" for a tap key. The grade the HUD shows is read as "Good.", "Great." or "Excellent." when the key ends.
+
+Scheduling: `UpdateTracks` calls `UpdateNormal(Idx, NowTime)` (Idx at +0, NowTime at +4) on every update once `StartSynchronicTime` has started the key, before the input window opens. The first reading of the key's `StartTime` (+8 in the 24-byte `BCSynchronicTrackKey`) minus `NowTime` is stamped with the steady clock and schedules the beeps; the window opening and the 0.2 s mark reschedule them on the same track clock. A key that waits for its predecessor's judgment starts its count-in only when it becomes active, beeps already due are skipped, and its schedule replaces the previous key's. The beeps are rendered on one continuous sample clock, resynced to the steady clock only after more than 15 ms of drift, and the queue ahead of each block is measured from XAudio2's `SamplesPlayed`. The mod compensates for its own audio queue but not the output device's latency.
+
+The beeps follow the `qtes` setting, the mute key and game focus. `COUNT_IN_PLAYED` in the log gives each beat's render time relative to the perfect time (`-` if not rendered). Barrage (mash) keys keep speech ("Prepare to mash", "Mash now"), but no track in the game uses them.
 
 ## Not traced
 

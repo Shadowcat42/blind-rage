@@ -235,9 +235,9 @@ static DWORD WINAPI run(void *) {
         ShootingBeacons beacons;
         BeaconAudio beaconAudio;
         std::optional<AimSnapshot> lastAim;
-        float beaconGain =
+        float cueGain =
             float(std::clamp<int>(
-                GetPrivateProfileIntW(L"gameplay", L"beacon_volume", 30, ini.c_str()), 0, 100)) *
+                GetPrivateProfileIntW(L"gameplay", L"audio_cue_volume", 30, ini.c_str()), 0, 100)) *
             .004f;
         AudioRetry audioRetry;
         bool audioReady = false, audioAnnounced = false;
@@ -250,7 +250,7 @@ static DWORD WINAPI run(void *) {
                 if (audioReady)
                     write("BEACON_AUDIO lost; restarting");
                 beaconAudio.close();
-                audioReady = beaconAudio.start(beaconGain);
+                audioReady = beaconAudio.start(cueGain);
                 if (audioReady)
                     audioRetry.success();
                 else
@@ -399,6 +399,50 @@ static DWORD WINAPI run(void *) {
             };
             validate(qtes, "BCGFxMovieButton");
             validate(timing, "BCGFxUI_Synchronic");
+        };
+        // The synchronic count-in: started on first use, rebuilt after a device error.
+        CountInAudio countInAudio;
+        AudioRetry countInRetry;
+        bool countInReady = false;
+        int64_t countInPerfect = 0;
+        std::string countInLogged;
+        auto count_in_output = [&] {
+            auto cue = timing.take_count_in();
+            if (!cue)
+                return;
+            if (!qteEnabled || !notifications.focused() || muted)
+                cue->active = false;
+            if (cue->active && !(countInReady && countInAudio.healthy()) &&
+                countInRetry.due(GetTickCount64())) {
+                countInAudio.close();
+                countInReady = countInAudio.start(cueGain);
+                if (countInReady)
+                    countInRetry.success();
+                else
+                    countInRetry.failure(GetTickCount64());
+                write(countInReady ? "COUNT_IN_AUDIO ready" : "COUNT_IN_AUDIO unavailable");
+            }
+            if (countInReady && countInAudio.healthy())
+                countInAudio.update(*cue);
+            if (cue->active)
+                countInPerfect = cue->perfect;
+        };
+        // Log each beat once it has been rendered, relative to the perfect time.
+        auto count_in_log = [&] {
+            if (!countInReady)
+                return;
+            auto played = countInAudio.synth().played();
+            std::string text;
+            for (int beat = 0; beat < kCountInBeats; ++beat) {
+                auto at = played.at[size_t(beat)];
+                text += " beat" + std::to_string(beat + 1) + "=";
+                text += at ? std::to_string((at - countInPerfect) / 1'000'000) + "ms" : "-";
+            }
+            text = "COUNT_IN_PLAYED generation=" + std::to_string(played.generation) + text;
+            if (text != countInLogged) {
+                countInLogged = text;
+                write(text);
+            }
         };
         auto narrate_qtes = [&] {
             auto lines = timing.take();
@@ -682,6 +726,7 @@ static DWORD WINAPI run(void *) {
                         status.reset();
                         qtes.reset();
                         timing.reset();
+                        countInAudio.silence();
                         beacons.reset();
                         beaconAudio.silence();
                         lastAim.reset();
@@ -798,7 +843,10 @@ static DWORD WINAPI run(void *) {
                                         " track=" + std::to_string(event.sync.track) +
                                         " active=" + std::to_string(event.sync.active) +
                                         " window=" + std::to_string(event.sync.window) +
-                                        " cue=" + std::to_string(event.sync.cue));
+                                        " cue=" + std::to_string(event.sync.cue) +
+                                        " until=" + std::to_string(event.sync.until));
+                                    count_in_output();
+                                    count_in_log();
                                 } else {
                                     qtes.apply(event.group, event.order, name);
                                     unsigned visible = 0;
@@ -876,6 +924,7 @@ static DWORD WINAPI run(void *) {
         }
         gameHooks.capture(false);
         beaconAudio.close();
+        countInAudio.close();
         drain_lock_trace();
         presentations.capture(false);
         source.capture(false);

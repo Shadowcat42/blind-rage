@@ -1,21 +1,33 @@
 #pragma once
 #include "shooting_beacons.h"
+#include "synchronic_count_in.h"
 #include <windows.h>
 #include <xaudio2.h>
 #include <atomic>
 #include <thread>
 
 namespace a11y {
+// ahead: how long the audio already submitted ahead of this block will play.
+inline void stream_render(BeaconSynth &synth, const BeaconCue &cue, float gain, float *out,
+                          unsigned frames, int64_t) {
+    synth.render(cue, gain, out, frames, GetTickCount64());
+}
+inline void stream_render(CountInSynth &synth, const CountInCue &cue, float gain, float *out,
+                          unsigned frames, int64_t ahead) {
+    // The block plays after the audio already submitted; the device's own output
+    // latency is not known here and is not compensated.
+    synth.render_stream(cue, gain, out, frames, steady_ns() + ahead);
+}
 // Synthesizes only the mod's cue. It never touches native voices or NVDA.
 // This thread services an audio buffer, not game memory or controller input.
-class BeaconAudio {
+template <class Synth, class Cue> class ToneStream {
   public:
     // True while the device is running; false after a critical engine error or a
     // failed buffer submission, until close() and start() rebuild it.
     bool healthy() const {
         return engine_ && !failed_.load();
     }
-    ~BeaconAudio() {
+    ~ToneStream() {
         close();
     }
     bool start(float gain) {
@@ -55,12 +67,15 @@ class BeaconAudio {
         }
         return true;
     }
-    void update(BeaconCue cue) {
+    void update(Cue cue) {
         std::lock_guard lock(mutex_);
         cue_ = cue;
     }
     void silence() {
         update({});
+    }
+    const Synth &synth() const {
+        return synth_;
     }
     void close() {
         if (stop_)
@@ -106,10 +121,10 @@ class BeaconAudio {
         unsigned slot = 0;
         while (WaitForSingleObject(stop_, 5) == WAIT_TIMEOUT) {
             XAUDIO2_VOICE_STATE state{};
-            voice_->GetState(&state, XAUDIO2_VOICE_NOSAMPLESPLAYED);
+            voice_->GetState(&state, 0);
             if (state.BuffersQueued >= 3)
                 continue;
-            BeaconCue cue;
+            Cue cue;
             {
                 std::lock_guard lock(mutex_);
                 cue = cue_;
@@ -118,7 +133,10 @@ class BeaconAudio {
             // block per wakeup would underrun at the default timer resolution.
             for (unsigned n = state.BuffersQueued; n < 3; ++n) {
                 auto &samples = buffers_[slot];
-                synth_.render(cue, gain_, samples.data(), 480, GetTickCount64());
+                // SamplesPlayed advances in 10-ms processing passes.
+                auto ahead = int64_t(submitted_ - std::min(submitted_, state.SamplesPlayed)) *
+                             1'000'000'000 / 48000;
+                stream_render(synth_, cue, gain_, samples.data(), 480, ahead);
                 XAUDIO2_BUFFER buffer{};
                 buffer.AudioBytes = sizeof(samples);
                 buffer.pAudioData = reinterpret_cast<const BYTE *>(samples.data());
@@ -126,10 +144,12 @@ class BeaconAudio {
                     failed_ = true;
                     return;
                 }
+                submitted_ += 480;
                 slot = (slot + 1) % buffers_.size();
             }
         }
     }
+    uint64_t submitted_{};
     std::atomic<bool> failed_{};
     Callback callback_{failed_};
     HMODULE module_{};
@@ -139,9 +159,11 @@ class BeaconAudio {
     HANDLE stop_{};
     std::thread thread_;
     std::mutex mutex_;
-    BeaconCue cue_;
-    BeaconSynth synth_;
+    Cue cue_;
+    Synth synth_;
     float gain_{};
     std::array<std::array<float, 960>, 8> buffers_{};
 };
+using BeaconAudio = ToneStream<BeaconSynth, BeaconCue>;
+using CountInAudio = ToneStream<CountInSynth, CountInCue>;
 }

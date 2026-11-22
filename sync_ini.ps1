@@ -45,6 +45,16 @@ if(!$local.Values.ContainsKey($modeId) -and $local.Values.ContainsKey($legacyId)
  $local.Values[$modeId]="shooting_mode=$mode"
  $local.Order['gameplay'].Add('shooting_mode')
 }
+# beacon_volume became audio_cue_volume when the synchronic count-in started
+# sharing it; keep the user's level and drop the old key.
+$cueId="gameplay`naudio_cue_volume";$beaconId="gameplay`nbeacon_volume"
+if($local.Values.ContainsKey($beaconId)){
+ if(!$local.Values.ContainsKey($cueId)){
+  $local.Values[$cueId]="audio_cue_volume="+$local.Values[$beaconId].Split('=',2)[1].Trim()
+  $local.Order['gameplay'].Add('audio_cue_volume')
+ }
+ $local.Values.Remove($beaconId);[void]$local.Order['gameplay'].Remove('beacon_volume')
+}
 # Rename earlier mode values: native is now off, autoaim is now boosted, and the
 # tracking mode is now L1 in every mode (tracking mode itself had beacons).
 if($local.Values.ContainsKey($modeId)){

@@ -12,6 +12,8 @@ class SynchronicReader {
         tracks_.clear();
         visibility_.clear();
         grades_.clear();
+        count_in_ = {};
+        count_in_changed_ = false;
     }
     // The grade text the HUD shows when a key is judged.
     void grade(int result) {
@@ -64,6 +66,24 @@ class SynchronicReader {
         it->data = state;
         it->order = order;
         it->tag = name(state.name) + std::to_string(state.track);
+        // Each reading of the track clock reschedules the count-in, so it follows
+        // the game's timing; it starts once the key is the active one, which for a
+        // chained key is after the previous key has been judged.
+        if (!state.active || state.mash || !std::isfinite(state.until) || !state.stamp)
+            return;
+        auto perfect = state.stamp + int64_t(double(state.until) * 1e9);
+        if (count_in_.generation != state.generation || !count_in_.active)
+            count_in_ = {perfect, state.stamp, state.generation, true};
+        else
+            count_in_.perfect = perfect;
+        count_in_changed_ = true;
+    }
+    // The newest count-in schedule, once per change; a later key replaces it.
+    std::optional<CountInCue> take_count_in() {
+        if (!count_in_changed_)
+            return {};
+        count_in_changed_ = false;
+        return count_in_;
     }
     std::vector<std::string> take() {
         std::vector<std::string> out = std::move(grades_);
@@ -135,13 +155,13 @@ class SynchronicReader {
         auto label = buttons_ ? buttons_("Y") : "Y";
         if (!selected || label.empty())
             return {};
+        // The prompt appears with the HUD element. A tap's press moment is the
+        // count-in's high beat, not speech; a mash key says when to start.
+        bool cue = track.data.mash && track.data.cue;
         auto key = std::to_string(track.data.generation) + ":" + std::to_string(selected->serial) +
-                   ":" + std::to_string(track.data.cue);
-        // The prompt appears with the HUD element. The press cue comes 0.2 s before
-        // the key's perfect time, ahead of the +/-0.1 s Excellent band.
+                   ":" + std::to_string(cue);
         std::string text =
-            track.data.cue
-                ? (track.data.mash ? "Mash " + label + " now." : label + " now.")
+            cue ? "Mash " + label + " now."
                 : (track.data.mash ? "Prepare to mash " + label + "." : "Timing: " + label + ".");
         if (!text.empty())
             text[0] = char(std::toupper(static_cast<unsigned char>(text[0])));
@@ -152,6 +172,8 @@ class SynchronicReader {
     std::vector<View> views_;
     std::vector<Track> tracks_;
     std::vector<std::string> grades_;
+    CountInCue count_in_;
+    bool count_in_changed_{};
     std::map<std::pair<uint32_t, uint32_t>, bool> visibility_;
 };
 }

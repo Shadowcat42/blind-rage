@@ -1,6 +1,7 @@
 #pragma once
 #include "qte_events.h"
 #include "presentation_events.h"
+#include "synchronic_count_in.h"
 #include <mutex>
 #include <optional>
 
@@ -53,7 +54,17 @@ struct TimingState {
     // perfect time (BCSynchronicTrackKey.StartTime), measured on the track's own
     // clock (UpdateNormal's NowTime); for a mash key it is the input window.
     bool active{}, window{}, mash{}, cue{};
-    bool operator==(const TimingState &) const = default;
+    // until: seconds from the track clock's NowTime to the key's perfect time,
+    // read at steady-clock time stamp. Only its first reading changes the state,
+    // so the count-in is scheduled on the frame after the prompt appears.
+    float until = NAN;
+    int64_t stamp{};
+    bool operator==(const TimingState &other) const {
+        return source == other.source && index == other.index && track == other.track &&
+               name == other.name && generation == other.generation && active == other.active &&
+               window == other.window && mash == other.mash && cue == other.cue &&
+               std::isfinite(until) == std::isfinite(other.until);
+    }
 };
 inline constexpr float kSynchronicCueLead = .2f;
 inline bool capture_timing(const Memory &m, uint32_t source, int32_t track, bool window,
@@ -81,9 +92,15 @@ inline bool capture_timing(const Memory &m, uint32_t source, int32_t track, bool
     state.window = state.active && window;
     if (state.mash)
         state.cue = state.window;
-    else if (state.window && now && std::isfinite(*now)) {
+    else if (now && std::isfinite(*now)) {
+        // UpdateTracks calls UpdateNormal every update once StartSynchronicTime has
+        // started the key, 1.1 s before its perfect time, not only in the window.
         auto perfect = std::bit_cast<float>(cue_word(row.data() + 8));
-        state.cue = std::isfinite(perfect) && perfect - *now <= kSynchronicCueLead;
+        if (std::isfinite(perfect)) {
+            state.until = perfect - *now;
+            state.stamp = steady_ns();
+            state.cue = state.window && state.until <= kSynchronicCueLead;
+        }
     }
     return true;
 }
