@@ -28,8 +28,9 @@ When an option asks to restart the game, an active Blind Rage session now restar
 | --- | --- |
 | Ctrl+Alt+F1 | Test speech |
 | Back/Select during gameplay | Read Health/Burst status; cutscene skipping is preserved |
-| D-pad Left / Right, during shooting gameplay | Select the previous / next target cluster in manual beacon mode |
-| D-pad Up, during shooting gameplay | Cycle manual beacons, autoaim, and native aiming; saves the selected mode |
+| D-pad Left / Right, during shooting gameplay | Select the previous / next target cluster for the beacon |
+| D-pad Up, during shooting gameplay | Cycle shooting assistance: off, beacons, boosted, tracking; saves the selected mode |
+| Hold L1, during shooting gameplay in tracking mode | Steer the cursor onto unlocked targets; moving the stick takes over |
 | Right stick Left / Right, in Episode Menu -> RECORD | Browse difficulty records |
 | Right stick Up / Down, in Episode Menu -> RECORD | Browse overall rank and individual stats; Square/X repeats the selected entry |
 | Square (PlayStation) / X (Xbox), on results | Repeat the current results summary or battle-point breakdown |
@@ -58,7 +59,7 @@ The menu implementation has passed synthetic, private replay, and user-led live 
 
 The `experiment/gameplay-text-reader` branch adds subtitle/tutorial narration and the first Episode 1 gameplay prototype. It follows the recomp's effective Xbox, PlayStation or keyboard display and current remapped button labels. Subtitle and tutorial narration default to enabled, including existing installations without new settings. Add `[gameplay]` settings `subtitles=0` or `tutorials=0` to `mods/accessibility/accessibility.ini` to disable either. Text and status speech queue by default (`interrupt=0`); urgent new QTE instructions may interrupt (`qte_interrupt=1`). Disappearing cues do not stop NVDA.
 
-Shared QTE readers cover resolved presses, mashes, holds, grouped stick commands and rotations, plus the separate Synchronic input window. Health/Burst status is available on Back/Select during active gameplay, with low-health warnings and native Burst-button readiness. This follows the recomp's Back binding (default Tab on keyboard), preserves the game's original handler and stays silent in cutscenes or pause/menu screens. Set `status_button=0` to disable it; Ctrl+Alt+F4 remains an alternative. The optional shooting aid widens the game's acquisition cone while retaining its eligibility, range, occlusion, lock limits, homing and manual firing. New-install defaults are `qtes=1`, `status_warnings=1`, `shooting_mode=beacons` and `shooting_cone_degrees=45`. D-pad Up changes shooting mode during active shooting; other INI changes take effect after restarting the mod/game.
+Shared QTE readers cover resolved presses, mashes, holds, grouped stick commands and rotations, plus the separate Synchronic input window. Health/Burst status is available on Back/Select during active gameplay, with low-health warnings and native Burst-button readiness. This follows the recomp's Back binding (default Tab on keyboard), preserves the game's original handler and stays silent in cutscenes or pause/menu screens. Set `status_button=0` to disable it; Ctrl+Alt+F4 remains an alternative. The optional shooting aid widens the game's acquisition cone while retaining its eligibility, range, occlusion, lock limits, homing and manual firing. New-install defaults are `qtes=1`, `status_warnings=1`, `shooting_mode=beacons`, `boost_point_blank=2`, `boost_max_range=3` and `tracking_strength=70`. D-pad Up changes shooting mode during active shooting; other INI changes take effect after restarting the mod/game.
 
 This build has offline validation and is ready for the first user-led gameplay test. Live coverage, speech latency and complete Episode 1 playability have not yet been established. Start the mod before entering gameplay. See the [test instructions](docs/EPISODE_1_TESTING.md), [implementation/evidence](docs/EPISODE_1_GROUNDWORK.md), [text-reader limits](docs/GAMEPLAY_TEXT_READER.md) and [QTE research](docs/QTE_INPUT_RESEARCH.md). Image-only text, other conversation/interlude routes, later combat assistance and encounter-specific exceptions remain future work.
 
@@ -108,5 +109,6 @@ volley capacity. See [shooting modes and testing](docs/SHOOTING_BEACONS.md).
 Release defaults come from `config/accessibility.ini`; the installation still uses
 only `mods/accessibility/accessibility.ini`, which is a local file (untracked; created from
 the template by `install.ps1`) and is never overwritten at startup. Existing `shooting_assist` choices are
-migrated when no explicit `shooting_mode` is present. Autoaim always includes the
-confirmed stability repair; the old `stable_lock_cone` setting is removed.
+migrated when no explicit `shooting_mode` is present. Boosted mode always includes the
+confirmed stability repair; the old `stable_lock_cone` and `shooting_cone_degrees`
+settings are removed.

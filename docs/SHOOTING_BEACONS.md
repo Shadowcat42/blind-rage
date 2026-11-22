@@ -8,27 +8,50 @@ still required. It does not implement synchronized-QTE sounds or arena navigatio
 
 | `shooting_mode` | Behavior |
 | --- | --- |
-| `beacons` | Native acquisition and firing, with one audio guide for the selected target cluster. |
-| `autoaim` | Existing wider acquisition, always constrained by the confirmed stability repair. The player still fires. |
-| `native` | Original aiming, with beacon guidance and widening off. |
+| `off` | No aim assistance. The game's own lock cone and controls only. |
+| `beacons` | Audio guidance for the selected target cluster. The game's cone is unchanged. |
+| `boosted` | Beacons, plus the game's lock cone scaled by `boost_point_blank` and `boost_max_range`. |
+| `tracking` | Beacons, plus cursor steering toward unlocked targets while L1 is held. |
 
-There is no `stable_lock_cone` toggle. Older copies of that key are removed during
-configuration synchronization/startup. The repair only limits additional autoaim
-assistance; it never lowers native acquisition thresholds or changes retention.
+All three assisted modes play beacons. Older values still work: `native` means `off`
+and `autoaim` means `boosted`; configuration synchronization rewrites them.
+
+### Boosted cone
+
+The game's lock limit is `clamp(Min + (Max - Min) * (1 - distance / 3000), Min, Max)`,
+with `LockOnDegMinVal` applying at maximum range and `LockOnDegMaxVal` at point blank.
+Boosted mode multiplies each by its own setting (1-10; defaults 2 and 3), so the
+cone stays a cone that is wider near and far, instead of a flat angle filling the
+screen. The stability repair still caps only the added assistance where native
+retention would drop the lock, and never narrows a native value. The retired
+`shooting_cone_degrees` and `stable_lock_cone` keys are removed on synchronization.
+
+### Tracking
+
+The lock cone's axis runs from the camera through the on-screen cursor
+(`AimShotAimPoint`). The game moves that cursor in `AimShotAimingCtrl` from the
+stick values `PlayerInput.RawJoyUp/RawJoyRight`, applying its own speed and screen
+frame. While L1 is held in tracking mode, the mod supplies a steering value for
+that one cursor update and restores the real stick afterwards. It aims at the
+nearest unlocked target (keeping the current one while it stays eligible), eases
+in within eight degrees, settles inside 0.3 degrees and stops at a full volley.
+Any stick deflection beyond 0.2 takes priority and suspends steering. L1's own
+lock-on returns immediately in shooting mode (PDE mode 4), which Episode 1's rail
+sections use, and the mod never blocks the button. `tracking_strength` (0-100)
+caps the steering deflection. Locks still come from the game's own sweep.
 
 New installation/package defaults are in `config/accessibility.ini` and choose
-beacons. The runtime still reads only `mods/accessibility/accessibility.ini`.
-When an existing file has no explicit mode, `shooting_assist=1` migrates to autoaim
-and `shooting_assist=0` migrates to native. An explicit mode takes precedence.
-This development installation retains its previous autoaim choice.
+beacons. The runtime reads only `mods/accessibility/accessibility.ini`. When an
+existing file has no explicit mode, `shooting_assist=1` migrates to `boosted` and
+`shooting_assist=0` to `off`. An explicit mode takes precedence.
 
 ## Controller operation
 
 During active shooting gameplay:
 
-- D-pad Up cycles **beacons → autoaim → native → beacons**, announces the mode,
-  and saves it for the next launch. Starting in autoaim, two Up presses reach
-  beacons, with native mode between them.
+- D-pad Up cycles **off → beacons → boosted → tracking → off**, announces the
+  mode, and saves it for the next launch.
+- In tracking mode, hold L1 to steer onto unlocked targets; move the stick to take over.
 - D-pad Left/Right chooses the previous/next visible unlocked cluster.
 - Keyboard and launcher equivalents: Ctrl+Alt+F9 (mode), F10 (previous cluster), F12
   (next cluster); INI `[hotkeys]` keys `aimmode`, `aimprev`, `aimnext`, and

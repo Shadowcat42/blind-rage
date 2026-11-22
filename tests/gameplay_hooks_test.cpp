@@ -71,6 +71,7 @@ int main() {
         name(3, "BCPlayerController_HeavyShoot");
         name(4, "BCInterpTrackSynchronic");
         name(5, "BCSeqAct_AnimFadeByButtonRep");
+        name(61, "L1");
         std::array<uint32_t, GameplayHooks::function_names.size()> indices{};
         for (unsigned i = 0; i < indices.size(); ++i) {
             indices[i] = i + 14;
@@ -119,7 +120,7 @@ int main() {
                                       reinterpret_cast<void *>(movie_event_target)}),
               "install native gameplay detours");
         source.configure_indices(indices);
-        source.options(true, 45);
+        source.options(true, 2.f, 3.f);
         source.capture(true);
         GameplayHooks::Function volatile call_script = script_target;
         std::array<uint64_t, 40> context{};
@@ -155,7 +156,7 @@ int main() {
         check(!aimObserved && std::bit_cast<float>(cue_word(base + actor + 0x7d4)) == 3.f &&
                   std::bit_cast<float>(cue_word(base + actor + 0x7d8)) == 8.f &&
                   source.widenings() == 0,
-              "autoaim does not widen outside a verified active shooting frame");
+              "boost does not widen outside a verified active shooting frame");
         changeAim = true;
         context[0] = actor;
         call_script(context.data(), base);
@@ -163,7 +164,7 @@ int main() {
                   std::bit_cast<float>(cue_word(base + actor + 0x7d8)) == 8.f,
               "scoped restoration preserves a game-side parameter change");
         changeAim = false;
-        source.options(true, 0);
+        source.options(true, 1.f, 1.f);
         aimObserved = false;
         context[0] = actor;
         call_script(context.data(), base);
@@ -271,7 +272,7 @@ int main() {
         word(base, gauge + 0x20, 42);
         word(base, gauge + 0xc8, 0x80000000);
         word(base, gauge + 0x1e0, 0x80000000);
-        source.options(false, 0);
+        source.options(false, 1.f, 1.f);
         context[0] = input;
         originalCalls = calls;
         call_script(context.data(), base);
@@ -383,12 +384,12 @@ int main() {
               "transition into a cinematic inside the original handler cancels status");
         enterCinematic = false;
         word(base, pc + 0x378, 0);
-        source.options(false, 0, false);
+        source.options(false, 1.f, 1.f, false);
         context[0] = input;
         call_script(context.data(), base);
         check(source.take(overflow).empty(),
               "contextual status button can be disabled without changing native input");
-        source.options(false, 0, true);
+        source.options(false, 1.f, 1.f, true);
         word(base, owner + 0x2c, 7);
         context[0] = input;
         call_script(context.data(), base);
@@ -602,6 +603,7 @@ int main() {
                  kind == 18                 ? 51
                  : kind == 19 || kind == 20 ? 50
                  : kind == 21               ? 52
+                 : kind == 29               ? 6 // BCPlayerInput.InputCheckTick
                                             : 3);
             if (kind == 8) {
                 word(base, nl + 4, lockTarget);
@@ -628,6 +630,8 @@ int main() {
         };
         bool allowAcquisition = false, driveLevels = false, driveSearch = false,
              fireReturnsTarget = true, endSearchInMenu = false;
+        constexpr uint32_t playerInput = 0x20c00;
+        float seenUp = 0, seenRight = 0;
         float observedMinimum = 0;
         traceOriginal = [&](void *ctx, uint8_t *) {
             auto nf = ui_argument(ctx, 4), nl = cue_word(base + nf + 0x1c),
@@ -640,6 +644,10 @@ int main() {
             }
             if (kind == 28)
                 word(base, ui_argument(ctx, 5), fireReturnsTarget ? lockTarget : 0);
+            if (kind == 33) {
+                seenUp = std::bit_cast<float>(cue_word(base + playerInput + 0x13c));
+                seenRight = std::bit_cast<float>(cue_word(base + playerInput + 0x140));
+            }
             if (kind == 23)
                 word(base, pc + 0x8e8, 1);
             if (kind == 24)
@@ -699,7 +707,9 @@ int main() {
                 word(base, nl + 0x18, std::bit_cast<uint32_t>(1.f));
             }
         };
-        source.options(false, 20);
+        // Episode 1 native limits are 3.6 (far) / 50 (near) degrees here.
+        source.options(false, 1.f, 5.f);
+        const float boostedFar = 3.6f * 5.f;
         source.lock_diagnostics(true);
         for (unsigned i = 0; i < 100; ++i)
             invoke(16, pc);
@@ -742,7 +752,7 @@ int main() {
         invoke(16, pc);
         lockBatch = source.take_lock_trace();
         check(lockBatch.records.size() == 5 && lockBatch.records[1].accepted &&
-                  lockBatch.records[1].effective_min == 20.f &&
+                  lockBatch.records[1].effective_min == boostedFar &&
                   lockBatch.records[1].effective_max == 50.f,
               "conservative cap preserves locks admitted by the native near cone");
         check(std::bit_cast<float>(cue_word(base + pc + 0x7d8)) == 50,
@@ -770,7 +780,7 @@ int main() {
         check(lockBatch.records.size() >= 2 && lockBatch.records[1].position_verified &&
                   !lockBatch.records[1].view_gated && !lockBatch.records[1].cap_applied &&
                   std::abs(lockBatch.records[1].view_margin - 17.5f) < .01f &&
-                  lockBatch.records[1].effective_min == 20.f &&
+                  lockBatch.records[1].effective_min == boostedFar &&
                   lockBatch.records[1].effective_max == 50.f,
               "a target the camera keeps is widened fully, not by the conservative bound");
         place(45.f);
@@ -871,8 +881,40 @@ int main() {
         aimFrame = source.take_aim();
         check(aimFrame && !aimFrame->active, "paused native frame invalidates manual guidance");
         word(base, world + 0x368, 0);
+        // Tracking: steer only while L1 is held, restore the real stick afterwards,
+        // and yield entirely to real stick movement.
+        source.shooting(ShootingMode::tracking);
+        source.tracking(.7f);
+        word(base, pc + 0x454, playerInput);
+        word(base, playerInput + 0x13c, 0);
+        word(base, playerInput + 0x140, 0);
+        invoke(16, pc);
+        source.take_aim();
+        auto nudgesBefore = source.tracking_nudges();
+        invoke(33, pc);
+        check(seenUp == 0 && seenRight == 0 && source.tracking_nudges() == nudgesBefore,
+              "tracking does not steer while L1 is released");
+        word(base, inputRows + 7 * 0x24, 61);
+        word(base, inputRows + 7 * 0x24 + 0x18, 0x80000000);
+        invoke(29, input);
+        invoke(33, pc);
+        check((seenUp != 0 || seenRight != 0) && std::abs(seenRight) <= .7f &&
+                  std::abs(seenUp) <= .7f && source.tracking_nudges() == nudgesBefore + 1,
+              "holding L1 steers the cursor toward the unlocked target");
+        check(cue_word(base + playerInput + 0x13c) == 0 &&
+                  cue_word(base + playerInput + 0x140) == 0,
+              "the player's real stick values are restored after the cursor update");
+        word(base, playerInput + 0x140, std::bit_cast<uint32_t>(.5f));
+        invoke(33, pc);
+        check(seenRight == .5f && seenUp == 0 && source.tracking_nudges() == nudgesBefore + 1,
+              "real stick movement takes priority over tracking");
+        word(base, playerInput + 0x140, 0);
+        word(base, inputRows + 7 * 0x24 + 0x18, 0);
+        invoke(29, input);
+        invoke(33, pc);
+        check(seenUp == 0 && seenRight == 0, "releasing L1 stops tracking");
         driveSearch = false;
-        source.shooting(ShootingMode::autoaim);
+        source.shooting(ShootingMode::boosted);
         // A disagreement permanently falls back to the conservative bound.
         source.lock_diagnostics(true);
         simAngle = 10.f;
@@ -887,7 +929,8 @@ int main() {
         invoke(16, pc);
         lockBatch = source.take_lock_trace();
         check(lockBatch.records.size() >= 2 && !lockBatch.records[1].position_verified &&
-                  !lockBatch.records[1].view_gated && lockBatch.records[1].effective_min == 20.f &&
+                  !lockBatch.records[1].view_gated &&
+                  lockBatch.records[1].effective_min == boostedFar &&
                   lockBatch.records[1].effective_max == 50.f,
               "after any disagreement the model is never trusted and the bound applies");
         driveLevels = true;

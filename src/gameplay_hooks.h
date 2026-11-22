@@ -13,7 +13,7 @@ namespace a11y {
 class GameplayHooks {
   public:
     using Function = void (*)(void *, uint8_t *);
-    static constexpr std::array<const char *, 33> function_names{"RequestInputJudge",
+    static constexpr std::array<const char *, 34> function_names{"RequestInputJudge",
                                                                  "RequestButtonIcon",
                                                                  "UpdateButtonIcon",
                                                                  "CheckActivate",
@@ -45,7 +45,8 @@ class GameplayHooks {
                                                                  "InputCheckTick",
                                                                  "CallStart",
                                                                  "CallEnd",
-                                                                 "OnCloseAnimationComplete"};
+                                                                 "OnCloseAnimationComplete",
+                                                                 "AimShotAimingCtrl"};
     static GameplayHooks &instance() {
         static auto *value = new GameplayHooks;
         return *value;
@@ -107,13 +108,20 @@ class GameplayHooks {
             indices_[i] = indices[i];
         configured_ = true;
     }
-    void options(bool qtes, float shootingDegrees, bool statusButton = true) {
+    void options(bool qtes, float pointBlank, float maxRange, bool statusButton = true) {
         qtes_ = qtes;
-        angle_ = shootingDegrees;
+        point_blank_ = pointBlank;
+        max_range_ = maxRange;
         status_button_ = statusButton;
     }
     void lock_diagnostics(bool enabled) {
         trace_.configure(enabled);
+    }
+    void tracking(float strength) {
+        tracking_strength_ = std::isfinite(strength) ? std::clamp(strength, 0.f, 1.f) : 0.f;
+    }
+    uint64_t tracking_nudges() const {
+        return tracking_nudges_.load();
     }
     void shooting(ShootingMode mode) {
         mode_ = mode;
@@ -125,8 +133,9 @@ class GameplayHooks {
     std::optional<AimSnapshot> take_aim() {
         return aim_mailbox_.take();
     }
-    bool autoaim() const {
-        return mode_.load() == ShootingMode::autoaim && angle_.load() > 0;
+    bool boosted() const {
+        return mode_.load() == ShootingMode::boosted &&
+               (point_blank_.load() > 1 || max_range_.load() > 1);
     }
     LockTraceBatch take_lock_trace() {
         return trace_.take();
@@ -173,6 +182,7 @@ class GameplayHooks {
   private:
     enum class Route {
         ignore,
+        aim_control,
         script_scene_start,
         script_scene_end,
         record_info,
@@ -260,6 +270,10 @@ class GameplayHooks {
         Marker *marker{};
         uint32_t input_source{}, input_index{};
         uint8_t input_held{};
+        // Tracking runs on the game thread from the previous shooting tick's copy.
+        AimSnapshot tracking;
+        AimIdentity tracking_target;
+        bool tracking_hold{};
     };
     static Thread &thread() {
         static thread_local Thread state;
@@ -306,7 +320,9 @@ class GameplayHooks {
             return cached.route;
         auto cls = state.reader.name(memory, ownerName), function = state.reader.name(memory, name);
         Route route = Route::ignore;
-        if (script_scene_protocol(cls) && function == "CallStart")
+        if (function == "AimShotAimingCtrl")
+            route = Route::aim_control;
+        else if (script_scene_protocol(cls) && function == "CallStart")
             route = Route::script_scene_start;
         else if ((script_scene_protocol(cls) && function == "CallEnd") ||
                  ((script_scene_protocol(cls) || cls == "BCGFxMoviePlayer") &&
@@ -593,7 +609,7 @@ class GameplayHooks {
     bool observe_lock(Route route, void *context, uint8_t *base, const Memory &memory,
                       Thread &state, uint32_t source, uint32_t locals) {
         if (route == Route::shoot_tick) {
-            if ((!trace_.armed() && !autoaim() && mode_.load() != ShootingMode::beacons) ||
+            if ((!trace_.armed() && !shooting_assisted(mode_.load())) ||
                 !subclass(memory, state.reader, source, "BCPlayerController_HeavyShoot") ||
                 (state.locks && state.locks->pc == source)) {
                 original_[0](context, base);
@@ -613,13 +629,15 @@ class GameplayHooks {
             trace_record(lock_record(memory, state, LockTraceKind::frame), state);
             original_[0](context, base);
             state.locks = frame.previous;
-            if (mode_.load() == ShootingMode::beacons) {
+            if (shooting_assisted(mode_.load())) {
                 if (!frame.snapshot.tick)
                     frame.snapshot.tick = GetTickCount64();
                 frame.snapshot.active =
                     frame.snapshot.active && enabled_.load() &&
                     aim_context_active(memory, frame.snapshot.controller, frame.snapshot.pawn);
                 aim_mailbox_.put(frame.snapshot);
+                if (mode_.load() == ShootingMode::tracking)
+                    state.tracking = frame.snapshot;
                 SetEvent(event_);
             }
             if (trace_.pending())
@@ -627,7 +645,7 @@ class GameplayHooks {
             return true;
         }
         if (route == Route::aim) {
-            if (mode_.load() == ShootingMode::beacons && state.locks && state.locks->pc == source &&
+            if (shooting_assisted(mode_.load()) && state.locks && state.locks->pc == source &&
                 state.locks->active && !state.locks->captured && state.locks->search_locals &&
                 position_mismatches_.load() == 0 && base_camera_view(memory, state, source)) {
                 state.locks->captured = true;
@@ -638,7 +656,7 @@ class GameplayHooks {
                 state.locks->tracing = trace_.begin(GetTickCount64());
                 trace_record(lock_record(memory, state, LockTraceKind::frame), state);
             }
-            if (!autoaim() && mode_.load() != ShootingMode::beacons &&
+            if (!shooting_assisted(mode_.load()) &&
                 !(state.locks && state.locks->active && trace_.armed())) {
                 original_[0](context, base);
                 return true;
@@ -653,7 +671,7 @@ class GameplayHooks {
             record.geometry_supported = base_camera_view(memory, state, source);
             record.native_min = std::bit_cast<float>(memory.u32(source + 0x7d4));
             record.native_max = std::bit_cast<float>(memory.u32(source + 0x7d8));
-            auto degrees = autoaim() ? angle_.load() : 0.f;
+            bool boost = boosted();
             std::optional<float> cap;
             // The candidate's world position is computed on every check so the model
             // can be compared with the native angle after the call.
@@ -664,7 +682,7 @@ class GameplayHooks {
                 if (auto computed = lock_direction_angle(origin, aim, position))
                     record.target_angle = *computed;
             record.position_verified = position_verified();
-            if (autoaim()) {
+            if (boost) {
                 const bool geometry =
                     record.geometry_supported && vectors && state.locks && state.locks->active;
                 if (geometry && record.position_verified) {
@@ -680,13 +698,13 @@ class GameplayHooks {
                     if (margin)
                         record.view_margin = *margin;
                     if (margin && *margin < kLockViewReserve) {
-                        degrees = 0;
+                        boost = false;
                         record.view_gated = true;
                     } else if (!margin) {
                         // Unknown candidate geometry is not evidence for a target gate.
                         cap = stable_lock_radius(camera, origin, aim);
                         if (!cap)
-                            degrees = 0;
+                            boost = false;
                     }
                 } else {
                     // Until the position model has agreed with the native angle (or if it
@@ -694,10 +712,10 @@ class GameplayHooks {
                     if (geometry)
                         cap = stable_lock_radius(lock_camera(memory, source), origin, aim);
                     if (!cap)
-                        degrees = 0;
+                        boost = false;
                 }
             }
-            record.cap_applied = cap.has_value() && degrees > 0;
+            record.cap_applied = cap.has_value() && boost;
             AcquisitionScope scope(
                 memory,
                 [&](uint32_t at, const void *bytes, size_t n) {
@@ -705,7 +723,7 @@ class GameplayHooks {
                     return WriteProcessMemory(GetCurrentProcess(), base + at, bytes, n, &wrote) &&
                            wrote == n;
                 },
-                source, degrees, cap);
+                source, boost ? point_blank_.load() : 1.f, boost ? max_range_.load() : 1.f, cap);
             record.effective_min = std::bit_cast<float>(memory.u32(source + 0x7d4));
             record.effective_max = std::bit_cast<float>(memory.u32(source + 0x7d8));
             if (scope.changed())
@@ -878,6 +896,9 @@ class GameplayHooks {
             state.marker = nullptr;
             state.input_source = state.input_index = 0;
             state.input_held = 0;
+            state.tracking = {};
+            state.tracking_target = {};
+            state.tracking_hold = false;
             state.epoch = epoch;
         }
         Memory memory(Read{base});
@@ -902,6 +923,57 @@ class GameplayHooks {
             }
             return;
         }
+        if (route == Route::aim_control) {
+            // While L1 is held, steer the game's own cursor update toward a target,
+            // then put the player's real stick values back. The game applies its
+            // cursor speed, screen frame and camera-turn limits. Any real stick
+            // movement takes priority and suspends steering for that tick.
+            std::optional<StickNudge> nudge;
+            const auto &shot = state.tracking;
+            if (self.mode_.load() == ShootingMode::tracking && state.tracking_hold &&
+                self.enabled_.load() && epoch == self.epoch_.load() &&
+                shot.controller.pointer == source &&
+                shot.controller.index == memory.u32(source + 0x20) &&
+                GetTickCount64() - shot.tick <= 200 &&
+                aim_context_active(memory, shot.controller, shot.pawn))
+                nudge = tracking_nudge(shot, state.tracking_target, self.tracking_strength_.load());
+            state.tracking_target = nudge ? nudge->target : AimIdentity{};
+            auto input = memory.u32(source + 0x454);
+            const uint32_t upAt = input + 0x13c, rightAt = input + 0x140;
+            auto readFloat = [&](uint32_t at) { return std::bit_cast<float>(memory.u32(at)); };
+            auto writeFloat = [&](uint32_t at, float value) {
+                auto bits = std::bit_cast<uint32_t>(value);
+                std::array<uint8_t, 4> bytes{uint8_t(bits >> 24), uint8_t(bits >> 16),
+                                             uint8_t(bits >> 8), uint8_t(bits)};
+                SIZE_T wrote{};
+                return WriteProcessMemory(GetCurrentProcess(), base + at, bytes.data(), 4,
+                                          &wrote) &&
+                       wrote == 4;
+            };
+            float up = 0, right = 0, steeredUp = 0, steeredRight = 0;
+            bool steered = false;
+            if (nudge && (nudge->up || nudge->right) && input && input < UINT32_MAX - 0x144) {
+                up = readFloat(upAt);
+                right = readFloat(rightAt);
+                if (std::isfinite(up) && std::isfinite(right) &&
+                    std::max(std::abs(up), std::abs(right)) < kStickPriority) {
+                    steeredUp = nudge->up;
+                    steeredRight = nudge->right;
+                    steered = writeFloat(upAt, steeredUp) && writeFloat(rightAt, steeredRight);
+                    if (steered)
+                        ++self.tracking_nudges_;
+                }
+            }
+            self.original_[0](context, base);
+            // Restore only values the game did not change during the call.
+            if (steered) {
+                if (readFloat(upAt) == steeredUp)
+                    writeFloat(upAt, up);
+                if (readFloat(rightAt) == steeredRight)
+                    writeFloat(rightAt, right);
+            }
+            return;
+        }
         if (route == Route::input_tick) {
             // These are the game's already-updated logical button states. Empty
             // delegate handlers may never enter either script/event dispatcher.
@@ -912,6 +984,16 @@ class GameplayHooks {
             bool valid = index && array && count >= 14 && count <= 64 && count <= capacity &&
                          capacity <= 64 &&
                          uint64_t(array) + uint64_t(count) * 0x24 <= 0x100000000ull;
+            // L1 (row 7) has no rail-shooting action; holding it enables tracking.
+            // Only its state is read here: the game's own L1 handling still runs.
+            bool trackingHold = false;
+            if (valid) {
+                std::array<uint8_t, 0x24> row{};
+                trackingHold = memory.copy(array + 7 * row.size(), row.data(), row.size()) &&
+                               state.reader.name(memory, cue_word(row.data())) == "L1" &&
+                               (cue_word(row.data() + 0x18) & 0x80000000);
+            }
+            state.tracking_hold = trackingHold;
             constexpr std::array<unsigned, 3> rows{11, 13, 10};
             constexpr std::array<std::string_view, 3> names{"DPAD_LEFT", "DPAD_RIGHT", "DPAD_UP"};
             for (unsigned i = 0; valid && i < rows.size(); ++i) {
@@ -1126,13 +1208,16 @@ class GameplayHooks {
     uint32_t names_global_ = disc_profile.layout.names_global;
     bool installed_{};
     std::atomic<bool> configured_{}, enabled_{}, qtes_{true}, status_button_{true};
-    std::atomic<float> angle_{};
+    std::atomic<float> point_blank_{1}, max_range_{1}, tracking_strength_{.7f};
+    std::atomic<uint64_t> tracking_nudges_{};
     std::atomic<uint64_t> epoch_{}, captured_{}, failures_{}, widenings_{}, generation_{};
     GameplayQueue queue_;
     LockTrace trace_;
     static constexpr float kLockViewReserve = .5f;
+    // Stick deflection beyond this is the player aiming; tracking yields to it.
+    static constexpr float kStickPriority = .2f;
     std::atomic<uint64_t> position_matches_{}, position_mismatches_{};
-    std::atomic<ShootingMode> mode_{ShootingMode::autoaim};
+    std::atomic<ShootingMode> mode_{ShootingMode::boosted};
     AimMailbox aim_mailbox_;
     std::atomic<uint64_t> fired_{};
     std::atomic<uint64_t> lock_frames_{};

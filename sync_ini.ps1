@@ -16,8 +16,9 @@ function Read-Ini([string[]]$lines){
   if($text -eq '' -or $text.StartsWith(';') -or $text.StartsWith('#')){continue}
   $equals=$text.IndexOf('=');if($equals -lt 1){continue}
   $key=$text.Substring(0,$equals).Trim().ToLowerInvariant()
-  # Retired experimental toggle: the autoaim repair is unconditional now.
-  if($section -eq 'gameplay' -and $key -eq 'stable_lock_cone'){continue}
+  # Retired settings: the stability repair is unconditional, and the boosted cone
+  # uses multipliers of the game's own limits instead of a flat angle.
+  if($section -eq 'gameplay' -and ($key -eq 'stable_lock_cone' -or $key -eq 'shooting_cone_degrees')){continue}
   if(!$order.Contains($section)){$order[$section]=[Collections.Generic.List[string]]::new()}
   $id="$section`n$key"
   # GetPrivateProfile* uses the first occurrence of a key.
@@ -40,9 +41,15 @@ $modeId="gameplay`nshooting_mode";$legacyId="gameplay`nshooting_assist"
 if(!$local.Values.ContainsKey($modeId) -and $local.Values.ContainsKey($legacyId)){
  $raw=$local.Values[$legacyId].Split('=',2)[1].Split([char[]]';#')[0].Trim()
  $legacy=0;[void][int]::TryParse($raw,[ref]$legacy)
- $mode=if($legacy -ne 0){'autoaim'}else{'native'}
+ $mode=if($legacy -ne 0){'boosted'}else{'off'}
  $local.Values[$modeId]="shooting_mode=$mode"
  $local.Order['gameplay'].Add('shooting_mode')
+}
+# Rename earlier mode values: native is now off, autoaim is now boosted.
+if($local.Values.ContainsKey($modeId)){
+ $raw=$local.Values[$modeId].Split('=',2)[1].Split([char[]]';#')[0].Trim()
+ $renamed=@{native='off';autoaim='boosted'}
+ if($renamed.ContainsKey($raw)){$local.Values[$modeId]="shooting_mode=$($renamed[$raw])"}
 }
 
 # Older files store shortcuts as virtual-key codes that always meant Ctrl+Alt.

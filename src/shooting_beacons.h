@@ -1,34 +1,62 @@
 #pragma once
 #include "lock_trace.h"
+#include <optional>
 #include <set>
 #include <tuple>
 
 namespace a11y {
-enum class ShootingMode { native, autoaim, beacons };
+// off: no assistance. beacons: audio guidance only. boosted: beacons plus a
+// native acquisition cone scaled by configurable multipliers. tracking: beacons
+// plus a virtual stick nudge that steers the cursor onto unlocked targets.
+enum class ShootingMode { off, beacons, boosted, tracking };
 inline const char *shooting_mode_name(ShootingMode mode) {
     switch (mode) {
-        case ShootingMode::autoaim:
-            return "autoaim";
         case ShootingMode::beacons:
             return "beacons";
+        case ShootingMode::boosted:
+            return "boosted";
+        case ShootingMode::tracking:
+            return "tracking";
         default:
-            return "native";
+            return "off";
     }
 }
-inline bool shooting_mode_recognized(std::string_view value) {
-    return value == "beacons" || value == "autoaim" || value == "native";
+inline bool shooting_assisted(ShootingMode mode) {
+    return mode != ShootingMode::off;
 }
-inline ShootingMode shooting_mode(std::string_view value, int legacy = -1) {
+// The order D-pad Up and the mode shortcut cycle through.
+inline ShootingMode next_shooting_mode(ShootingMode mode) {
+    switch (mode) {
+        case ShootingMode::off:
+            return ShootingMode::beacons;
+        case ShootingMode::beacons:
+            return ShootingMode::boosted;
+        case ShootingMode::boosted:
+            return ShootingMode::tracking;
+        default:
+            return ShootingMode::off;
+    }
+}
+inline std::optional<ShootingMode> parse_shooting_mode(std::string_view value) {
+    if (value == "off" || value == "native")
+        return ShootingMode::off;
     if (value == "beacons")
         return ShootingMode::beacons;
-    if (value == "autoaim")
-        return ShootingMode::autoaim;
-    if (value == "native")
-        return ShootingMode::native;
+    // "autoaim" is the earlier name of the boosted cone.
+    if (value == "boosted" || value == "autoaim")
+        return ShootingMode::boosted;
+    if (value == "tracking")
+        return ShootingMode::tracking;
+    return {};
+}
+inline bool shooting_mode_recognized(std::string_view value) {
+    return parse_shooting_mode(value).has_value();
+}
+inline ShootingMode shooting_mode(std::string_view value, int legacy = -1) {
+    if (auto mode = parse_shooting_mode(value))
+        return *mode;
     // Unrecognized text is not a choice: fall back as if the key were absent.
-    return legacy < 0 ? ShootingMode::beacons
-           : legacy   ? ShootingMode::autoaim
-                      : ShootingMode::native;
+    return legacy < 0 ? ShootingMode::beacons : legacy ? ShootingMode::boosted : ShootingMode::off;
 }
 // Backoff for (re)starting the cue's audio device after a failure, kept free of
 // XAudio2 so the policy is testable. Attempts are allowed immediately at first,
@@ -198,6 +226,71 @@ inline AimSnapshot capture_aim(const Memory &m, uint32_t pc, uint32_t locals, ui
     }
     out.valid = true;
     return out;
+}
+// Tracking mode: a proportional virtual stick deflection that steers the native
+// cursor (whose aim line is the lock cone's axis) toward one unlocked target.
+// The game still moves the cursor at its own speed inside its own frame and camera
+// limits; the player's stick is added on top and can always override.
+struct StickNudge {
+    float right{}, up{};
+    AimIdentity target;
+};
+// Errors are measured in the cursor's frame: right = up x aim, up' = aim x right.
+// Full deflection is reached at `full` degrees of error and tapers to zero inside
+// `settle`, so the cursor eases onto the target instead of overshooting.
+inline std::optional<StickNudge> tracking_nudge(const AimSnapshot &snapshot, AimIdentity keep,
+                                                float strength, float full = 8.f,
+                                                float settle = .3f) {
+    if (!snapshot.valid || !snapshot.active || !std::isfinite(strength) || strength <= 0 ||
+        !snapshot.maximum || snapshot.locks >= snapshot.maximum)
+        return {};
+    auto aim = aim_unit(snapshot.aim);
+    auto right = aim ? aim_unit(aim_cross(snapshot.camera_up, *aim)) : std::nullopt;
+    if (!aim || !right)
+        return {};
+    auto up = aim_cross(*aim, *right);
+    struct Error {
+        float yaw, pitch;
+    };
+    auto error = [&](const AimTarget &target) -> std::optional<Error> {
+        auto forward = aim_dot(target.direction, *aim);
+        if (!(forward > 0))
+            return {};
+        constexpr float degrees = 57.2957795f;
+        return Error{std::atan2(aim_dot(target.direction, *right), forward) * degrees,
+                     std::atan2(aim_dot(target.direction, up), forward) * degrees};
+    };
+    const AimTarget *chosen = nullptr;
+    std::optional<Error> chosenError;
+    float best = std::numeric_limits<float>::infinity();
+    for (unsigned i = 0; i < snapshot.count; ++i) {
+        const auto &target = snapshot.targets[i];
+        if (target.locked)
+            continue;
+        auto e = error(target);
+        if (!e)
+            continue;
+        // Stay on the current target while it is still eligible.
+        if (keep.pointer && target.id == keep) {
+            chosen = &target;
+            chosenError = e;
+            break;
+        }
+        auto distance = std::hypot(e->yaw, e->pitch);
+        if (distance < best) {
+            best = distance;
+            chosen = &target;
+            chosenError = e;
+        }
+    }
+    if (!chosen)
+        return {};
+    auto axis = [&](float degrees) {
+        if (std::abs(degrees) <= settle)
+            return 0.f;
+        return std::clamp(degrees / full, -1.f, 1.f) * std::min(strength, 1.f);
+    };
+    return StickNudge{axis(chosenError->yaw), axis(chosenError->pitch), chosen->id};
 }
 struct BeaconCue {
     bool active{};

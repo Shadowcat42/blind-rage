@@ -13,14 +13,57 @@ static LockVector direction(float yaw, float pitch = 0) {
 }
 int main() {
     try {
-        check(shooting_mode("", 1) == ShootingMode::autoaim &&
-                  shooting_mode("", 0) == ShootingMode::native &&
+        check(shooting_mode("", 1) == ShootingMode::boosted &&
+                  shooting_mode("", 0) == ShootingMode::off &&
                   shooting_mode("") == ShootingMode::beacons &&
                   shooting_mode("beacons", 1) == ShootingMode::beacons &&
-                  shooting_mode("bogus", 1) == ShootingMode::autoaim &&
+                  shooting_mode("autoaim") == ShootingMode::boosted &&
+                  shooting_mode("native") == ShootingMode::off &&
+                  shooting_mode("tracking") == ShootingMode::tracking &&
+                  shooting_mode("bogus", 1) == ShootingMode::boosted &&
                   shooting_mode("bogus") == ShootingMode::beacons &&
-                  shooting_mode_recognized("native") && !shooting_mode_recognized("bogus"),
+                  shooting_mode_recognized("off") && !shooting_mode_recognized("bogus"),
               "configuration migration preserves legacy choices and fails safely");
+        check(next_shooting_mode(ShootingMode::off) == ShootingMode::beacons &&
+                  next_shooting_mode(ShootingMode::beacons) == ShootingMode::boosted &&
+                  next_shooting_mode(ShootingMode::boosted) == ShootingMode::tracking &&
+                  next_shooting_mode(ShootingMode::tracking) == ShootingMode::off &&
+                  !shooting_assisted(ShootingMode::off) &&
+                  shooting_assisted(ShootingMode::tracking),
+              "modes cycle off, beacons, boosted, tracking");
+        {
+            AimSnapshot shot;
+            shot.valid = shot.active = true;
+            shot.aim = {1, 0, 0};
+            shot.camera_up = {0, 0, 1};
+            shot.maximum = 8;
+            auto at = [](float yaw, float pitch) {
+                auto y = yaw * 3.14159265f / 180.f, p = pitch * 3.14159265f / 180.f;
+                return LockVector{std::cos(p) * std::cos(y), std::cos(p) * std::sin(y),
+                                  std::sin(p)};
+            };
+            shot.targets[0] = {{0x100, 1}, at(20, 0), false, 1000};
+            shot.targets[1] = {{0x200, 2}, at(-4, 2), false, 1000};
+            shot.targets[2] = {{0x300, 3}, at(1, 0), true, 1000};
+            shot.count = 3;
+            auto nudge = tracking_nudge(shot, {}, 1.f);
+            check(nudge && nudge->target == AimIdentity{0x200, 2} && nudge->right < 0 &&
+                      nudge->up > 0 && std::abs(nudge->right + .5f) < .01f,
+                  "tracking picks the nearest unlocked target and steers proportionally");
+            nudge = tracking_nudge(shot, {0x100, 1}, .5f);
+            check(nudge && nudge->target == AimIdentity{0x100, 1} && nudge->right == .5f &&
+                      nudge->up == 0,
+                  "tracking keeps its current target and caps deflection at the strength");
+            shot.targets[1].direction = at(.2f, -.1f);
+            nudge = tracking_nudge(shot, {0x200, 2}, 1.f);
+            check(nudge && nudge->right == 0 && nudge->up == 0,
+                  "tracking settles without jitter once aligned");
+            shot.locks = 8;
+            check(!tracking_nudge(shot, {}, 1.f), "tracking stops at a full volley");
+            shot.locks = 0;
+            shot.targets[0].locked = shot.targets[1].locked = true;
+            check(!tracking_nudge(shot, {}, 1.f), "locked targets are not tracked");
+        }
         AudioRetry retry;
         check(retry.due(0), "first audio start is immediate");
         retry.failure(100);

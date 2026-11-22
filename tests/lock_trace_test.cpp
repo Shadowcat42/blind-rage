@@ -42,10 +42,20 @@ int main() {
             return true;
         };
         const uint32_t pc = 0x1000;
+        check(boosted_cone(3.6f, 14, 2, 3) == ConeBounds{3.6f * 3, 14.f * 2},
+              "boost scales the far and near limits independently");
+        check(boosted_cone(3.6f, 14, 1, 5) == ConeBounds{3.6f * 5, 3.6f * 5},
+              "a far limit boosted past the near limit keeps the cone ordered");
+        check(boosted_cone(30, 60, 2, 2) == ConeBounds{60, 89},
+              "boosted limits never exceed 89 degrees");
+        check(boosted_cone(3.6f, 14, 2, 3, 5.f) == ConeBounds{5, 14},
+              "the safety cap limits added assistance but never narrows native limits");
+        check(!boosted_cone(3.6f, 14, .5f, 3) && !boosted_cone(3.6f, 14, 2, 11),
+              "multipliers below 1 or above 10 are rejected");
         put(pc + 0x7d4, 3.6f);
         put(pc + 0x7d8, 50);
         {
-            AcquisitionScope scope(memory, write, pc, 20, 7);
+            AcquisitionScope scope(memory, write, pc, 1, 5, 7);
             check(scope.changed() && std::bit_cast<float>(memory.u32(pc + 0x7d4)) == 7 &&
                       std::bit_cast<float>(memory.u32(pc + 0x7d8)) == 50,
                   "cap limits added assistance without narrowing the native near cone");
@@ -53,7 +63,7 @@ int main() {
         check(std::bit_cast<float>(memory.u32(pc + 0x7d8)) == 50,
               "candidate cap restores native fields");
         {
-            AcquisitionScope scope(memory, write, pc, 20, 0);
+            AcquisitionScope scope(memory, write, pc, 1, 5, 0);
             check(std::bit_cast<float>(memory.u32(pc + 0x7d8)) == 50,
                   "zero safe radius preserves native acquisition thresholds");
             put(pc + 0x7d8, 60);
@@ -61,7 +71,7 @@ int main() {
         check(std::bit_cast<float>(memory.u32(pc + 0x7d8)) == 60,
               "legitimate in-call game change survives cap restoration");
         {
-            AcquisitionScope scope(memory, write, pc, 0, 7);
+            AcquisitionScope scope(memory, write, pc, 1, 1, 7);
             check(!scope.changed() && std::bit_cast<float>(memory.u32(pc + 0x7d8)) == 60,
                   "aid off never caps native acquisition");
         }

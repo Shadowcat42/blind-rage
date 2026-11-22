@@ -190,8 +190,26 @@ static DWORD WINAPI run(void *) {
         bool statusWarnings = setting(L"status_warnings", 1);
         bool interruptText = setting(L"interrupt", 0);
         bool qteEnabled = setting(L"qtes", 1), interruptQte = setting(L"qte_interrupt", 1);
-        int shootingDegrees = std::clamp<int>(
-            GetPrivateProfileIntW(L"gameplay", L"shooting_cone_degrees", 45, ini.c_str()), 1, 89);
+        // Boosted mode scales the game's own lock cone: point_blank multiplies the
+        // near limit (LockOnDegMaxVal), max_range the far limit (LockOnDegMinVal).
+        auto multiplier = [&](const wchar_t *key, float fallback) {
+            wchar_t text[32]{};
+            GetPrivateProfileStringW(L"gameplay", key, L"", text, 32, ini.c_str());
+            wchar_t *end = nullptr;
+            float value = text[0] ? std::wcstof(text, &end) : fallback;
+            if (text[0] && (end == text || !std::isfinite(value))) {
+                write("SHOOTING_BOOST unrecognized " + utf8(key) + "; using default");
+                value = fallback;
+            }
+            return std::clamp(value, 1.f, 10.f);
+        };
+        float boostPointBlank = multiplier(L"boost_point_blank", 2.f),
+              boostMaxRange = multiplier(L"boost_max_range", 3.f);
+        float trackingStrength =
+            float(std::clamp<int>(
+                GetPrivateProfileIntW(L"gameplay", L"tracking_strength", 70, ini.c_str()), 0,
+                100)) /
+            100.f;
         wchar_t modeText[32]{};
         GetPrivateProfileStringW(L"gameplay", L"shooting_mode", L"", modeText, 32, ini.c_str());
         auto legacy = int(GetPrivateProfileIntW(L"gameplay", L"shooting_assist", -1, ini.c_str()));
@@ -205,12 +223,13 @@ static DWORD WINAPI run(void *) {
         else if (!modeText[0])
             WritePrivateProfileStringW(L"gameplay", L"shooting_mode",
                                        wide(shooting_mode_name(shootingMode)).c_str(), ini.c_str());
-        gameHooks.options(textHooks && qteEnabled, float(shootingDegrees),
+        gameHooks.options(textHooks && qteEnabled, boostPointBlank, boostMaxRange,
                           setting(L"status_button", 1));
+        gameHooks.tracking(trackingStrength);
         gameHooks.shooting(shootingMode);
         bool lockTraceEnabled =
             GetPrivateProfileIntW(L"diagnostics", L"lock_trace", 0, ini.c_str()) != 0;
-        bool stableCone = shootingMode == ShootingMode::autoaim;
+        bool stableCone = shootingMode == ShootingMode::boosted;
         write("SHOOTING_MODE " + std::string(shooting_mode_name(shootingMode)) + " configured");
         gameHooks.lock_diagnostics(lockTraceEnabled);
         ShootingBeacons beacons;
@@ -223,7 +242,7 @@ static DWORD WINAPI run(void *) {
         AudioRetry audioRetry;
         bool audioReady = false, audioAnnounced = false;
         auto beacon_output = [&](BeaconCue cue) {
-            if (!notifications.focused() || muted || shootingMode != ShootingMode::beacons)
+            if (!notifications.focused() || muted || !shooting_assisted(shootingMode))
                 cue.active = false;
             // Start on first need and rebuild after a device error, with backoff.
             if (cue.active && !(audioReady && beaconAudio.healthy()) &&
@@ -255,9 +274,7 @@ static DWORD WINAPI run(void *) {
         auto shooting_command = [&](int command) {
             if (command == 3) {
                 gameHooks.stop_lock_trace();
-                shootingMode = shootingMode == ShootingMode::beacons   ? ShootingMode::autoaim
-                               : shootingMode == ShootingMode::autoaim ? ShootingMode::native
-                                                                       : ShootingMode::beacons;
+                shootingMode = next_shooting_mode(shootingMode);
                 gameHooks.shooting(shootingMode);
                 beacons.reset();
                 lastAim.reset();
@@ -265,14 +282,15 @@ static DWORD WINAPI run(void *) {
                 WritePrivateProfileStringW(L"gameplay", L"shooting_mode",
                                            wide(shooting_mode_name(shootingMode)).c_str(),
                                            ini.c_str());
-                std::string text =
-                    shootingMode == ShootingMode::beacons   ? "Manual aiming, cluster beacons."
-                    : shootingMode == ShootingMode::autoaim ? "Autoaim."
-                                                            : "Native aiming, guidance off.";
+                std::string text = shootingMode == ShootingMode::beacons   ? "Beacons."
+                                   : shootingMode == ShootingMode::boosted ? "Boosted beacons."
+                                   : shootingMode == ShootingMode::tracking
+                                       ? "Tracking with beacons."
+                                       : "Aim assist off.";
                 write("SHOOTING_MODE " + std::string(shooting_mode_name(shootingMode)));
                 if (notifications.focused() && !muted && speaking)
                     speech.speak(text, false);
-            } else if (shootingMode == ShootingMode::beacons && lastAim &&
+            } else if (shooting_assisted(shootingMode) && lastAim &&
                        GetTickCount64() - lastAim->tick <= 200) {
                 auto cue = beacons.update(*lastAim, command == 1 ? -1 : 1);
                 beacon_output(cue);
@@ -287,9 +305,8 @@ static DWORD WINAPI run(void *) {
         };
         std::optional<LockTraceWriter> lockWriter;
         if (lockTraceEnabled) {
-            lockWriter.emplace(logs / L"lock-trace.jsonl", profile->id,
-                               shootingMode == ShootingMode::autoaim ? shootingDegrees : 0,
-                               stableCone, GetCurrentProcessId());
+            lockWriter.emplace(logs / L"lock-trace.jsonl", profile->id, 0, stableCone,
+                               GetCurrentProcessId());
             if (!lockWriter->valid()) {
                 write("LOCK_TRACE cannot open diagnostic file");
                 gameHooks.lock_diagnostics(false);
@@ -330,8 +347,9 @@ static DWORD WINAPI run(void *) {
             events.push_back(gameHooks.event());
             gameHooks.capture(true);
             write("Gameplay state observer started; qtes=" + std::to_string(qteEnabled) +
-                  " shooting_degrees=" +
-                  std::to_string(shootingMode == ShootingMode::autoaim ? shootingDegrees : 0));
+                  " boost_point_blank=" + std::to_string(boostPointBlank) +
+                  " boost_max_range=" + std::to_string(boostMaxRange) +
+                  " tracking_strength=" + std::to_string(trackingStrength));
         }
         auto narrate_text = [&] {
             for (const auto &line : gameplay.take()) {
@@ -476,7 +494,8 @@ static DWORD WINAPI run(void *) {
                     " capture_failures=" + std::to_string(gameHooks.failures()) +
                     " widened_checks=" + std::to_string(gameHooks.widenings()) +
                     " lock_position_matches=" + std::to_string(gameHooks.position_matches()) +
-                    " lock_position_mismatches=" + std::to_string(gameHooks.position_mismatches()));
+                    " lock_position_mismatches=" + std::to_string(gameHooks.position_mismatches()) +
+                    " tracking_nudges=" + std::to_string(gameHooks.tracking_nudges()));
                 return;
             }
             auto menus = base ? reader.menus(memory) : std::vector<Menu>{};
