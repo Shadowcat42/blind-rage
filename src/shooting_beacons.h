@@ -300,9 +300,13 @@ struct StickNudge {
 // Errors are measured in the cursor's frame: right = up x aim, up' = aim x right.
 // Full deflection is reached at `full` degrees of error and tapers to zero inside
 // `settle`, so the cursor eases onto the target instead of overshooting.
+// `focus` is the beacon's selected cluster: tracking steers to the nearest
+// unlocked, reachable target in it, so the cursor goes where the beacon points.
+// Only when that cluster has nothing left does it fall back to the nearest target.
 inline std::optional<StickNudge> tracking_nudge(const AimSnapshot &snapshot, AimIdentity keep,
-                                                float strength, float full = 8.f,
-                                                float settle = .3f) {
+                                                float strength,
+                                                const std::vector<AimIdentity> &focus = {},
+                                                float full = 8.f, float settle = .3f) {
     if (!snapshot.valid || !snapshot.active || !std::isfinite(strength) || strength <= 0 ||
         !snapshot.maximum || snapshot.locks >= snapshot.maximum)
         return {};
@@ -324,25 +328,30 @@ inline std::optional<StickNudge> tracking_nudge(const AimSnapshot &snapshot, Aim
     };
     const AimTarget *chosen = nullptr;
     std::optional<Error> chosenError;
-    float best = std::numeric_limits<float>::infinity();
-    for (unsigned i = 0; i < snapshot.count; ++i) {
-        const auto &target = snapshot.targets[i];
-        if (target.locked || !target.reachable)
-            continue;
-        auto e = error(target);
-        if (!e)
-            continue;
-        // Stay on the current target while it is still eligible.
-        if (keep.pointer && target.id == keep) {
-            chosen = &target;
-            chosenError = e;
-            break;
-        }
-        auto distance = std::hypot(e->yaw, e->pitch);
-        if (distance < best) {
-            best = distance;
-            chosen = &target;
-            chosenError = e;
+    auto inFocus = [&](const AimTarget &target) {
+        return std::find(focus.begin(), focus.end(), target.id) != focus.end();
+    };
+    for (int pass = focus.empty() ? 1 : 0; pass < 2 && !chosen; ++pass) {
+        float best = std::numeric_limits<float>::infinity();
+        for (unsigned i = 0; i < snapshot.count; ++i) {
+            const auto &target = snapshot.targets[i];
+            if (target.locked || !target.reachable || (pass == 0 && !inFocus(target)))
+                continue;
+            auto e = error(target);
+            if (!e)
+                continue;
+            // Stay on the current target while it is still eligible.
+            if (keep.pointer && target.id == keep) {
+                chosen = &target;
+                chosenError = e;
+                break;
+            }
+            auto distance = std::hypot(e->yaw, e->pitch);
+            if (distance < best) {
+                best = distance;
+                chosen = &target;
+                chosenError = e;
+            }
         }
     }
     if (!chosen)
@@ -557,6 +566,14 @@ class ShootingBeacons {
     };
     AimIdentity controller_, pawn_, guiding_;
     std::set<AimIdentity> focus_;
+
+  public:
+    // The selected cluster, shared with tracking so both aim at the same targets.
+    std::vector<AimIdentity> focus() const {
+        return {focus_.begin(), focus_.end()};
+    }
+
+  private:
     std::vector<Group> groups_;
     bool waiting_{}, manual_focus_{};
     uint64_t fired_{}, generation_{};

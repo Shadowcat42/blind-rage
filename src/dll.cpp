@@ -269,6 +269,7 @@ static DWORD WINAPI run(void *) {
             if (auto sample = gameHooks.take_aim()) {
                 lastAim = *sample;
                 beacon_output(beacons.update(*sample));
+                gameHooks.tracking_focus(beacons.focus());
             }
         };
         auto shooting_command = [&](int command) {
@@ -293,6 +294,7 @@ static DWORD WINAPI run(void *) {
             } else if (shooting_assisted(shootingMode) && lastAim &&
                        GetTickCount64() - lastAim->tick <= 200) {
                 auto cue = beacons.update(*lastAim, command == 1 ? -1 : 1);
+                gameHooks.tracking_focus(beacons.focus());
                 beacon_output(cue);
                 std::string text = lastAim->locks >= lastAim->maximum
                                        ? "Volley full. Fire to continue."

@@ -118,6 +118,10 @@ class GameplayHooks {
     void lock_diagnostics(bool enabled) {
         trace_.configure(enabled);
     }
+    void tracking_focus(std::vector<AimIdentity> focus) {
+        std::lock_guard lock(tracking_focus_mutex_);
+        tracking_focus_ = std::move(focus);
+    }
     void tracking(float strength) {
         tracking_strength_ = std::isfinite(strength) ? std::clamp(strength, 0.f, 1.f) : 0.f;
     }
@@ -939,8 +943,15 @@ class GameplayHooks {
                 shot.controller.pointer == source &&
                 shot.controller.index == memory.u32(source + 0x20) &&
                 GetTickCount64() - shot.tick <= 200 &&
-                aim_context_active(memory, shot.controller, shot.pawn))
-                nudge = tracking_nudge(shot, state.tracking_target, self.tracking_strength_.load());
+                aim_context_active(memory, shot.controller, shot.pawn)) {
+                std::vector<AimIdentity> focus;
+                {
+                    std::lock_guard lock(self.tracking_focus_mutex_);
+                    focus = self.tracking_focus_;
+                }
+                nudge = tracking_nudge(shot, state.tracking_target, self.tracking_strength_.load(),
+                                       focus);
+            }
             state.tracking_target = nudge ? nudge->target : AimIdentity{};
             auto input = memory.u32(source + 0x454);
             const uint32_t upAt = input + 0x13c, rightAt = input + 0x140;
@@ -1234,6 +1245,8 @@ class GameplayHooks {
     std::atomic<bool> configured_{}, enabled_{}, qtes_{true}, status_button_{true};
     std::atomic<float> point_blank_{1}, max_range_{1}, tracking_strength_{.7f};
     std::atomic<uint64_t> tracking_nudges_{};
+    std::mutex tracking_focus_mutex_;
+    std::vector<AimIdentity> tracking_focus_;
     std::atomic<uint64_t> epoch_{}, captured_{}, failures_{}, widenings_{}, generation_{};
     GameplayQueue queue_;
     LockTrace trace_;

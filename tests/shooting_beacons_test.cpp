@@ -54,6 +54,14 @@ int main() {
             check(nudge && nudge->target == AimIdentity{0x100, 1} && nudge->right == .5f &&
                       nudge->up == 0,
                   "tracking keeps its current target and caps deflection at the strength");
+            nudge = tracking_nudge(shot, {0x200, 2}, 1.f, {{0x100, 1}});
+            check(nudge && nudge->target == AimIdentity{0x100, 1} && nudge->right == 1.f,
+                  "tracking follows the beacon's cluster over a nearer target");
+            shot.targets[0].locked = true;
+            nudge = tracking_nudge(shot, {}, 1.f, {{0x100, 1}});
+            check(nudge && nudge->target == AimIdentity{0x200, 2},
+                  "a fully locked beacon cluster falls back to the nearest target");
+            shot.targets[0].locked = false;
             shot.targets[1].direction = at(.2f, -.1f);
             nudge = tracking_nudge(shot, {0x200, 2}, 1.f);
             check(nudge && nudge->right == 0 && nudge->up == 0,

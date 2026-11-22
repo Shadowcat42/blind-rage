@@ -33,7 +33,10 @@ The lock cone's axis runs from the camera through the on-screen cursor
 stick values `PlayerInput.RawJoyUp/RawJoyRight`, applying its own speed and screen
 frame. While L1 is held in tracking mode, the mod supplies a steering value for
 that one cursor update and restores the real stick afterwards. It aims at the
-nearest unlocked target (keeping the current one while it stays eligible), eases
+nearest unlocked target in the beacon's selected cluster, so the cursor goes where
+the beacon points and D-pad Left/Right retargets both; only when that cluster has
+nothing left does it take the nearest target overall. It keeps its current target
+while that stays eligible, eases
 in within eight degrees, settles inside 0.3 degrees and stops at a full volley.
 Any stick deflection beyond 0.2 takes priority and suspends steering. L1's own
 lock-on returns immediately in shooting mode (PDE mode 4), which Episode 1's rail
