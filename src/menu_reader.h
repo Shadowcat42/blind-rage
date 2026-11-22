@@ -928,6 +928,12 @@ class Reader {
                                     for (const auto &label : text(m, m.u32(page->pointer + 4)))
                                         scene.selection_key ^=
                                             uint32_t(std::hash<std::string>{}(label));
+                                // ChangeText sets m_textIdx and disables input before
+                                // the old words animate out; SetText only shows the new
+                                // passage afterwards. Until input returns the visible
+                                // text may be the previous passage, so it is not ready.
+                                auto input = get(fields, "m_input");
+                                scene.pending = input && input->type == 2 && !input->boolean;
                                 scene.items.push_back({body, "", true});
                                 scene.repeat_text = body;
                                 out.push_back(std::move(scene));
