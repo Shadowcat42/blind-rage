@@ -1,6 +1,6 @@
-# Preliminary subtitle and tutorial reader
+# Subtitle and tutorial narration
 
-Branch: `experiment/gameplay-text-reader`. This text reader is part of the first Episode 1 prototype, with offline validation. Live testing is deferred at the user's request; it is not an acceptance gate for the theoretical groundwork. Full gameplay accessibility is not claimed. Gameplay implementation and test instructions are in `EPISODE_1_GROUNDWORK.md` and `EPISODE_1_TESTING.md`.
+How the mod reads subtitles, tutorials and other gameplay text. It has been used live through Episodes 1-5. The original implementation notes are in `EPISODE_1_GROUNDWORK.md`.
 
 ## Delivery and narration
 
@@ -20,7 +20,7 @@ The worker deduplicates active tag/text identities, coalesces replacements, and 
 
 ## Preferences and speech behavior
 
-Both subtitles and tutorials default to enabled, as requested. Existing INI files are preserved; absent gameplay settings use these defaults. The optional settings are:
+Both subtitles and tutorials default to enabled. Existing INI files are preserved; absent gameplay settings use these defaults. The optional settings are:
 
 ```ini
 [gameplay]
@@ -37,10 +37,10 @@ Repeat reads the current menu, or the latest active gameplay text when no menu i
 
 Synthetic tests exercise copied local ownership, UTF-16 and malformed-string handling, subtitle replacement/dismissal/reentry, prepared versus displayed tutorials, glyph preservation, visible-box deduplication, movie identity reuse, preferences, bounded overflow, native hook interception, original return-register behavior, metadata-cache invalidation, capture shutdown, and noninterrupting speech requests. The native adapter test reserves synthetic guest address space and commits only fixture pages; no game files or real speech are used.
 
-Live text delivery, visibility, event order, latency, localization, and control-remap behavior still need a user-led gameplay session. No game input or focus changes were used to prepare this implementation. Start the mod before entering gameplay: it does not reconstruct an already-running subtitle from history.
+Start the mod before entering gameplay: it does not reconstruct an already-running subtitle from history. Localizations other than English have not been tested.
 
 Image-only text is not decoded. Icon-only QTEs use separate typed state/presentation readers described in `EPISODE_1_GROUNDWORK.md`. Interlude illustration passages now use the visible text container and script-owned scene lifecycle through the shared menu readout path; embedded dialogs keep priority. Preloaded `AddText` calls are not narration events. TalkDemo conversation routes remain research candidates. The box fallback depends on native visible text and cannot recover words baked into textures or unsupported glyphs.
 
-Once noninterrupting speech has been handed to an external backend, the mod cannot selectively retract that utterance without risking cancellation of unrelated speech. Rapid dialogue can therefore build a backend speech backlog. Pending mod events are bounded and invalidated, but this prototype does not claim to solve backend queue ownership or every pause/skip timing case.
+Once noninterrupting speech has been handed to an external backend, the mod cannot selectively retract that utterance without risking cancellation of unrelated speech. Rapid dialogue can therefore build a backend speech backlog. Pending mod events are bounded and invalidated, but the mod does not claim to solve backend queue ownership or every pause/skip timing case.
 
 QTE findings, including misleading rotation enum names and request-based simultaneous grouping, are documented in `QTE_INPUT_RESEARCH.md`; their implementation is tracked in `EPISODE_1_GROUNDWORK.md`.

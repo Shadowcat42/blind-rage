@@ -156,6 +156,42 @@ int main(int argc, char **argv) {
         check(describe(menu, false, false) == "Locked. Unavailable. 2 of 2", "disabled control");
         menu.cursor = -1;
         check(describe(menu, true, true).empty(), "invalid cursor");
+        {
+            // Changing a setting's value announces the new value alone.
+            Menu before;
+            before.movie = 1;
+            before.selector = 2;
+            before.settings = true;
+            before.cursor = 0;
+            before.items = {{"Subtitles, On", "Turn subtitles on or off.", true, "On"},
+                            {"Information Prompts, On", "Turn prompts on or off.", true, "On"}};
+            auto after = before;
+            after.items[0] = {"Subtitles, Off", "Turn subtitles on or off.", true, "Off"};
+            check(setting_value_change(before, after) == "Off", "value change reads the value");
+            after.items[0] = {"Overall volume: 70%", "The volume.", true, "70%"};
+            before.items[0] = {"Overall volume: 60%", "The volume.", true, "60%"};
+            check(setting_value_change(before, after) == "70%", "recomp slider value");
+            after.cursor = 1;
+            check(setting_value_change(before, after).empty(), "moving rows reads the full line");
+            after = before;
+            after.items[0].help = "A different layout.";
+            after.items[0].label = "Overall volume: 80%";
+            after.items[0].value = "80%";
+            check(setting_value_change(before, after).empty(),
+                  "a value change that also changes the help reads in full");
+            after = before;
+            after.items[0].help = "Keyboard layout.";
+            check(setting_value_change(before, after).empty(), "help-only changes read in full");
+            after = before;
+            after.items[0] = {"Music volume: 70%", "The volume.", true, "70%"};
+            check(setting_value_change(before, after).empty(),
+                  "a different row name reads in full");
+            after = before;
+            after.settings = before.settings = false;
+            after.items[0].value = "70%";
+            after.items[0].label = "Overall volume: 70%";
+            check(setting_value_change(before, after).empty(), "only settings menus");
+        }
         std::vector<unsigned char> data(0x10000);
         auto put = [&](uint32_t at, uint32_t v) {
             for (int i = 0; i < 4; i++)

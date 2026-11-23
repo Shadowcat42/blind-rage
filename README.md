@@ -1,75 +1,110 @@
 # Blind Rage
 
-A blind-accessibility mod for **Asura's Wrath**, starting with spoken menus and expanding toward gameplay accessibility.
+A blind-accessibility mod for **Asura's Wrath**. It speaks menus, subtitles, tutorials, quick-time events and Health/Burst status, and it adds audio guidance for shooting and walking sections.
 
-This is an experimental, independently developed mod. **Users must obtain the recomp separately and supply their own game data.** This repository contains only mod source, tests, configuration, and build/documentation files.
+This is an independent, experimental mod. **You need the PC recompilation and your own copy of the game data; neither is included.** This repository contains only the mod's source, tests, configuration and documentation.
+
+## Status
+
+- **Controller is the primary way to play.** Xbox and PlayStation button names follow the recomp's own button-icon setting.
+- **Keyboard and mouse support is still in progress.** Prompts name your bound keys, and most of the game can be played that way, but some prompts still need work. Some actions also don't respond to the keyboard (for example lock-on target switching; see [known issues](#known-issues)).
+- Episodes 1 to 5 have been played with the mod. Later episodes haven't been tested yet, so expect gaps.
 
 ## Compatibility
 
-Targets the **Mark2 2026.11.01.1627 disc and title-update builds** of the [PC recompilation](https://github.com/omar2300/asuras-wrath-pc). Both use one reader with verified build profiles. The launcher checks executable, runtime, and renderer fingerprints; the updated profile also checks the installed `game/default.xexp` patch. Other builds need separate validation.
+Blind Rage targets the **Mark2 2026.11.01.1627 disc and title-update builds** of the [PC recompilation](https://github.com/omar2300/asuras-wrath-pc). The launcher checks the executable, runtime and renderer fingerprints; for the title-update build it also checks the installed `game/default.xexp` patch. Other recomp builds are refused until they've been checked. **The title update is recommended:** all gameplay support was developed and played on it. The disc build passes the same offline checks (identical game data, and every hooked function matches) and its menus read live, but its gameplay support hasn't been played. The disc build only runs in an installation without the title update: once the update is installed, the disc executable loads its patch and crashes at startup, with or without the mod. The recomp's updater can change these files and make the mod incompatible; Blind Rage never updates or replaces them.
 
-Windows x64 is required. Start NVDA before the mod to use its voice; [Prism](https://github.com/ethindp/prism) provides other speech backends and fallback engines.
+You need Windows x64. Start NVDA before the mod to use its voice; otherwise [Prism](https://github.com/ethindp/prism) picks another speech engine.
 
 ## Install and run
 
-1. Install the supported recomp and your game data separately.
-2. Extract a Blind Rage mod package into the installation root. It adds `BlindRage.exe` and files under `mods/accessibility/dist`.
-3. Run **BlindRage.exe**. The ordinary recomp launcher does not load the mod.
+1. Install the supported recomp and your game data. The recomp's setup isn't screen-reader accessible yet and currently needs OCR; an issue is open with the recomp.
+2. Extract the Blind Rage package into the game's installation folder. It adds `BlindRage.exe` and `mods/accessibility`.
+3. Start NVDA, then run **BlindRage.exe**. The recomp's ordinary launcher doesn't load the mod.
 
-Automatic mode attaches to a recognized game already running from this installation. Otherwise, it follows the installer's `userdata/install.txt`: an installed title update selects `bin`, and a disc-only installation selects `bin_disc`. An unsupported updated installation reports an error rather than silently using the disc build.
+BlindRage.exe attaches to a recognized game already running from this installation. Otherwise it starts the game: the title-update build when it's installed, otherwise the disc build. To choose explicitly, run `BlindRage.exe --build disc` or `BlindRage.exe --build updated`. The disc build is refused once the title update is installed, because it can't run with the update's patch. `BlindRage.exe --check` reports which build would be used without starting anything.
 
-Use `BlindRage.exe --build disc` or `BlindRage.exe --build updated` to choose explicitly. `BlindRage.exe --check` verifies automatic selection without launching or injecting; add `--build disc` or `--build updated` to check either profile. Close a running game before switching builds.
+When an option asks to restart the game, the mod restarts it through its own launcher with the same build and arguments, so narration continues.
 
-The recomp updater can change binaries and make the mod incompatible; Blind Rage does not update or replace them.
+## Controls
 
-Settings live in `mods/accessibility/accessibility.ini`. Installing creates it from the defaults in `config/accessibility.ini`, and later installs add new settings while keeping your values. The mod never rewrites it at startup.
+### Controller
 
-When an option asks to restart the game, an active Blind Rage session restarts through the mod launcher automatically. It preserves the selected disc/title-update build and game arguments, waits for the old process to exit, and applies the normal compatibility checks before loading the mod again. This requires the current DLL and launcher together. A game already started without the mod still needs to be launched through Blind Rage once.
+| Button | Where | Action |
+| --- | --- | --- |
+| Back / Select | Gameplay | Read Health, Burst and Unlimited status. Cutscene skipping still works. |
+| D-pad Up | Rail shooting, melee rapid fire | Cycle shooting assistance: off, beacons, boosted. The choice is saved. |
+| D-pad Left / Right | Rail shooting, melee rapid fire | Previous / next target cluster for the beacon |
+| D-pad Down | Melee rapid fire | Switch between projectiles first and enemies first. Saved. |
+| Hold L1 | Rail shooting, melee rapid fire | Steer the cursor onto targets; moving the stick takes over |
+| Right stick Up / Down | Options, Control Settings | Read the selected control type one button at a time |
+| Right stick Left / Right | Episode Menu, Record | Browse difficulty records |
+| Right stick Up / Down | Episode Menu, Record | Browse overall rank and individual stats |
+| Square / X | Results, Record, episode Play | Repeat the summary, selected record or episode introduction |
 
-| Shortcut while the game has focus | Action |
+### Keyboard shortcuts
+
+These work with any controller or keyboard setup.
+
+| Key | Action |
 | --- | --- |
-| Back/Select during gameplay | Read Health/Burst status; cutscene skipping is preserved |
-| D-pad Left / Right, during shooting or melee rapid fire | Select the previous / next target cluster for the beacon |
-| D-pad Up, during shooting or melee rapid fire | Cycle shooting assistance: off, beacons, boosted; saves the selected mode |
-| D-pad Down, during melee rapid fire | Switch between projectiles first and enemies first; saved |
-| Hold L1, during shooting or melee rapid fire | Steer the cursor onto targets in any mode; moving the stick takes over |
-| Right stick Left / Right, in Episode Menu -> RECORD | Browse difficulty records |
-| Right stick Up / Down, in Episode Menu -> RECORD | Browse overall rank and individual stats; Square/X repeats the selected entry |
-| Square (PlayStation) / X (Xbox), on results | Repeat the current results summary or battle-point breakdown |
-| Square (PlayStation) / X (Xbox), on episode Play/Record | Repeat the episode introduction |
-| Ctrl+Alt+F2 | Repeat current item |
-| Ctrl+Alt+F4 | Read current Health/Burst status |
-| Ctrl+Alt+F5 | Toggle narration |
-| Ctrl+Alt+F8 | Save local UI diagnostics |
-| Ctrl+Alt+F9 | Cycle shooting mode (keyboard equivalent of D-pad Up) |
-| Ctrl+Alt+F10 / F12 | Previous / next beacon cluster (D-pad Left / Right) |
-| Ctrl+Alt+F11 | Switch melee aim priority (D-pad Down) |
+| `` ` `` (backtick) | Repeat the current menu item, cue or latest announcement |
+| Ctrl+Alt+F5 | Turn narration on or off |
+| H | Read Health, Burst and Unlimited status |
+| M | Cycle shooting assistance (D-pad Up) |
+| , (comma) / . (period) | Previous / next target cluster (D-pad Left / Right) |
+| / (slash) | Switch melee aim priority (D-pad Down) |
+| F5 | Save a diagnostic dump (see [diagnostics](#diagnostics)) |
+| Ctrl+Up / Down / Left / Right | Keyboard right stick: hold during gameplay (camera, lock-on target switching); press in Control Settings and Episode records to browse |
 
-Change shortcuts in the `[hotkeys]` section of `mods/accessibility/accessibility.ini` using key names, such as `aimmode=Ctrl+Alt+F9` or `repeat=Ctrl+Shift+Numpad5`. Modifiers are Ctrl, Alt, Shift and Win; keys include A-Z, 0-9, F1-F24, Numpad0-9 and names such as Space, Enter, PageUp, Home, Slash or Backtick. `None` disables a shortcut. Older numeric key codes still work and are converted to names on install. An unrecognized value is logged and the default is used. Restart to reload the file. Windows hotkeys are registered while the game has focus and released when it loses focus. A conflicting shortcut may be unavailable; named launcher commands remain usable.
+Change shortcuts in the `[hotkeys]` section of `mods/accessibility/accessibility.ini`, for example `status=Ctrl+Alt+F4`. Modifiers are Ctrl, Alt, Shift and Win. Keys include A-Z, 0-9, F1-F24, Numpad0-9 and names such as Space, Enter, PageUp, Comma, Period, Slash or Backtick. `None` turns a shortcut off. Restart the game after editing the file.
 
-## Current behavior
+Shortcuts are only registered while the game window has focus, so they never affect other programs. While the game has focus, the game itself doesn't receive a key used as a shortcut. If you bind one of these keys in the recomp, change the mod's shortcut. A shortcut another program already holds can't be registered; the log says so.
 
-One shared reader handles live Scaleform menus, settings rows, collection entries and common dialogs. It reads actual selection state, labels, values, effect descriptions, and unlock requirements. Confirmations should announce the prompt and starting choice, then only the selected choice when navigating. Acquired collection totals are entry-only.
+## What it reads
 
-Interlude illustration screens read the currently displayed text and their embedded common dialogs. These follow the scene's own start/end lifecycle; preloaded passages are not announced. This support has captured-state checks and awaits live confirmation.
+- **Menus:** the title screen, options and settings rows, episode select, records, results, collections (achievements, art, illustrations, interludes and movies), and confirmations. It reads selections, values, descriptions and unlock requirements, and Control Settings including the Custom key editor.
+- **Subtitles and tutorials**, with button names for your current controller or key bindings. Interlude illustration passages are read too.
+- **Quick-time events:** presses, mashes, holds, stick directions, rotations, finishers and counters. Synchronic (timed) prompts get a four-beep count-in whose high fourth beep marks the moment to press.
+- **Status:** Health and Burst on request, low-health warnings, "Burst ready" and the Unlimited gauge once an episode allows it.
+- **Rail shooting and melee rapid fire:** a beacon on the selected target cluster. Stereo position means left/right, pitch means up/down, and pulses speed up as your aim closes in. You still aim and fire; holding L1 steers the cursor. Boosted mode also widens the game's own lock-on cone (rail shooting) or homing angle (melee rapid fire). See [shooting modes](docs/SHOOTING_BEACONS.md) and [melee aiming](docs/MELEE_AIM.md).
+- **Walking sections:** a steady beacon toward the nearest area that moves the story on (525 Hz ahead, 440 Hz behind, quicker as you approach, silent during fights). See [walking beacon](docs/WALK_BEACON.md).
 
-Collection grids resolve their selected record from the list cursor and page, including Achievements, CG Art, Illustrations, and Interludes & Movies. Grid position distinguishes locked entries with identical hidden labels. Gauges retain their selected-name/effect narration without added position announcements.
+Image-only text and some conversation and interlude routes aren't read yet.
 
-Menus are event-driven: shared native hooks for ActionScript assignment, movie open/close, text changes, display flag changes and title status assignments replace polling. Windows notifications handle foreground changes and shortcuts. The speech worker waits between events; a change starts bounded settling checks before narration. It reads bounded guest-memory snapshots and does not count navigation keys. See [hook research](docs/HOOK_RESEARCH.md).
+## Settings
 
-Gameplay narration covers subtitles and tutorials, following the recomp's effective Xbox, PlayStation or keyboard display and current remapped button labels. Add `[gameplay]` settings `subtitles=0` or `tutorials=0` to disable either. Text and status speech queue by default (`interrupt=0`); urgent new QTE instructions may interrupt (`qte_interrupt=1`). Disappearing cues do not stop NVDA.
+Settings live in `mods/accessibility/accessibility.ini`. Installing creates it from [the defaults](config/accessibility.ini), which explain each setting. Later installs add new settings and keep your values. The mod never rewrites the file, except to save the shooting mode and aim priority you choose in game. Restart the game after editing it.
 
-Shared QTE readers cover resolved presses, mashes, holds, grouped stick commands and rotations, plus the separate Synchronic timing prompts (a four-beep count-in whose high fourth beep marks the moment to press) and the melee Special Attack (finisher) and counter prompts. Health/Burst status is available on Back/Select during active gameplay, with low-health warnings and native Burst-button readiness. Once an episode allows Unlimited, status adds the Unlimited gauge (or the time left in Unlimited Mode), and "Unlimited ready", "Unlimited Mode" and "Unlimited Mode ended" are announced. This follows the recomp's Back binding (default Tab on keyboard), preserves the game's original handler and stays silent in cutscenes or pause/menu screens. Set `status_button=0` to disable it; Ctrl+Alt+F4 remains an alternative.
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `subtitles`, `tutorials`, `qtes` | 1 | Read subtitles, tutorials and quick-time events |
+| `interrupt` | 0 | 1 lets new gameplay text interrupt the screen reader |
+| `qte_interrupt` | 1 | Urgent quick-time prompts may interrupt the screen reader |
+| `status_warnings`, `low_health_percent` | 1, 25 | Low-health warning and its threshold |
+| `shooting_mode` | beacons | `off`, `beacons` or `boosted` |
+| `boost_point_blank`, `boost_max_range` | 2, 3 | Boosted lock-on cone, as multiples of the game's limits (50 degrees at point blank, 3.6 degrees at maximum range in Episode 1) |
+| `boost_homing` | 3 | Boosted melee homing, as a multiple of the game's 2.6-degree homing angle |
+| `aim_priority` | projectiles | Melee rapid fire tracks `projectiles` or `enemies` first |
+| `walk_beacon` | 1 | Walking-section beacon |
+| `tracking_strength` | 100 | L1 steering speed as a percentage of the game's cursor speed |
+| `audio_cue_volume` | 60 | Volume of the mod's beacons and count-in, 0-100 |
 
-Rail-shooting guidance: stereo position points left/right, pitch indicates elevation, and pulses accelerate as aim approaches the selected target cluster. You still aim and fire; holding L1 steers the cursor onto unlocked targets. Native lock feedback is retained, and guidance pauses at full volley capacity. Boosted mode also widens the game's acquisition cone while keeping its eligibility, range, occlusion, lock limits, homing and manual firing. See [shooting modes](docs/SHOOTING_BEACONS.md). The same modes cover melee rapid fire (holding square outside rail shooting), against enemies and incoming projectiles, with a projectiles-first or enemies-first priority; boosted widens the game's homing angle there (`boost_homing=3`). See [melee aiming](docs/MELEE_AIM.md). In walking sections a steady beacon points to the nearest trigger area not yet entered (525 Hz ahead, 440 Hz behind, quicker as you approach, silent during fights; `walk_beacon=1`). See [walking beacon](docs/WALK_BEACON.md). Defaults are `qtes=1`, `status_warnings=1`, `shooting_mode=beacons`, `boost_point_blank=2`, `boost_max_range=3`, `tracking_strength=100` and `audio_cue_volume=30`. D-pad Up changes shooting mode during active shooting; other INI changes take effect after restarting the game.
+## Known issues
 
-Status: menus have passed synthetic, private replay and live checks. Episode 1 (rail shooting) and Episode 2 (melee) have been played with the mod; later episodes have not been tested. Custom key binding and pause menus are not claimed as fully accessible. Start the mod before entering gameplay. See the [test instructions](docs/EPISODE_1_TESTING.md), [implementation/evidence](docs/EPISODE_1_GROUNDWORK.md), [text-reader limits](docs/GAMEPLAY_TEXT_READER.md), [QTE research](docs/QTE_INPUT_RESEARCH.md) and the [roadmap](docs/ROADMAP.md). Image-only text, other conversation/interlude routes, wider combat assistance and encounter-specific exceptions remain future work.
+- **Keyboard:** lock-on target switching didn't respond to the arrow keys or the mouse in testing. The recomp's mouse control (`mnk_mouse`, on by default) means the arrow keys don't act as the right stick; the Ctrl+arrow shortcuts are the mod's replacement. Other keyboard prompts may still be worded wrongly.
+- **Episode 5:** counter prompts for incoming missiles can come too late to react to.
+- **Control Settings:** browsing with the right stick needs a nearly full tilt.
+- **Recomp setup:** installing the recomp and game data currently needs OCR.
+- Holding L1 once stayed stuck on an unknown target.
 
-## Build from source
+## Diagnostics
 
-Run `./format.ps1` to format the mod's C++ source and tests, or `./format.ps1 -Check` for a non-editing check. The repository's clang-format style uses the formatter already supplied by the pinned compiler toolchain. CI checks formatting; dependencies and private research are excluded.
+The log and diagnostic dumps stay on your computer under `userdata/accessibility`. Dumps contain game memory and screen text, so look at them before sharing one. Starting the game clears the previous session's log and dumps, so copy anything you want to keep first.
 
-[Lock tracing](docs/LOCK_TRACE.md) records rail-shooting lock and guidance decisions for diagnosis; it defaults to off.
+The log records every spoken line (`SPEAK`), plus gameplay markers such as `GAME_TEXT`, `GAME_QTE`, `GAME_STATUS` and `GAMEPLAY_STATS`. When reporting a problem, say what you were doing and what was missing, late, repeated or wrong, and include the log if you can.
+
+## Building from source
 
 ```powershell
 ./bootstrap.ps1
@@ -77,28 +112,14 @@ Run `./format.ps1` to format the mod's C++ source and tests, or `./format.ps1 -C
 ./package.ps1
 ```
 
-Bootstrap downloads checksum-pinned official LLVM-MinGW, Prism, and MinHook dependencies. A standalone checkout needs no game files and writes output inside itself. CI runs synthetic tests without game data. `./build.ps1 -Test -NoInstall` skips the installer; it still replaces files in the local `dist` directory, so close any game using those files first.
+`bootstrap.ps1` downloads checksum-pinned LLVM-MinGW, Prism and MinHook. A standalone checkout needs no game files, and CI runs the synthetic tests without game data. `./build.ps1 -Test -NoInstall` skips installing. When the checkout is an installation's `mods/accessibility` folder, the build installs into that installation; close the game first. To install elsewhere, run `./install.ps1 -GameRoot 'D:\Games\AsurasWrath'`.
 
-Install a locally built mod with:
+`./format.ps1` formats the C++ source and tests with the pinned clang-format; `./format.ps1 -Check` only checks. `package.ps1` builds `artifacts/blind-rage-windows-x64.zip` from an explicit file list.
 
-```powershell
-./install.ps1 -GameRoot 'D:\Games\AsurasWrath'
-```
+Developer notes: [build profiles](docs/BUILD_PROFILES.md), [event-driven menu reader](docs/HOOK_RESEARCH.md), [text narration](docs/GAMEPLAY_TEXT_READER.md), [input prompts](docs/INPUT_PROMPTS.md), [gameplay systems](docs/GAMEPLAY_SYSTEMS.md), [Synchronic timing](docs/SYNCHRONIC_TIMING.md), [lock tracing](docs/LOCK_TRACE.md) and the [roadmap](docs/ROADMAP.md). Earlier research: [gameplay cues](docs/GAMEPLAY_CUE_RESEARCH.md), [QTE input](docs/QTE_INPUT_RESEARCH.md) and [Episode 1 groundwork](docs/EPISODE_1_GROUNDWORK.md).
 
-When developing directly in an installation's `mods/accessibility` folder, the build also refreshes that installation's launcher. Close the game before rebuilding its loaded DLL.
-
-`package.ps1` creates `artifacts/blind-rage-windows-x64.zip` from an explicit mod-file allowlist. It excludes test tools, build tools, game/recomp files, saves, and snapshots. It does not publish a GitHub release.
-
-## Diagnostics and contributions
-
-Logs and timestamped UI dumps stay locally under the installation's `userdata/accessibility`. Dumps can contain game memory and must not be committed or automatically uploaded. Optional private replay uses `build/tests/reader_test.exe research/snapshot-name`, or `build/tests/reader_test.exe --profile=updated research/snapshot-name` for title-update captures. Snapshots are not required for CI and are excluded from Git. Development test executables and their speech dependency stay under `build/tests`; `dist` contains only the launcher, runtime mod libraries and notices. Packaging removes its temporary staging directory after success or failure.
-
-Each game process starts with a fresh mod log and removes prior `dump-<number>.txt` and `.pages` captures from that directory. Copy captures you want to retain elsewhere before restarting. Restarting the mod worker within the same game process preserves its session files. Unrelated files and subdirectories are retained.
-
-`SPEAK [backend]` records every utterance accepted by Prism, including repeats and narration status messages. Failed requests include their text; stop requests are recorded too. This records Blind Rage's output, rather than NVDA speech from other applications, and cannot prove that an utterance finished before being interrupted.
-
-Keep new support in the shared reader and narration pipeline where possible. Add synthetic regressions for observed failures. Never include game/recomp code, extracted assets, saves, or memory captures in contributions.
+Contributions should keep new support in the shared readers and the single narration pipeline, and add a synthetic test for each fixed failure. Never include game or recomp code, extracted assets, saves or memory captures.
 
 ## Licensing
 
-The license for Blind Rage's original code is **not yet selected**. Dependencies retain their own terms; see [third-party notices](THIRD_PARTY_NOTICES.md). No rights to Asura's Wrath or its recompilation are granted here.
+Blind Rage's original code is licensed under the [GNU General Public License version 3](LICENSE) or later, with an [additional permission](LICENSE-EXCEPTION.txt) under section 7 for running it with Asura's Wrath and its PC recompilation. Dependencies keep their own terms; Prism is under the Mozilla Public License 2.0. See [third-party notices](THIRD_PARTY_NOTICES.md). No rights to Asura's Wrath or its recompilation are granted here.

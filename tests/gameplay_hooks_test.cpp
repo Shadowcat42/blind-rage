@@ -452,12 +452,6 @@ int main() {
               "transition into a cinematic inside the original handler cancels status");
         enterCinematic = false;
         word(base, pc + 0x378, 0);
-        source.options(false, 1.f, 1.f, false);
-        context[0] = input;
-        call_script(context.data(), base);
-        check(source.take(overflow).empty(),
-              "contextual status button can be disabled without changing native input");
-        source.options(false, 1.f, 1.f, true);
         word(base, owner + 0x2c, 7);
         context[0] = input;
         call_script(context.data(), base);
@@ -674,6 +668,7 @@ int main() {
                  : kind == 29               ? 6  // BCPlayerInput.InputCheckTick
                  : kind == 35               ? 76 // BCPlayerController.PlayButtonEventPress_LockOn
                  : kind == 36               ? 77 // BCPawn.SearchSetAimShotHomingTargetActor
+                 : kind == 37               ? 6  // BCPlayerInput.UpdateJoyStickInput
                                             : 3);
             if (kind == 8) {
                 word(base, nl + 4, lockTarget);
@@ -1028,6 +1023,11 @@ int main() {
                   "stopping the mod restores the original homing constant");
             source.capture(true);
             source.shooting(ShootingMode::off);
+            // Keyboard right stick: with no shortcut held the stick update runs untouched.
+            auto calls0 = calls;
+            invoke(37, input);
+            check(calls == calls0 + 1 && source.stick_writes() == 0,
+                  "the stick update runs normally without keyboard right-stick input");
         }
         {
             // The game declines a candidate inside its angle limit (occluded or out

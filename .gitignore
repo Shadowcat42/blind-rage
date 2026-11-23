@@ -4,6 +4,8 @@
 !/.gitattributes
 !/README.md
 !/LICENSE
+!/LICENSE-EXCEPTION.txt
+!/CHANGELOG.md
 !/THIRD_PARTY_NOTICES.md
 !/AGENTS.md
 !/bootstrap.ps1

@@ -1,6 +1,6 @@
 # Third-party components
 
-Blind Rage's original-code license is not yet selected. No rights to the game or recompilation are granted by this repository.
+Blind Rage's original code is licensed under the GNU General Public License version 3 or later, with an additional permission for use with the game and its recompilation (see LICENSE and LICENSE-EXCEPTION.txt). The components below keep their own licenses. No rights to the game or recompilation are granted by this repository.
 
 ## Prism v0.18.3
 

@@ -124,6 +124,8 @@ using Members = std::map<std::string, Value>;
 struct Item {
     std::string label, help;
     bool enabled = true;
+    // Settings rows also keep their current value, which ends the label.
+    std::string value{};
     bool operator==(const Item &) const = default;
 };
 struct Menu {
@@ -750,6 +752,100 @@ class Reader {
     bool move_record(const Memory &m, uint32_t movie, int command) {
         return navigate_record(m, movie, command).has_value();
     }
+    // The Control Settings screen's button slots (mcInst_A, mcInst_Stick_L, ...),
+    // each holding its action in `_text`, in a fixed reading order: face buttons,
+    // shoulders, triggers, sticks, then Start and Back.
+    std::vector<std::string> control_layout(const Memory &m, uint32_t root) const {
+        std::vector<std::string> out;
+        for (const auto &[token, label] : control_slots(m, root)) {
+            auto button = button_labels_ ? button_labels_(token) : token;
+            out.push_back((button.empty() ? token : button) + ": " + label + ".");
+        }
+        return out;
+    }
+    // (token, action) pairs of the Control Settings slots; empty unless most are present.
+    std::vector<std::pair<std::string, std::string>> control_slots(const Memory &m,
+                                                                   uint32_t root) const {
+        static constexpr std::array<std::pair<const char *, const char *>, 13> slots{{
+            {"A", "A"},
+            {"B", "B"},
+            {"X", "X"},
+            {"Y", "Y"},
+            {"LB", "LB"},
+            {"RB", "RB"},
+            {"LT", "LT"},
+            {"RT", "RT"},
+            {"Stick_L", "LS"},
+            {"Stick_R", "RS"},
+            {"Stick_R3", "R3"},
+            {"Start", "START"},
+            {"Back", "BACK"},
+        }};
+        std::map<std::string, uint32_t> found;
+        std::vector<uint32_t> todo{root};
+        for (unsigned depth = 0; depth < 3 && !todo.empty(); ++depth) {
+            std::vector<uint32_t> next;
+            for (auto parent : todo)
+                for (auto child : children(m, parent)) {
+                    auto path = character_name(m, child);
+                    auto name = path.substr(path.find_last_of('.') + 1);
+                    if (name.starts_with("mcInst_"))
+                        found.emplace(name.substr(7), child);
+                    next.push_back(child);
+                }
+            todo = std::move(next);
+            if (found.contains("A") && found.contains("Stick_L"))
+                break;
+        }
+        std::vector<std::pair<std::string, std::string>> out;
+        for (auto [slot, token] : slots) {
+            auto it = found.find(slot);
+            if (it == found.end() || !visible(m, it->second))
+                continue;
+            auto label = value_text(m, get(members(m, m.u32(it->second + 0x1c8)), "_text"));
+            if (label.empty()) {
+                auto lines = text(m, it->second);
+                if (!lines.empty())
+                    label = lines.front();
+            }
+            label = clean_text(label);
+            if (label.empty())
+                continue;
+            out.emplace_back(token, label);
+        }
+        // Only a real controls screen: most slots present.
+        if (out.size() < 8)
+            out.clear();
+        return out;
+    }
+    // Names the selected key of the recomp's Custom controls editor and what it is
+    // bound to (supplied by the recomp prompt adapter).
+    void key_descriptions(std::function<std::string(const std::vector<unsigned> &,
+                                                    const std::map<std::string, std::string> &)>
+                              describe) {
+        key_description_ = std::move(describe);
+    }
+    // The movie whose right-stick browser is showing (records or controls), for the
+    // keyboard equivalents; 0 when neither is.
+    uint32_t right_stick_movie() const {
+        if (record_browser_.panel && record_browser_.movie)
+            return record_browser_.movie;
+        if (control_browser_.panel && !control_browser_.lines.empty())
+            return control_browser_.movie;
+        return 0;
+    }
+    // Right stick on the Control Settings screen: one slot at a time.
+    std::string navigate_controls(const Memory &m, uint32_t movie, int command) {
+        auto &b = control_browser_;
+        // Up/down only (commands 3/4); left/right do nothing on this screen.
+        if (command < 3 || command > 4 || b.movie != movie || !b.panel || b.lines.empty() ||
+            !menu_movie_active(m, movie) || !visible(m, b.panel))
+            return {};
+        const int n = int(b.lines.size());
+        bool forward = command == 4;
+        b.entry = b.entry < 0 ? (forward ? 0 : n - 1) : (b.entry + (forward ? 1 : n - 1)) % n;
+        return b.lines[size_t(b.entry)];
+    }
     // An m_select entry: a number (type 3 double or 4 int) indexing m_data.
     static std::optional<uint32_t> episode_entry_index(const Memory &m, uint32_t value,
                                                        uint32_t records) {
@@ -1074,7 +1170,7 @@ class Reader {
                                     auto rank = value_text(m, get(row, "Rank"));
                                     std::erase(rank, '-');
                                     if (!rank.empty())
-                                        item.help = "Rank " + rank;
+                                        item.label += ". Rank " + rank;
                                     if (auto open = get(row, "Open"); open && open->type == 2)
                                         item.enabled = open->boolean;
                                     episodes.items.push_back(std::move(item));
@@ -1204,12 +1300,77 @@ class Reader {
                                     if (valueLabel.empty())
                                         valueLabel = value_text(m, value);
                                 }
-                                if (!valueLabel.empty())
+                                if (!valueLabel.empty()) {
                                     item.label += ", " + valueLabel;
+                                    item.value = valueLabel;
+                                } else if (auto colon = item.label.rfind(": ");
+                                           get(controlFields, "m_move") &&
+                                           colon != std::string::npos &&
+                                           item.label.find('%', colon) != std::string::npos)
+                                    // Recomp sliders title themselves "Name: 70%".
+                                    item.value = item.label.substr(colon + 2);
                                 item.help = value_text(m, get(row, "HelpText"));
                                 if (item.help.empty())
                                     item.help = value_text(m, get(row, "Help"));
                                 settings.items.push_back(std::move(item));
+                            }
+                            // Control Settings: the selected type's button layout, read
+                            // from the screen's own slots, follows the type; the right
+                            // stick then browses it one slot at a time.
+                            if (settings.items.size() == count) {
+                                auto layout = control_layout(m, c);
+                                if (!layout.empty()) {
+                                    std::string all;
+                                    for (const auto &line : layout)
+                                        all += (all.empty() ? "" : " ") + line;
+                                    settings.items[settings.cursor].help = all;
+                                    if (control_browser_.movie != movie.p ||
+                                        control_browser_.panel != c ||
+                                        control_browser_.lines != layout)
+                                        control_browser_ = {movie.p, c, -1, layout};
+                                }
+                                // The recomp's Custom editor (m2edit >= 0 while it has
+                                // focus) selects one key (m2sel: a k<code> member).
+                                auto edit = get(fields, "m2edit"), selected = get(fields, "m2sel");
+                                if (key_description_ && edit &&
+                                    (edit->type == 3 || edit->type == 4) &&
+                                    std::isfinite(edit->number) && edit->number >= 0 && selected &&
+                                    selected->type == 6) {
+                                    // m2edit is the selected row (one controller input);
+                                    // m2sel holds that row's bound keys as k<code> members.
+                                    std::vector<unsigned> keyCodes;
+                                    for (const auto &[key, value] : members(m, selected->pointer))
+                                        if (key.size() > 1 && key[0] == 'k' && value.type == 2 &&
+                                            value.boolean)
+                                            keyCodes.push_back(unsigned(
+                                                std::strtoul(key.c_str() + 1, nullptr, 10)));
+                                    std::map<std::string, std::string> actions;
+                                    for (const auto &[token, label] : control_slots(m, c))
+                                        actions[token] = label;
+                                    auto text = key_description_(keyCodes, actions);
+                                    if (!text.empty()) {
+                                        Menu keys;
+                                        keys.movie = movie.p;
+                                        // Its own object (the recomp's Mark2Op panel): menus
+                                        // sharing a selector are merged as duplicates.
+                                        keys.selector = c;
+                                        for (auto child : children(m, c))
+                                            for (auto inner : children(m, child))
+                                                if (character_name(m, inner).ends_with(
+                                                        ".mcInst_Mark2Op"))
+                                                    keys.selector = inner;
+                                        if (keys.selector == c)
+                                            keys.selector = selected->pointer;
+                                        keys.cursor = 0;
+                                        keys.message = keys.readout = true;
+                                        keys.heading = "Custom keys";
+                                        keys.items.push_back({text, "", true});
+                                        keys.repeat_text = text;
+                                        out.push_back(std::move(settings));
+                                        out.push_back(std::move(keys));
+                                        continue;
+                                    }
+                                }
                             }
                             if (settings.items.size() == count &&
                                 !settings.items[settings.cursor].label.empty())
@@ -1705,6 +1866,15 @@ class Reader {
   private:
     ReaderLayout layout_;
     RecordBrowse record_browser_;
+    struct ControlBrowse {
+        uint32_t movie{}, panel{};
+        int entry = -1;
+        std::vector<std::string> lines;
+    };
+    ControlBrowse control_browser_;
+    std::function<std::string(const std::vector<unsigned> &,
+                              const std::map<std::string, std::string> &)>
+        key_description_;
     struct ScriptScene {
         uint32_t index{}, cls{};
         bool active{};
@@ -1822,6 +1992,25 @@ inline std::string describe(const Menu &menu, bool heading, bool help) {
     if (help && !item.help.empty())
         s += ". " + item.help;
     return s;
+}
+// When the player changes the selected setting's value and nothing else (same
+// row, name and help), the new value alone; otherwise empty, and the full line
+// is spoken. A help change (such as a different control layout) reads in full.
+inline std::string setting_value_change(const Menu &before, const Menu &after) {
+    if (!before.settings || !after.settings || before.pending || after.pending ||
+        before.movie != after.movie || before.selector != after.selector ||
+        before.cursor != after.cursor || after.cursor < 0 ||
+        before.items.size() != after.items.size() || size_t(after.cursor) >= after.items.size())
+        return {};
+    const auto &was = before.items[size_t(before.cursor)], &now = after.items[size_t(after.cursor)];
+    if (now.value.empty() || was.value.empty() || was.value == now.value || was.help != now.help ||
+        was.enabled != now.enabled || !was.label.ends_with(was.value) ||
+        !now.label.ends_with(now.value))
+        return {};
+    auto name = [](const Item &item) {
+        return item.label.substr(0, item.label.size() - item.value.size());
+    };
+    return name(was) == name(now) ? now.value : std::string{};
 }
 inline std::string menu_repeat_text(const std::vector<Menu> &menus, uint32_t movie) {
     for (auto it = menus.rbegin(); it != menus.rend(); ++it)

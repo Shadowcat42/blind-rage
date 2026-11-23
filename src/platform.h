@@ -79,13 +79,11 @@ inline bool supported(const fs::path &bin, std::string &error) {
 }
 inline bool supported_game_data(const fs::path &root, const BuildProfile &profile,
                                 std::string &error) {
-    if (profile.patch_fingerprint &&
-        sha256(root / L"game" / L"default.xexp") != profile.patch_fingerprint) {
-        error =
-            "The installed title-update patch does not match the verified update. Reinstall the supported title update or select --build disc.";
-        return false;
-    }
-    return true;
+    auto patch = root / L"game" / L"default.xexp";
+    bool present = fs::exists(patch);
+    error = game_data_error(profile, present,
+                            present && profile.patch_fingerprint ? sha256(patch) : "");
+    return error.empty();
 }
 struct Module {
     uintptr_t base{};

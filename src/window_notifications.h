@@ -58,8 +58,8 @@ class WindowNotifications {
     }
     inline static std::atomic<DWORD> thread_{};
     HWINEVENTHOOK hook_{};
-    std::array<Hotkey, 10> keys_{};
-    std::array<bool, 10> registered_{};
+    std::array<Hotkey, 16> keys_{};
+    std::array<bool, 16> registered_{};
     bool focused_{};
 };
 }

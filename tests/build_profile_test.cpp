@@ -41,6 +41,14 @@ int main() {
         require(!installed_title_update(invalid).has_value(), "reject ambiguous installer state");
         require(updated_profile.layout.sprite_vtable != disc_profile.layout.sprite_vtable,
                 "separate verified sprite layouts");
+        require(game_data_error(disc_profile, false, "").empty(), "disc runs without the update");
+        require(!game_data_error(disc_profile, true, "").empty(),
+                "disc is refused once the update patch is installed");
+        require(game_data_error(updated_profile, true, updated_profile.patch_fingerprint).empty(),
+                "verified update patch accepted");
+        require(!game_data_error(updated_profile, true, "modified").empty() &&
+                    !game_data_error(updated_profile, false, "").empty(),
+                "missing or modified update patch refused");
         std::cout << "Build profile tests passed.\n";
         return 0;
     } catch (const std::exception &e) {

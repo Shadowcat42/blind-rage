@@ -1,6 +1,6 @@
 # Event-driven reader investigation
 
-Branch: `experiment/event-driven-reader`. The event-driven replacement is implemented and its completion audit passed. Gameplay narration is a separate expansion.
+Research behind the event-driven menu reader, which replaced polling and is part of main. The audit tables below are a historical record from 2026-11-19.
 
 ## Verified offline observations
 

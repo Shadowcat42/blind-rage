@@ -94,4 +94,21 @@ inline std::optional<bool> installed_title_update(std::istream &input) {
     }
     return result;
 }
+// The game data both builds share. The title update adds game/default.xexp; the
+// disc executable then loads that patch at startup and crashes, with or without
+// the mod, so the disc build only runs in an installation without the update.
+inline std::string game_data_error(const BuildProfile &profile, bool patchPresent,
+                                   std::string_view patchHash) {
+    if (!profile.patch_fingerprint)
+        return patchPresent ? "The title update is installed, and the disc build cannot run "
+                              "with it. Use the title-update build (--build updated)."
+                            : "";
+    if (!patchPresent)
+        return "The title update is not installed. Install it, or use the disc build "
+               "(--build disc).";
+    if (patchHash != profile.patch_fingerprint)
+        return "The installed title-update patch does not match the verified update. "
+               "Reinstall the supported title update.";
+    return "";
+}
 }

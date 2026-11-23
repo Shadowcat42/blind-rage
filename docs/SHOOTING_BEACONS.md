@@ -1,8 +1,7 @@
 # Shooting modes and manual cluster beacons
 
-This is the first manual-aiming prototype for native HeavyShoot sections, including
-Episode 1's opening shooting encounter. Live audio and gameplay calibration are
-still required. It does not implement arena navigation; the synchronized-QTE count-in is described in `SYNCHRONIC_TIMING.md`.
+Manual-aiming guidance for native HeavyShoot (rail-shooting) sections, played live
+in Episode 1. It does not implement arena navigation; the synchronized-QTE count-in is described in `SYNCHRONIC_TIMING.md`.
 The same modes cover melee rapid fire; its targets, priority switch, lock-on
 handling and boosted homing are described in `MELEE_AIM.md`.
 
@@ -83,8 +82,8 @@ During active shooting gameplay:
   it for the next launch.
 - In any mode, hold L1 to steer onto unlocked targets; move the stick to take over.
 - D-pad Left/Right chooses the previous/next visible unlocked cluster.
-- Keyboard and launcher equivalents: Ctrl+Alt+F9 (mode), F10 (previous cluster), F12
-  (next cluster); INI `[hotkeys]` keys `aimmode`, `aimprev`, `aimnext`, and
+- Keyboard and launcher equivalents: M (mode), Comma (previous cluster), Period
+  (next cluster) by default; INI `[hotkeys]` keys `aimmode`, `aimprev`, `aimnext`, and
   `BlindRage.exe --command aimmode|aimprev|aimnext`.
 - Back/Select continues to read Health/Burst; no modifier is needed for aiming
   commands. Original handlers run once and are never consumed by the mod.
@@ -136,7 +135,7 @@ lock reset. Targets already locked or awaiting a projectile hit are skipped. The
 mod never fires, moves the reticle, chooses damage, modifies vulnerability, or
 mutes native lock sounds.
 
-`audio_cue_volume=30` sets cue loudness on a 0–100 scale; 0 silences it. The
+`audio_cue_volume=60` sets cue loudness on a 0–100 scale; 0 silences it. The
 synchronic count-in uses the same level. Older files' `beacon_volume` is migrated
 on install. A restart
 applies volume changes. Narration mute and focus loss also silence the beacon.

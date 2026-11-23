@@ -8,6 +8,7 @@
 #include "shooting_beacons.h"
 #include "melee_aim.h"
 #include "walk_beacon.h"
+#include "hotkey_names.h"
 #include <atomic>
 #include <windows.h>
 
@@ -15,7 +16,7 @@ namespace a11y {
 class GameplayHooks {
   public:
     using Function = void (*)(void *, uint8_t *);
-    static constexpr std::array<const char *, 37> function_names{
+    static constexpr std::array<const char *, 38> function_names{
         "RequestInputJudge",
         "RequestButtonIcon",
         "UpdateButtonIcon",
@@ -52,7 +53,8 @@ class GameplayHooks {
         "AimShotAimingCtrl",
         "EndSynchronic",
         "PlayButtonEventPress_LockOn",
-        "SearchSetAimShotHomingTargetActor"};
+        "SearchSetAimShotHomingTargetActor",
+        "UpdateJoyStickInput"};
     static GameplayHooks &instance() {
         static auto *value = new GameplayHooks;
         return *value;
@@ -114,11 +116,10 @@ class GameplayHooks {
             indices_[i] = indices[i];
         configured_ = true;
     }
-    void options(bool qtes, float pointBlank, float maxRange, bool statusButton = true) {
+    void options(bool qtes, float pointBlank, float maxRange) {
         qtes_ = qtes;
         point_blank_ = pointBlank;
         max_range_ = maxRange;
-        status_button_ = statusButton;
     }
     void lock_diagnostics(bool enabled) {
         trace_.configure(enabled);
@@ -164,6 +165,20 @@ class GameplayHooks {
             restore_homing();
         }
         enabled_ = enabled;
+    }
+    // Keyboard right-stick shortcuts: up, down, left, right.
+    void keyboard_stick(const std::array<Hotkey, 4> &keys) {
+        for (size_t i = 0; i < keys.size(); ++i) {
+            stick_mods_[i] = keys[i].modifiers;
+            stick_keys_[i] = keys[i].key;
+        }
+    }
+    uint64_t stick_writes() const {
+        return stick_writes_.load();
+    }
+    // Injects an event as if a hook had published it (keyboard equivalents).
+    void inject(const GameplayEvent &event) {
+        publish(event);
     }
     void walk_beacon(bool enabled) {
         walk_enabled_ = enabled;
@@ -263,7 +278,8 @@ class GameplayHooks {
         level,
         level_reset,
         lock_on_press,
-        homing
+        homing,
+        joystick
     };
     struct LockFrame {
         LockFrame *previous{};
@@ -419,6 +435,8 @@ class GameplayHooks {
             route = Route::lock_on_press;
         else if (cls == "BCPawn" && function == "SearchSetAimShotHomingTargetActor")
             route = Route::homing;
+        else if (cls == "BCPlayerInput" && function == "UpdateJoyStickInput")
+            route = Route::joystick;
         else if (cls == "BCPlayerController_HeavyShoot" &&
                  function == "IterateLockOnShotTargetComp")
             route = Route::volley_fire;
@@ -1247,6 +1265,30 @@ class GameplayHooks {
             self.original_[0](context, base);
             return;
         }
+        if (route == Route::joystick) {
+            // Keyboard right stick: while a configured shortcut is held (Ctrl+arrows by
+            // default) and the game has focus, write a full push into the raw look
+            // axes before the game reads them (PreProcessInput -> UpdateJoyStickInput,
+            // before its own scaling): aTurn +0x114 (right positive), aLookUp +0x120
+            // (up negative here, as BCPlayerInput's RS_UP condition reads it).
+            float turn = 0, look = 0;
+            if (self.stick_held(turn, look)) {
+                auto writeFloat = [&](uint32_t at, float value) {
+                    auto bits = std::bit_cast<uint32_t>(value);
+                    std::array<uint8_t, 4> bytes{uint8_t(bits >> 24), uint8_t(bits >> 16),
+                                                 uint8_t(bits >> 8), uint8_t(bits)};
+                    SIZE_T wrote{};
+                    WriteProcessMemory(GetCurrentProcess(), base + at, bytes.data(), 4, &wrote);
+                };
+                if (turn)
+                    writeFloat(source + 0x114, turn);
+                if (look)
+                    writeFloat(source + 0x120, look);
+                ++self.stick_writes_;
+            }
+            self.original_[0](context, base);
+            return;
+        }
         if (route == Route::homing) {
             self.homing_window(memory, base, node);
             auto result = ui_argument(context, 5);
@@ -1281,8 +1323,7 @@ class GameplayHooks {
         }
         if (route == Route::status_button) {
             uint8_t buttonEvent = 255;
-            auto before = self.status_button_.load() && locals &&
-                                  memory.copy(locals, &buttonEvent, 1) && buttonEvent == 0
+            auto before = locals && memory.copy(locals, &buttonEvent, 1) && buttonEvent == 0
                               ? capture_status_context(memory, source)
                               : std::nullopt;
             // Always execute the original, including all cinematic-skip behavior.
@@ -1401,7 +1442,8 @@ class GameplayHooks {
         if (params && state.reader.object_name(memory, owner) == "GFxMoviePlayer" &&
             memory.copy(params + 0xc, &inputEvent, 1) && inputEvent == 0 && index &&
             (memory.u32(source + 0xc8) & 0x80000000) && memory.u32(params + 8) == 0 &&
-            subclass(memory, state.reader, source, "BCGFxUI_ChapterMenu")) {
+            (subclass(memory, state.reader, source, "BCGFxUI_ChapterMenu") ||
+             subclass(memory, state.reader, source, "BCGFxUI_OptionMenu"))) {
             auto key = state.reader.name(memory, memory.u32(params + 4));
             constexpr std::array<std::string_view, 4> directions{
                 "Gamepad_RightStick_Left", "Gamepad_RightStick_Right", "Gamepad_RightStick_Up",
@@ -1531,6 +1573,24 @@ class GameplayHooks {
     std::atomic<uint64_t> lock_on_skips_{}, homing_calls_{}, homing_hits_{};
     std::atomic<int64_t> timing_clock_{};
     std::atomic<bool> walk_enabled_{true};
+    std::array<std::atomic<UINT>, 4> stick_mods_{}, stick_keys_{};
+    std::atomic<uint64_t> stick_writes_{};
+    bool stick_held(float &turn, float &look) const {
+        DWORD pid{};
+        GetWindowThreadProcessId(GetForegroundWindow(), &pid);
+        if (pid != GetCurrentProcessId())
+            return false;
+        auto down = [](int vk) { return (GetAsyncKeyState(vk) & 0x8000) != 0; };
+        auto held = [&](size_t i) {
+            auto key = stick_keys_[i].load(), mods = stick_mods_[i].load();
+            return key && down(int(key)) && down(VK_CONTROL) == bool(mods & MOD_CONTROL) &&
+                   down(VK_MENU) == bool(mods & MOD_ALT) &&
+                   down(VK_SHIFT) == bool(mods & MOD_SHIFT);
+        };
+        look = (held(0) ? -1.f : 0.f) + (held(1) ? 1.f : 0.f);
+        turn = (held(2) ? -1.f : 0.f) + (held(3) ? 1.f : 0.f);
+        return turn != 0 || look != 0;
+    }
     LatestMailbox<WalkSnapshot> walk_mailbox_;
     NativeHooks hooks_;
     const BuildProfile *profile_{};
@@ -1539,7 +1599,7 @@ class GameplayHooks {
     HANDLE event_{};
     uint32_t names_global_ = disc_profile.layout.names_global;
     bool installed_{};
-    std::atomic<bool> configured_{}, enabled_{}, qtes_{true}, status_button_{true};
+    std::atomic<bool> configured_{}, enabled_{}, qtes_{true};
     std::atomic<float> point_blank_{1}, max_range_{1}, tracking_strength_{1.f};
     std::atomic<uint64_t> tracking_nudges_{};
     std::mutex tracking_focus_mutex_;

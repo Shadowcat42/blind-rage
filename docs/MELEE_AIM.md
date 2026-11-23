@@ -3,8 +3,9 @@
 Outside rail shooting, holding the Shot button (square by default) fires aimed
 shots. Episode 3's tutorial uses this against flying enemies and incoming
 projectiles, and lock-on is disabled there. The shooting modes from
-[rail shooting](SHOOTING_BEACONS.md) apply here too. This is a prototype with
-offline checks only; live behaviour has not been confirmed yet.
+[rail shooting](SHOOTING_BEACONS.md) apply here too. Beacons, L1 tracking and the
+priority switch have been used live in Episode 3; boosted homing has not been
+confirmed live yet.
 
 ## What the game does
 
@@ -41,7 +42,7 @@ beacon, L1 tracking and target selection are shared.
   the preferred kind is reachable, guidance and tracking use only that kind; with
   none left they use the other. D-pad Down switches it during rapid fire and saves
   it ("Projectiles first." / "Enemies first."); the keyboard equivalent is the
-  `aimpriority` hotkey (Ctrl+Alt+F11).
+  `aimpriority` hotkey (default Slash).
 - D-pad Left/Right selects the previous/next target group and says what it is and
   where, for example "Enemy, left, high." or "Projectile, ahead."
 - D-pad Up cycles the shooting mode, as in rail shooting.

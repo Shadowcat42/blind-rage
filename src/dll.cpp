@@ -118,7 +118,8 @@ static DWORD WINAPI run(void *) {
         auto ini = (dir.parent_path() / L"accessibility.ini").wstring();
         write("CONFIG " + utf8(ini) + (fs::exists(ini) ? "" : " (missing; defaults in use)"));
         std::vector<std::wstring> commands = {L"repeat",  L"mute",    L"dump",    L"status",
-                                              L"aimmode", L"aimprev", L"aimnext", L"aimpriority"};
+                                              L"aimmode", L"aimprev", L"aimnext", L"aimpriority",
+                                              L"rsup",    L"rsdown",  L"rsleft",  L"rsright"};
         std::vector<HANDLE> events;
         for (auto &c : commands)
             events.push_back(
@@ -126,11 +127,23 @@ static DWORD WINAPI run(void *) {
         // Shortcuts are written as key names ("Ctrl+Alt+F9"); legacy numeric
         // virtual-key codes still mean Ctrl+Alt plus that key. A missing or empty
         // value uses the default; "None" disables the shortcut.
+        // Plain keys are registered only while the game has focus, so they never
+        // reach other applications; the game does not receive them either.
         constexpr UINT chord = MOD_CONTROL | MOD_ALT;
-        const Hotkey defaults[] = {{chord, VK_F2},  {chord, VK_F5}, {chord, VK_F8},
-                                   {chord, VK_F4},  {chord, VK_F9}, {chord, VK_F10},
-                                   {chord, VK_F12}, {chord, VK_F11}};
-        Hotkey hotkeys[10]{};
+        const Hotkey defaults[] = {{0, VK_OEM_3},
+                                   {chord, VK_F5},
+                                   {0, VK_F5},
+                                   {0, 'H'},
+                                   {0, 'M'},
+                                   {0, VK_OEM_COMMA},
+                                   {0, VK_OEM_PERIOD},
+                                   {0, VK_OEM_2},
+                                   // Keyboard right stick.
+                                   {MOD_CONTROL, VK_UP},
+                                   {MOD_CONTROL, VK_DOWN},
+                                   {MOD_CONTROL, VK_LEFT},
+                                   {MOD_CONTROL, VK_RIGHT}};
+        Hotkey hotkeys[16]{};
         for (size_t i = 0; i < commands.size(); i++) {
             wchar_t text[64]{};
             GetPrivateProfileStringW(L"hotkeys", commands[i].c_str(), L"", text, 64, ini.c_str());
@@ -141,6 +154,7 @@ static DWORD WINAPI run(void *) {
                       describe_hotkey(defaults[i]));
             hotkeys[i] = parsed.value_or(defaults[i]);
         }
+        gameHooks.keyboard_stick({hotkeys[8], hotkeys[9], hotkeys[10], hotkeys[11]});
         WindowNotifications notifications;
         if (!notifications.initialize(hotkeys)) {
             write("Foreground notifications unavailable; reader stopped");
@@ -158,7 +172,8 @@ static DWORD WINAPI run(void *) {
         events.push_back(source.event());
         source.capture(true);
         Reader reader(profile->layout);
-        std::string last, pending, lastSpeech, lastContext, spoken;
+        std::string last, pending, lastSpeech, lastContext, spoken, announcement;
+        std::optional<Menu> lastMenu;
         DialogReturn dialogReturn;
         bool muted = false, forceContext = notifications.focused(), scheduled = false,
              discovered = false, metadataReady = false;
@@ -170,13 +185,14 @@ static DWORD WINAPI run(void *) {
         if (!prompts.initialize(runtime, reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr)),
                                 *profile))
             write("Recomp prompt labels unavailable");
-        // One label source for menus and tutorials. The recomp's prompt names do
-        // not cover the sticks, so keyboard stick tags stay unlabeled.
+        // One label source for menus and tutorials. On keyboard the sticks take the
+        // runtime's own names: the left-stick keys, and the mouse or right-stick keys.
         auto buttonLabel = [&](std::string_view token) {
             if (token == "LS" || token == "RS" || token == "R3") {
-                if (prompts.device() == PromptDevice::keyboard ||
-                    prompts.device() == PromptDevice::unknown)
+                if (prompts.device() == PromptDevice::unknown)
                     return std::string{};
+                if (prompts.device() == PromptDevice::keyboard)
+                    return prompts.keyboard_stick(token);
                 return std::string(token == "LS"   ? "Left stick"
                                    : token == "RS" ? "Right stick"
                                                    : "Right stick press");
@@ -184,6 +200,10 @@ static DWORD WINAPI run(void *) {
             return prompts.button(token);
         };
         reader.button_labels(buttonLabel);
+        reader.key_descriptions([&](const std::vector<unsigned> &keys,
+                                    const std::map<std::string, std::string> &actions) {
+            return prompts.describe_row(keys, actions);
+        });
         GameplayText gameplay({setting(L"subtitles", 1), setting(L"tutorials", 1)}, buttonLabel);
         GameplayStatus status(
             [&](std::string_view tag) { return prompts.button(tag); },
@@ -224,8 +244,7 @@ static DWORD WINAPI run(void *) {
         else if (!modeText[0])
             WritePrivateProfileStringW(L"gameplay", L"shooting_mode",
                                        wide(shooting_mode_name(shootingMode)).c_str(), ini.c_str());
-        gameHooks.options(textHooks && qteEnabled, boostPointBlank, boostMaxRange,
-                          setting(L"status_button", 1));
+        gameHooks.options(textHooks && qteEnabled, boostPointBlank, boostMaxRange);
         gameHooks.tracking(trackingStrength);
         gameHooks.shooting(shootingMode);
         gameHooks.homing_boost(multiplier(L"boost_homing", 3.f));
@@ -244,7 +263,7 @@ static DWORD WINAPI run(void *) {
         std::optional<AimSnapshot> lastAim;
         float cueGain =
             float(std::clamp<int>(
-                GetPrivateProfileIntW(L"gameplay", L"audio_cue_volume", 30, ini.c_str()), 0, 100)) *
+                GetPrivateProfileIntW(L"gameplay", L"audio_cue_volume", 60, ini.c_str()), 0, 100)) *
             .004f;
         AudioRetry audioRetry;
         bool audioReady = false, audioAnnounced = false;
@@ -402,7 +421,7 @@ static DWORD WINAPI run(void *) {
         if (textHooks) {
             events.push_back(presentations.event());
             presentations.capture(true);
-            write("Gameplay text observer started (prototype)");
+            write("Gameplay text observer started");
         }
         if (nativeGameplay) {
             events.push_back(gameHooks.event());
@@ -606,7 +625,8 @@ static DWORD WINAPI run(void *) {
                     " lock_on_skips=" + std::to_string(gameHooks.lock_on_skips()) +
                     " homing_calls=" + std::to_string(gameHooks.homing_calls()) +
                     " homing_hits=" + std::to_string(gameHooks.homing_hits()) +
-                    " homing_patch=" + std::to_string(gameHooks.homing_state()));
+                    " homing_patch=" + std::to_string(gameHooks.homing_state()) +
+                    " keyboard_stick_writes=" + std::to_string(gameHooks.stick_writes()));
                 return;
             }
             auto menus = base ? reader.menus(memory) : std::vector<Menu>{};
@@ -668,22 +688,33 @@ static DWORD WINAPI run(void *) {
                     lastContext = context;
                     last = current;
                     if (!menus.empty()) {
+                        // Repeat keeps the full line; a changed setting value alone is
+                        // announced.
                         lastSpeech = describe(menus.back(), entered, true);
-                        write("MENU " + lastSpeech);
+                        announcement = entered || !lastMenu
+                                           ? std::string{}
+                                           : setting_value_change(*lastMenu, menus.back());
+                        write("MENU " + lastSpeech +
+                              (announcement.empty() ? "" : " (value: " + announcement + ")"));
+                        if (announcement.empty())
+                            announcement = lastSpeech;
+                        lastMenu = menus.back();
                     }
                     // Losing a menu clears our narration state, but must not cancel NVDA
                     // speech that may belong to another application or notification.
                     else {
                         lastSpeech.clear();
+                        announcement.clear();
                         spoken.clear();
+                        lastMenu.reset();
                     }
                 }
                 if (notifications.focused() && !muted && speaking && !current.empty() &&
                     (spoken != current || forceContext)) {
                     if (forceContext)
-                        lastSpeech = describe(menus.back(), true, true);
+                        announcement = lastSpeech = describe(menus.back(), true, true);
                     if (forceContext || !dialogReturn.quiet(current))
-                        speech.speak(lastSpeech, menu_interrupts(menus.back(), interruptText));
+                        speech.speak(announcement, menu_interrupts(menus.back(), interruptText));
                     else
                         write("MENU_RETURN unchanged after a confirmed dialog; not announced");
                     spoken = current;
@@ -734,6 +765,27 @@ static DWORD WINAPI run(void *) {
                 shooting_command(2);
             if (name == L"aimpriority")
                 shooting_command(4);
+            // Keyboard right stick in menus: the records and controls browsers.
+            if (name == L"rsup" || name == L"rsdown" || name == L"rsleft" || name == L"rsright") {
+                if (auto movie = reader.right_stick_movie()) {
+                    auto runtimeInstance = instance();
+                    auto base = runtimeInstance ? membase(runtimeInstance) : nullptr;
+                    Memory memory([&](uint32_t at, void *out, size_t size) {
+                        SIZE_T got{};
+                        return base &&
+                               ReadProcessMemory(GetCurrentProcess(), base + at, out, size, &got) &&
+                               got == size;
+                    });
+                    GameplayEvent event;
+                    event.record_command = name == L"rsleft"    ? 1
+                                           : name == L"rsright" ? 2
+                                           : name == L"rsup"    ? 3
+                                                                : 4;
+                    event.record_movie = movie;
+                    event.record_index = memory.u32(movie + 0x20);
+                    gameHooks.inject(event);
+                }
+            }
             if (name == L"status" && speaking && !muted) {
                 auto runtimeInstance = instance();
                 auto base = runtimeInstance ? membase(runtimeInstance) : nullptr;
@@ -864,6 +916,20 @@ static DWORD WINAPI run(void *) {
                                                            event.record_text.utf8());
                                         changed();
                                     }
+                                } else if (event.record_command &&
+                                           memory.u32(event.record_movie + 0x20) ==
+                                               event.record_index &&
+                                           movie_class(memory, event.record_movie,
+                                                       "BCGFxUI_OptionMenu")) {
+                                    // Control Settings: the right stick reads one slot.
+                                    auto line = reader.navigate_controls(memory, event.record_movie,
+                                                                         event.record_command);
+                                    if (!line.empty()) {
+                                        write("MENU_CONTROL " + line);
+                                        lastSpeech = line;
+                                        if (notifications.focused() && !muted && speaking)
+                                            speech.speak(line);
+                                    }
                                 } else if (event.record_command) {
                                     if (notifications.focused() &&
                                         memory.u32(event.record_movie + 0x20) ==
@@ -878,8 +944,9 @@ static DWORD WINAPI run(void *) {
                                             last = pending = menu_selection_state(*menu);
                                             dialogReturn.observe(last, nullptr);
                                             stable = 1;
-                                            lastSpeech = record_navigation_text(
+                                            announcement = lastSpeech = record_navigation_text(
                                                 *menu, event.record_command <= 2);
+                                            lastMenu = *menu;
                                             write("MENU_RECORD age_ms=" +
                                                   std::to_string(GetTickCount64() - event.tick) +
                                                   " " + lastSpeech);

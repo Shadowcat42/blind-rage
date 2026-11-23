@@ -1,5 +1,7 @@
 # Episode 1 groundwork
 
+Historical record of the first gameplay implementation (2026-11-19/20). Several details have since changed: the shooting aid is now the beacon/boosted design in `SHOOTING_BEACONS.md`, and default shortcuts are listed in the README. The evidence below remains useful; the current behaviour is described in the other documents.
+
 The requested endpoint is an implementation ready for a user-led Episode 1 test. Live calibration and later iteration can follow separately. Do not treat the pre-existing subtitle prototype or one passing cue test as completion of this scope.
 
 ## Required implementation

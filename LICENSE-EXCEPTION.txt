@@ -1,0 +1,22 @@
+Blind Rage
+Copyright (C) 2026 Shadowcat42
+
+Blind Rage's original code is free software: you can redistribute it and/or
+modify it under the terms of the GNU General Public License as published by the
+Free Software Foundation, either version 3 of the License, or (at your option)
+any later version. See LICENSE.
+
+Additional permission under GNU GPL version 3 section 7
+
+If you modify this Program, or any covered work, by linking or combining it with
+Asura's Wrath, its PC recompilation (including the recompilation's executables
+and runtime libraries), or the game's data, or modified versions of any of
+these, containing parts covered by the terms of their own licenses, the
+licensors of this Program grant you additional permission to convey the
+resulting work. This permission covers running the Program inside those
+programs and calling their interfaces; it does not grant any rights to the game,
+the recompilation or their data, and corresponding source for those parts is
+not required.
+
+Third-party components keep their own licenses; see THIRD_PARTY_NOTICES.md.
+Prism remains under the Mozilla Public License 2.0.

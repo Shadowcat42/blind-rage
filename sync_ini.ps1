@@ -19,6 +19,8 @@ function Read-Ini([string[]]$lines){
   # Retired settings: the stability repair is unconditional, and the boosted cone
   # uses multipliers of the game's own limits instead of a flat angle.
   if($section -eq 'gameplay' -and ($key -eq 'stable_lock_cone' -or $key -eq 'shooting_cone_degrees')){continue}
+  # Retired: the Back/Select status readout is always available.
+  if($section -eq 'gameplay' -and $key -eq 'status_button'){continue}
   # Retired diagnostic commands: speech test, stop speech and reader shutdown.
   if($section -eq 'hotkeys' -and ($key -eq 'test' -or $key -eq 'stop' -or $key -eq 'shutdown')){continue}
   if(!$order.Contains($section)){$order[$section]=[Collections.Generic.List[string]]::new()}
