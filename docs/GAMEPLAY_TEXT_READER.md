@@ -29,7 +29,7 @@ tutorials=1
 interrupt=0
 ```
 
-`subtitles` covers the MovieText delivery route, including its other screen-text styles. `tutorials` covers Advertise. `interrupt=0` queues gameplay announcements without intentionally cancelling unrelated screen-reader speech. Changing it to 1 permits interruption when a new gameplay announcement is spoken. Cue dismissal never issues a global speech-stop call. Explicit stop/mute/shutdown commands retain their prior behavior.
+`subtitles` covers the MovieText delivery route, including its other screen-text styles. `tutorials` covers Advertise. `interrupt=0` queues gameplay announcements without intentionally cancelling unrelated screen-reader speech. Changing it to 1 permits interruption when a new gameplay announcement is spoken. Cue dismissal never issues a global speech-stop call. The mute command still stops current speech.
 
 Repeat reads the current menu, or the latest active gameplay text when no menu is active. Focus/mute rules apply to gameplay speech. Accepted gameplay announcements are logged as `GAME_TEXT`, and successful backend calls retain the existing `SPEAK` logging.
 

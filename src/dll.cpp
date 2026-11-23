@@ -117,9 +117,8 @@ static DWORD WINAPI run(void *) {
         // One settings file: mods/accessibility/accessibility.ini, the parent of dist.
         auto ini = (dir.parent_path() / L"accessibility.ini").wstring();
         write("CONFIG " + utf8(ini) + (fs::exists(ini) ? "" : " (missing; defaults in use)"));
-        std::vector<std::wstring> commands = {L"test",    L"repeat",   L"stop",   L"mute",
-                                              L"dump",    L"shutdown", L"status", L"aimmode",
-                                              L"aimprev", L"aimnext"};
+        std::vector<std::wstring> commands = {L"repeat",  L"mute",    L"dump",   L"status",
+                                              L"aimmode", L"aimprev", L"aimnext"};
         std::vector<HANDLE> events;
         for (auto &c : commands)
             events.push_back(
@@ -128,9 +127,8 @@ static DWORD WINAPI run(void *) {
         // virtual-key codes still mean Ctrl+Alt plus that key. A missing or empty
         // value uses the default; "None" disables the shortcut.
         constexpr UINT chord = MOD_CONTROL | MOD_ALT;
-        const Hotkey defaults[] = {
-            {chord, VK_F1}, {chord, VK_F2}, {chord, VK_F3},  {chord, VK_F5}, {chord, VK_F8}, {},
-            {chord, VK_F4}, {chord, VK_F9}, {chord, VK_F10}, {chord, VK_F12}};
+        const Hotkey defaults[] = {{chord, VK_F2}, {chord, VK_F5},  {chord, VK_F8}, {chord, VK_F4},
+                                   {chord, VK_F9}, {chord, VK_F10}, {chord, VK_F12}};
         Hotkey hotkeys[10]{};
         for (size_t i = 0; i < commands.size(); i++) {
             wchar_t text[64]{};
@@ -636,9 +634,10 @@ static DWORD WINAPI run(void *) {
                   " mutations=" + std::to_string(source.changes()));
         };
         auto command = [&](unsigned i) {
-            if (i == 0 && speaking)
-                speech.speak("Prism speech test.");
-            if (i == 1 && speaking && !muted) {
+            if (i >= commands.size())
+                return;
+            const auto &name = commands[i];
+            if (name == L"repeat" && speaking && !muted) {
                 auto text = lastSpeech;
                 if (last.empty()) {
                     text = timing.repeat();
@@ -649,26 +648,22 @@ static DWORD WINAPI run(void *) {
                 }
                 speech.speak(text.empty() ? "No supported text is active." : text);
             }
-            if (i == 2)
-                speech.stop();
-            if (i == 3) {
+            if (name == L"mute") {
                 muted = !muted;
                 speech.stop();
                 if (speaking)
                     speech.speak(muted ? "Narration off." : "Narration on.");
             }
-            if (i == 4)
+            if (name == L"dump")
                 inspect(true);
-            if (i == 5)
-                stopping = true;
             // Keyboard equivalents of the D-pad shooting controls.
-            if (i == 7)
+            if (name == L"aimmode")
                 shooting_command(3);
-            if (i == 8)
+            if (name == L"aimprev")
                 shooting_command(1);
-            if (i == 9)
+            if (name == L"aimnext")
                 shooting_command(2);
-            if (i == 6 && speaking && !muted) {
+            if (name == L"status" && speaking && !muted) {
                 auto runtimeInstance = instance();
                 auto base = runtimeInstance ? membase(runtimeInstance) : nullptr;
                 Memory memory([&](uint32_t at, void *out, size_t size) {
