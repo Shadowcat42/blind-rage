@@ -107,6 +107,8 @@ struct AimTarget {
     float distance{}; // Camera-to-component range in native world units.
     // Inside the cursor's safe frame, so the player can actually aim at it.
     bool reachable = true;
+    // Melee rapid fire: an enemy projectile rather than an enemy pawn.
+    bool projectile{};
 };
 // The cursor is clamped to the screen's title-safe frame (GetSafeFramePoint in
 // BCPlayerCombat.AimShotAimingCtrl), and in shooting mode the camera does not turn.
@@ -170,6 +172,9 @@ struct AimSnapshot {
     bool active{}, valid{};
     LockVector aim, camera_up;
     unsigned count{}, locks{}, maximum{};
+    // When positive, the angle within which the game itself takes the shot (melee
+    // rapid-fire homing); the beacon becomes continuous at that edge.
+    float window_degrees{};
     std::array<AimTarget, capacity> targets{};
 };
 // The game producer replaces one copied snapshot, never queues large payloads
@@ -541,13 +546,23 @@ class ShootingBeacons {
         auto forward = aim_dot(*unit, *aim);
         auto yaw = std::atan2(aim_dot(*unit, *right), forward) * 57.2957795f;
         auto pitch = std::atan2(aim_dot(*unit, up), forward) * 57.2957795f;
+        auto error = std::sqrt(yaw * yaw + pitch * pitch);
+        // The synthesizer turns continuous at 4 degrees; rescale so that happens
+        // at the game's own acceptance angle when the snapshot supplies one.
+        if (snapshot.window_degrees > 0 && std::isfinite(snapshot.window_degrees))
+            error *= kBeaconContinuousDegrees / snapshot.window_degrees;
         return {true,
                 std::clamp(yaw / 30.f, -1.f, 1.f),
                 std::clamp(pitch / 30.f, -1.f, 1.f),
-                std::sqrt(yaw * yaw + pitch * pitch),
+                error,
                 generation_,
                 snapshot.tick};
     }
+    // The member the beacon currently points at.
+    AimIdentity guiding() const {
+        return guiding_;
+    }
+    static constexpr float kBeaconContinuousDegrees = 4.f;
     size_t clusters() const {
         return groups_.size();
     }

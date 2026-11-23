@@ -3,6 +3,8 @@
 This is the first manual-aiming prototype for native HeavyShoot sections, including
 Episode 1's opening shooting encounter. Live audio and gameplay calibration are
 still required. It does not implement arena navigation; the synchronized-QTE count-in is described in `SYNCHRONIC_TIMING.md`.
+The same modes cover melee rapid fire; its targets, priority switch, lock-on
+handling and boosted homing are described in `MELEE_AIM.md`.
 
 ## Modes
 

@@ -140,9 +140,17 @@ struct Menu {
     bool readout = false;
     bool choices_only = false;
     bool records = false;
+    // Story text the game shows on its own (interlude illustrations), rather than
+    // a menu the player navigates: it follows the text interrupt setting.
+    bool passage = false;
     std::string record_difficulty;
     bool operator==(const Menu &) const = default;
 };
+// Menu navigation interrupts so the newest selection is heard at once; passages
+// queue like subtitles unless the player enables text interruption.
+inline bool menu_interrupts(const Menu &menu, bool interrupt_text) {
+    return menu.passage ? interrupt_text : true;
+}
 inline bool declared_choices_match(const Menu &declaration, const Menu &choice) {
     if (!declaration.choices_only || declaration.pending || declaration.movie != choice.movie ||
         choice.items.empty() || declaration.items.size() != choice.items.size() ||
@@ -917,7 +925,7 @@ class Reader {
                                 scene.movie = movie.p;
                                 scene.selector = display;
                                 scene.cursor = 0;
-                                scene.message = scene.readout = true;
+                                scene.message = scene.readout = scene.passage = true;
                                 auto position = get(fields, "m_textIdx");
                                 if (position && (position->type == 3 || position->type == 4) &&
                                     std::isfinite(position->number) && position->number >= 0 &&

@@ -32,6 +32,20 @@ int main() {
                   "Press A button & hold Y button.",
               "preserve remapped button glyphs while removing HTML");
         check(gameplay_text("Press &lt;X&gt;") == "Press X button", "escaped button glyph");
+        auto ps = [](std::string_view button) {
+            if (button == "RS")
+                return std::string("Right stick");
+            if (button == "LS")
+                return std::string("Left stick");
+            return controller_button(button, PromptDevice::playstation);
+        };
+        check(gameplay_text("Switch targets! <RS> Toggle between targets", ps) ==
+                  "Switch targets! Right stick Toggle between targets",
+              "right stick tag survives markup cleanup");
+        check(gameplay_text("Use <LS> to aim reticle.", ps) == "Use Left stick to aim reticle.",
+              "left stick tag survives markup cleanup");
+        check(gameplay_text("<Back> Skip tutorial", ps) == "Select Skip tutorial",
+              "mixed-case Back tag resolves to the back button");
         unsigned lookups = 0;
         check(gameplay_text("No glyph here.",
                             [&](std::string_view) {
@@ -94,7 +108,34 @@ int main() {
         reader.apply(event(PresentationKind::tutorial_end));
         check(reader.repeat().empty(), "dismissed tutorial does not remain repeatable");
         reader.apply(event(PresentationKind::tutorial_start));
-        check(reader.take().size() == 1, "tutorial reentry speaks again");
+        check(reader.take().empty(), "a start without newly created lines displays nothing new");
+        reader.apply(event(PresentationKind::tutorial_create, "Press <A> to jump."));
+        reader.apply(event(PresentationKind::tutorial_start));
+        check(reader.take().size() == 1, "a line created again for a new start speaks again");
+        // Episode 3 (BC-S020_L01_PLY_01): each mission creates its lines and
+        // starts; the movie's Start empties its queue, so earlier steps are not
+        // part of the next one.
+        reader.reset();
+        reader.apply(event(PresentationKind::tutorial_create, "Skip tutorial"));
+        reader.apply(event(PresentationKind::tutorial_start));
+        spoken = reader.take();
+        check(spoken.size() == 1 && spoken[0].text == "Skip tutorial", "first step speaks");
+        reader.apply(event(PresentationKind::tutorial_create, "Perform a combo attack!"));
+        reader.apply(event(PresentationKind::tutorial_create, "<B> Attack"));
+        check(reader.take().empty(), "created lines wait for their start");
+        reader.apply(event(PresentationKind::tutorial_start));
+        spoken = reader.take();
+        check(spoken.size() == 1 && spoken[0].text == "Perform a combo attack! B button Attack",
+              "a new step speaks only its own lines");
+        check(reader.repeat() == spoken[0].text, "repeat reads the current step");
+        reader.apply(event(PresentationKind::tutorial_create, "Perform a heavy attack!"));
+        reader.apply(event(PresentationKind::tutorial_start));
+        spoken = reader.take();
+        check(spoken.size() == 1 && spoken[0].text == "Perform a heavy attack!",
+              "the next step does not reread earlier steps");
+        reader.apply(event(PresentationKind::tutorial_end));
+        reader.apply(event(PresentationKind::tutorial_start));
+        check(reader.take().empty(), "redisplay without new lines does not reread a step");
         reader.apply(event(PresentationKind::tutorial_clear));
         reader.apply(event(PresentationKind::tutorial_box, "", "", "health"));
         reader.apply(event(PresentationKind::tutorial_start));
@@ -107,6 +148,21 @@ int main() {
         reader.closed({1, 5});
         check(reader.repeat().empty() && reader.boxes().empty(),
               "closed movie cannot retain tutorial text");
+        // Episode 3 (BC-S020_L01_PLY_05): the Unlimited step creates its text, then
+        // SetBox selects the gauge picture. The created line, with its button, is
+        // what is spoken; the drawn text (button shown as an image) is not.
+        reader.apply(event(PresentationKind::tutorial_create,
+                           "Unlimited Mode can be activated by pressing <LT>."));
+        reader.apply(event(PresentationKind::tutorial_box, "", "", "unlimited"));
+        reader.apply(event(PresentationKind::tutorial_start));
+        spoken = reader.take();
+        check(spoken.size() == 1 &&
+                  spoken[0].text == "Unlimited Mode can be activated by pressing LT button.",
+              "box tutorial speaks its created line with the button");
+        reader.box_text({1, 5}, "Unlimited Mode can be activated by pressing.");
+        check(reader.take().empty() && reader.repeat() == spoken[0].text,
+              "drawn box text does not replace a created line");
+        reader.closed({1, 5});
         GameplayText disabled({false, false});
         disabled.apply(start);
         disabled.apply(event(PresentationKind::tutorial_create, "Hidden by user preference"));

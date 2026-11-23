@@ -7,12 +7,30 @@ namespace a11y {
 inline std::string gameplay_button_token(std::string_view name) {
     return "\xee\x80\x80" + std::string(name) + "\xee\x80\x81";
 }
+// Button tags in the game's localized tutorial text (Coalesced_INT.bin), with the
+// label name each resolves to. "<Back>" is written in mixed case ("<Back> Skip
+// tutorial"); the sticks appear as <LS> and <RS> (aiming, switching targets).
+inline constexpr std::array<std::pair<const char *, const char *>, 13> kGameplayButtonTags{{
+    {"A", "A"},
+    {"X", "X"},
+    {"Y", "Y"},
+    {"B", "B"},
+    {"LT", "LT"},
+    {"RT", "RT"},
+    {"LB", "LB"},
+    {"RB", "RB"},
+    {"LS", "LS"},
+    {"RS", "RS"},
+    {"START", "START"},
+    {"BACK", "BACK"},
+    {"Back", "BACK"},
+}};
 inline std::string gameplay_template(std::string text) {
     // Advertise resolves remapped action tags before CallCreate. Preserve its
     // physical button glyphs before ordinary HTML cleanup removes angle tags.
     auto buttons = [&] {
-        for (auto name : {"A", "X", "Y", "B", "LT", "RT", "LB", "RB", "START", "BACK"}) {
-            std::string tag = "<" + std::string(name) + ">",
+        for (auto [glyph, name] : kGameplayButtonTags) {
+            std::string tag = "<" + std::string(glyph) + ">",
                         replacement = " " + gameplay_button_token(name) + " ";
             size_t pos = 0;
             while ((pos = text.find(tag, pos)) != std::string::npos) {
@@ -36,7 +54,9 @@ inline std::string gameplay_template(std::string text) {
 }
 inline std::string gameplay_text(std::string text, const ButtonLabel &label = {}) {
     text = gameplay_template(std::move(text));
-    for (auto name : {"A", "X", "Y", "B", "LT", "RT", "LB", "RB", "START", "BACK"}) {
+    for (auto [glyph, name] : kGameplayButtonTags) {
+        if (std::string_view(glyph) != name)
+            continue;
         auto token = gameplay_button_token(name);
         auto pos = text.find(token);
         if (pos == std::string::npos)
@@ -110,19 +130,25 @@ class GameplayText {
             case PresentationKind::text_clear:
                 erase(movie, [](const Active &) { return true; });
                 break;
+            // The movie's Create only queues a line (tl_text); Start displays every
+            // queued line and then empties the queue (SetupClear at the end of
+            // Start). Each Start therefore shows only the lines added since the
+            // previous one, and the reader announces exactly that step.
             case PresentationKind::tutorial_create: {
                 auto &panel = tutorial(movie);
                 panel.box = false;
-                if (text.empty() ||
-                    std::find(panel.lines.begin(), panel.lines.end(), text) != panel.lines.end())
+                if (text.empty() || std::find(panel.prepared.begin(), panel.prepared.end(), text) !=
+                                        panel.prepared.end())
                     break;
-                if (panel.lines.size() == 16)
-                    panel.lines.erase(panel.lines.begin());
-                panel.lines.push_back(text);
-                if (panel.visible)
-                    announce(panel);
+                if (panel.prepared.size() == 16)
+                    panel.prepared.erase(panel.prepared.begin());
+                panel.prepared.push_back(text);
                 break;
             }
+            // SetBox only selects a gauge picture (gauge, health, burst or
+            // unlimited) shown beside the step; its text still arrives through
+            // Create, often before SetBox (Episode 3's Burst and Unlimited steps).
+            // Keep those lines; the drawn text is a fallback for a box without any.
             case PresentationKind::tutorial_box: {
                 auto &panel = tutorial(movie);
                 panel.box = true;
@@ -132,11 +158,12 @@ class GameplayText {
             }
             case PresentationKind::tutorial_start: {
                 auto &panel = tutorial(movie);
-                if (panel.visible)
-                    break;
                 panel.visible = true;
-                if (!panel.box)
+                if (!panel.prepared.empty()) {
+                    panel.lines = std::move(panel.prepared);
                     announce(panel);
+                }
+                panel.prepared.clear();
                 break;
             }
             case PresentationKind::tutorial_end: {
@@ -148,6 +175,7 @@ class GameplayText {
             case PresentationKind::tutorial_clear: {
                 auto &panel = tutorial(movie);
                 panel.lines.clear();
+                panel.prepared.clear();
                 panel.visible = false;
                 panel.box = false;
                 panel.box_text.clear();
@@ -203,7 +231,8 @@ class GameplayText {
     void box_text(Movie movie, std::string text) {
         auto &panel = tutorial(movie);
         text = gameplay_template(text);
-        if (panel.visible && panel.box && !text.empty() && panel.box_text != text) {
+        if (panel.visible && panel.box && panel.lines.empty() && !text.empty() &&
+            panel.box_text != text) {
             panel.box_text = text;
             announce(panel);
         }
@@ -239,7 +268,8 @@ class GameplayText {
     struct Tutorial {
         Movie movie;
         bool visible = false, box = false;
-        std::vector<std::string> lines;
+        // lines: the step currently shown; prepared: lines created for the next Start.
+        std::vector<std::string> lines, prepared;
         std::string box_text;
         uint64_t serial{};
     };
@@ -259,7 +289,7 @@ class GameplayText {
         return tutorials_.back();
     }
     std::string render(const Tutorial &panel) const {
-        if (panel.box)
+        if (panel.box && panel.lines.empty())
             return gameplay_text(panel.box_text, label_);
         std::string combined;
         for (const auto &line : panel.lines)
@@ -267,7 +297,7 @@ class GameplayText {
         return combined;
     }
     void announce(Tutorial &panel) {
-        if (panel.box ? panel.box_text.empty() : panel.lines.empty())
+        if (panel.lines.empty() && (!panel.box || panel.box_text.empty()))
             return;
         panel.serial = ++serial_;
         if (options_.tutorials)

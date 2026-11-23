@@ -6,6 +6,7 @@
 #include "shooting_assist.h"
 #include "lock_trace.h"
 #include "shooting_beacons.h"
+#include "melee_aim.h"
 #include <atomic>
 #include <windows.h>
 
@@ -13,41 +14,44 @@ namespace a11y {
 class GameplayHooks {
   public:
     using Function = void (*)(void *, uint8_t *);
-    static constexpr std::array<const char *, 35> function_names{"RequestInputJudge",
-                                                                 "RequestButtonIcon",
-                                                                 "UpdateButtonIcon",
-                                                                 "CheckActivate",
-                                                                 "Update",
-                                                                 "Deactivated",
-                                                                 "EndJudge",
-                                                                 "DestroyRequest",
-                                                                 "CheckLockOnShotTarget",
-                                                                 "StartSynchronicTime",
-                                                                 "UpdateNormal",
-                                                                 "UpdateBarrage",
-                                                                 "EndSynchronicTime",
-                                                                 "InitTracks",
-                                                                 "HandleButtonInput_Back",
-                                                                 "FilterButtonInput",
-                                                                 "PlayerTick",
-                                                                 "CheckRemoveLockOnTarget",
-                                                                 "GetCameraViewPoint",
-                                                                 "ShowLockonMarker",
-                                                                 "CallShowLockonMarker",
-                                                                 "PlayGFxUISound",
-                                                                 "SearchLockOnShotTarget",
-                                                                 "UpdateLockOnLevel",
-                                                                 "ResetLockOnLevel",
-                                                                 "PlayCloseAnimation",
-                                                                 "OnOpenAnimationComplete",
-                                                                 "OnGetRecordInfo",
-                                                                 "IterateLockOnShotTargetComp",
-                                                                 "InputCheckTick",
-                                                                 "CallStart",
-                                                                 "CallEnd",
-                                                                 "OnCloseAnimationComplete",
-                                                                 "AimShotAimingCtrl",
-                                                                 "EndSynchronic"};
+    static constexpr std::array<const char *, 37> function_names{
+        "RequestInputJudge",
+        "RequestButtonIcon",
+        "UpdateButtonIcon",
+        "CheckActivate",
+        "Update",
+        "Deactivated",
+        "EndJudge",
+        "DestroyRequest",
+        "CheckLockOnShotTarget",
+        "StartSynchronicTime",
+        "UpdateNormal",
+        "UpdateBarrage",
+        "EndSynchronicTime",
+        "InitTracks",
+        "HandleButtonInput_Back",
+        "FilterButtonInput",
+        "PlayerTick",
+        "CheckRemoveLockOnTarget",
+        "GetCameraViewPoint",
+        "ShowLockonMarker",
+        "CallShowLockonMarker",
+        "PlayGFxUISound",
+        "SearchLockOnShotTarget",
+        "UpdateLockOnLevel",
+        "ResetLockOnLevel",
+        "PlayCloseAnimation",
+        "OnOpenAnimationComplete",
+        "OnGetRecordInfo",
+        "IterateLockOnShotTargetComp",
+        "InputCheckTick",
+        "CallStart",
+        "CallEnd",
+        "OnCloseAnimationComplete",
+        "AimShotAimingCtrl",
+        "EndSynchronic",
+        "PlayButtonEventPress_LockOn",
+        "SearchSetAimShotHomingTargetActor"};
     static GameplayHooks &instance() {
         static auto *value = new GameplayHooks;
         return *value;
@@ -153,9 +157,38 @@ class GameplayHooks {
         ++epoch_;
         queue_.clear();
         aim_mailbox_.clear();
-        if (!enabled)
+        if (!enabled) {
             trace_.stop();
+            restore_homing();
+        }
         enabled_ = enabled;
+    }
+    void aim_priority(AimPriority priority) {
+        priority_ = priority;
+    }
+    AimPriority aim_priority() const {
+        return priority_.load();
+    }
+    // Boosted mode's melee homing-angle multiplier (1-10).
+    void homing_boost(float multiplier) {
+        homing_boost_ = std::isfinite(multiplier) ? std::clamp(multiplier, 1.f, 10.f) : 1.f;
+    }
+    bool boosted_melee() const {
+        return mode_.load() == ShootingMode::boosted && homing_boost_.load() > 1;
+    }
+    uint64_t lock_on_skips() const {
+        return lock_on_skips_.load();
+    }
+    uint64_t homing_calls() const {
+        return homing_calls_.load();
+    }
+    uint64_t homing_hits() const {
+        return homing_hits_.load();
+    }
+    // 1 patched to the widened angle, 0 original, -1 unrecognized code (no patch).
+    int homing_state() const {
+        std::lock_guard lock(homing_mutex_);
+        return homing_.failed ? -1 : homing_.address && homing_.patched ? 1 : 0;
     }
     HANDLE event() const {
         return event_;
@@ -215,7 +248,9 @@ class GameplayHooks {
         sound,
         search,
         level,
-        level_reset
+        level_reset,
+        lock_on_press,
+        homing
     };
     struct LockFrame {
         LockFrame *previous{};
@@ -287,6 +322,7 @@ class GameplayHooks {
         std::map<uint32_t, Blocked> blocked;
         std::optional<StickNudge> tracking_choice;
         uint64_t last_guide{};
+        std::map<std::pair<uint32_t, std::string>, bool> classes;
     };
     static Thread &thread() {
         static thread_local Thread state;
@@ -361,6 +397,10 @@ class GameplayHooks {
             route = Route::aim;
         else if (cls == "BCPlayerInput" && function == "HandleButtonInput_Back")
             route = Route::status_button;
+        else if (cls == "BCPlayerController" && function == "PlayButtonEventPress_LockOn")
+            route = Route::lock_on_press;
+        else if (cls == "BCPawn" && function == "SearchSetAimShotHomingTargetActor")
+            route = Route::homing;
         else if (cls == "BCPlayerController_HeavyShoot" &&
                  function == "IterateLockOnShotTargetComp")
             route = Route::volley_fire;
@@ -629,6 +669,22 @@ class GameplayHooks {
             if (!subclass(memory, state.reader, source, "BCPlayerController_HeavyShoot") ||
                 (state.locks && state.locks->pc == source)) {
                 original_[0](context, base);
+                // Melee rapid fire uses the same cursor (AimShotAimPoint) and cursor
+                // update, so it feeds the same beacon and tracking pipeline.
+                if (!(state.locks && state.locks->pc == source) &&
+                    melee_rapid_fire(memory, source) &&
+                    subclass(memory, state.reader, source, "BCPlayerController")) {
+                    auto snapshot = capture_melee_aim(
+                        memory, source, GetTickCount64(), priority_.load(),
+                        melee_homing_degrees(boosted_melee() ? homing_boost_.load() : 1.f),
+                        [&](uint32_t object, std::string_view cls) {
+                            return cached_subclass(memory, state, object, cls);
+                        });
+                    snapshot.active = snapshot.active && enabled_.load();
+                    aim_mailbox_.put(snapshot);
+                    state.tracking = snapshot;
+                    SetEvent(event_);
+                }
                 return true;
             }
             auto world = memory.u32(source + 0xd4);
@@ -1081,13 +1137,21 @@ class GameplayHooks {
                                (cue_word(row.data() + 0x18) & 0x80000000);
             }
             state.tracking_hold = trackingHold;
-            constexpr std::array<unsigned, 3> rows{11, 13, 10};
-            constexpr std::array<std::string_view, 3> names{"DPAD_LEFT", "DPAD_RIGHT", "DPAD_UP"};
+            // Commands 1-4: previous/next target, shooting mode, melee aim priority.
+            constexpr std::array<unsigned, 4> rows{11, 13, 10, 12};
+            constexpr std::array<std::string_view, 4> names{"DPAD_LEFT", "DPAD_RIGHT", "DPAD_UP",
+                                                            "DPAD_DOWN"};
             for (unsigned i = 0; valid && i < rows.size(); ++i) {
                 std::array<uint8_t, 0x24> row{};
-                valid = memory.copy(array + rows[i] * row.size(), row.data(), row.size()) &&
-                        state.reader.name(memory, cue_word(row.data())) == names[i];
-                if (valid && (cue_word(row.data() + 0x18) & 0x80000000))
+                bool named = memory.copy(array + rows[i] * row.size(), row.data(), row.size()) &&
+                             state.reader.name(memory, cue_word(row.data())) == names[i];
+                // The priority switch (D-pad Down) is optional; the rail commands
+                // never depend on it.
+                if (!named) {
+                    valid = i == 3;
+                    break;
+                }
+                if (cue_word(row.data() + 0x18) & 0x80000000)
                     held |= uint8_t(1 << i);
             }
             if (state.input_source != source || state.input_index != index) {
@@ -1096,10 +1160,16 @@ class GameplayHooks {
                 state.input_held = 0;
             }
             auto pressed = valid ? uint8_t(held & ~state.input_held) : uint8_t(0);
-            state.input_held = valid ? held : uint8_t(7);
+            state.input_held = valid ? held : uint8_t(15);
             auto before = pressed ? capture_status_context(memory, source, false) : std::nullopt;
-            bool active = before && subclass(memory, state.reader, before->controller,
-                                             "BCPlayerController_HeavyShoot");
+            // Rail shooting, or melee rapid fire (where only the priority switch is
+            // new; the game's D-pad handlers are empty in both).
+            bool rail = before && subclass(memory, state.reader, before->controller,
+                                           "BCPlayerController_HeavyShoot");
+            bool melee = before && !rail && melee_rapid_fire(memory, before->controller);
+            bool active = rail || melee;
+            if (!melee)
+                pressed &= uint8_t(7);
             self.original_[0](context, base);
             if (active && self.enabled_.load() && epoch == self.epoch_.load() &&
                 capture_status_context(memory, source, false) == before)
@@ -1110,6 +1180,27 @@ class GameplayHooks {
                         event.status = *before;
                         self.publish(event);
                     }
+            return;
+        }
+        if (route == Route::lock_on_press) {
+            // During melee rapid fire, holding L1 tracks (as in rail shooting), so the
+            // game's lock-on press is skipped then. It is a void script function
+            // with no out parameters; skipping its body changes nothing else.
+            // Lock-on outside rapid fire, and a lock made before firing, are unchanged.
+            if (melee_rapid_fire(memory, source)) {
+                ++self.lock_on_skips_;
+                return;
+            }
+            self.original_[0](context, base);
+            return;
+        }
+        if (route == Route::homing) {
+            self.homing_window(memory, base, node);
+            auto result = ui_argument(context, 5);
+            self.original_[0](context, base);
+            ++self.homing_calls_;
+            if (result && memory.u32(result))
+                ++self.homing_hits_;
             return;
         }
         if (self.observe_lock(route, context, base, memory, state, source, locals))
@@ -1307,6 +1398,84 @@ class GameplayHooks {
         for (auto &index : indices_)
             index = UINT32_MAX;
     }
+    // Class-chain test cached per class object; melee capture asks it for every
+    // projectile and pawn on each rapid-fire tick.
+    static bool cached_subclass(const Memory &memory, Thread &state, uint32_t object,
+                                std::string_view name) {
+        auto cls = memory.u32(object + 0x34);
+        if (!cls)
+            return false;
+        auto key = std::pair{cls, std::string(name)};
+        if (auto it = state.classes.find(key); it != state.classes.end())
+            return it->second;
+        if (state.classes.size() > 4096)
+            state.classes.clear();
+        return state.classes[key] = subclass(memory, state.reader, object, name);
+    }
+    // Boosted melee widens SearchSetAimShotHomingTargetActor's acceptance constant
+    // (1 - dot < 0.001). It is a float constant in the function's own bytecode
+    // (UStruct.Script at +0x4c): token EX_FloatConst (0x1e) at offset 0x388,
+    // big-endian float, then EX_EndFunctionParms (0x16). The bytes are checked
+    // before any write; unrecognized code is left alone. The original value is
+    // written back when boosted mode ends or the mod stops.
+    struct HomingPatch {
+        uint8_t *base{};
+        uint32_t address{}, written{};
+        bool patched{}, failed{};
+    };
+    static constexpr uint32_t kHomingScriptSize = 1220, kHomingConstOffset = 0x388,
+                              kHomingOriginal = 0x3a83126f; // 0.001f
+    bool write_word(uint8_t *base, uint32_t at, uint32_t value) {
+        std::array<uint8_t, 4> bytes{uint8_t(value >> 24), uint8_t(value >> 16),
+                                     uint8_t(value >> 8), uint8_t(value)};
+        SIZE_T wrote{};
+        return WriteProcessMemory(GetCurrentProcess(), base + at, bytes.data(), 4, &wrote) &&
+               wrote == 4;
+    }
+    void homing_window(const Memory &memory, uint8_t *base, uint32_t function) {
+        std::lock_guard lock(homing_mutex_);
+        if (homing_.failed)
+            return;
+        if (!homing_.address) {
+            auto script = memory.u32(function + 0x4c), size = memory.u32(function + 0x50);
+            std::array<uint8_t, 7> code{};
+            if (!script || size != kHomingScriptSize ||
+                !memory.copy(script + kHomingConstOffset - 1, code.data(), code.size()) ||
+                code[0] != 0x16 || code[1] != 0x1e ||
+                cue_word(code.data() + 2) != kHomingOriginal || code[6] != 0x16) {
+                homing_.failed = true;
+                return;
+            }
+            homing_.base = base;
+            homing_.address = script + kHomingConstOffset + 1;
+        }
+        auto desired = boosted_melee()
+                           ? std::bit_cast<uint32_t>(melee_homing_threshold(homing_boost_.load()))
+                           : kHomingOriginal;
+        auto current = memory.u32(homing_.address);
+        if (current == desired || (current != kHomingOriginal && current != homing_.written))
+            return;
+        if (write_word(base, homing_.address, desired)) {
+            homing_.written = desired;
+            homing_.patched = desired != kHomingOriginal;
+        }
+    }
+    void restore_homing() {
+        std::lock_guard lock(homing_mutex_);
+        if (!homing_.address || !homing_.patched || !homing_.base)
+            return;
+        Memory memory(Read{homing_.base});
+        if (memory.u32(homing_.address) == homing_.written &&
+            write_word(homing_.base, homing_.address, kHomingOriginal)) {
+            homing_.written = kHomingOriginal;
+            homing_.patched = false;
+        }
+    }
+    mutable std::mutex homing_mutex_;
+    HomingPatch homing_;
+    std::atomic<AimPriority> priority_{AimPriority::projectiles};
+    std::atomic<float> homing_boost_{3.f};
+    std::atomic<uint64_t> lock_on_skips_{}, homing_calls_{}, homing_hits_{};
     NativeHooks hooks_;
     const BuildProfile *profile_{};
     std::array<Function, 3> original_{};

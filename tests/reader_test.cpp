@@ -454,6 +454,11 @@ int main(int argc, char **argv) {
         breakdown.items = {{"Battle point breakdown. Shots: 10, 50 points.", "", true}};
         check(menu_repeat_text({breakdown}, 50) == breakdown.items[0].label,
               "detail repeat reads the currently active breakdown");
+        Menu passage = breakdown;
+        passage.passage = true;
+        check(menu_interrupts(menu, false) && menu_interrupts(breakdown, false) &&
+                  !menu_interrupts(passage, false) && menu_interrupts(passage, true),
+              "menus interrupt; illustration passages follow the text interrupt setting");
         check(menu_repeat_text({menu}, 50).empty() && menu_repeat_text({result}, 999).empty(),
               "repeat does not narrate another screen or movie");
         auto ordinary = menu;

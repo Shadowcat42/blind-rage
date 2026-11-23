@@ -29,9 +29,10 @@ When an option asks to restart the game, an active Blind Rage session restarts t
 | Shortcut while the game has focus | Action |
 | --- | --- |
 | Back/Select during gameplay | Read Health/Burst status; cutscene skipping is preserved |
-| D-pad Left / Right, during shooting gameplay | Select the previous / next target cluster for the beacon |
-| D-pad Up, during shooting gameplay | Cycle shooting assistance: off, beacons, boosted; saves the selected mode |
-| Hold L1, during shooting gameplay | Steer the cursor onto unlocked targets in any mode; moving the stick takes over |
+| D-pad Left / Right, during shooting or melee rapid fire | Select the previous / next target cluster for the beacon |
+| D-pad Up, during shooting or melee rapid fire | Cycle shooting assistance: off, beacons, boosted; saves the selected mode |
+| D-pad Down, during melee rapid fire | Switch between projectiles first and enemies first; saved |
+| Hold L1, during shooting or melee rapid fire | Steer the cursor onto targets in any mode; moving the stick takes over |
 | Right stick Left / Right, in Episode Menu -> RECORD | Browse difficulty records |
 | Right stick Up / Down, in Episode Menu -> RECORD | Browse overall rank and individual stats; Square/X repeats the selected entry |
 | Square (PlayStation) / X (Xbox), on results | Repeat the current results summary or battle-point breakdown |
@@ -42,6 +43,7 @@ When an option asks to restart the game, an active Blind Rage session restarts t
 | Ctrl+Alt+F8 | Save local UI diagnostics |
 | Ctrl+Alt+F9 | Cycle shooting mode (keyboard equivalent of D-pad Up) |
 | Ctrl+Alt+F10 / F12 | Previous / next beacon cluster (D-pad Left / Right) |
+| Ctrl+Alt+F11 | Switch melee aim priority (D-pad Down) |
 
 Change shortcuts in the `[hotkeys]` section of `mods/accessibility/accessibility.ini` using key names, such as `aimmode=Ctrl+Alt+F9` or `repeat=Ctrl+Shift+Numpad5`. Modifiers are Ctrl, Alt, Shift and Win; keys include A-Z, 0-9, F1-F24, Numpad0-9 and names such as Space, Enter, PageUp, Home, Slash or Backtick. `None` disables a shortcut. Older numeric key codes still work and are converted to names on install. An unrecognized value is logged and the default is used. Restart to reload the file. Windows hotkeys are registered while the game has focus and released when it loses focus. A conflicting shortcut may be unavailable; named launcher commands remain usable.
 
@@ -59,7 +61,7 @@ Gameplay narration covers subtitles and tutorials, following the recomp's effect
 
 Shared QTE readers cover resolved presses, mashes, holds, grouped stick commands and rotations, plus the separate Synchronic timing prompts (a four-beep count-in whose high fourth beep marks the moment to press) and the melee Special Attack (finisher) and counter prompts. Health/Burst status is available on Back/Select during active gameplay, with low-health warnings and native Burst-button readiness. This follows the recomp's Back binding (default Tab on keyboard), preserves the game's original handler and stays silent in cutscenes or pause/menu screens. Set `status_button=0` to disable it; Ctrl+Alt+F4 remains an alternative.
 
-Rail-shooting guidance: stereo position points left/right, pitch indicates elevation, and pulses accelerate as aim approaches the selected target cluster. You still aim and fire; holding L1 steers the cursor onto unlocked targets. Native lock feedback is retained, and guidance pauses at full volley capacity. Boosted mode also widens the game's acquisition cone while keeping its eligibility, range, occlusion, lock limits, homing and manual firing. See [shooting modes](docs/SHOOTING_BEACONS.md). Defaults are `qtes=1`, `status_warnings=1`, `shooting_mode=beacons`, `boost_point_blank=2`, `boost_max_range=3`, `tracking_strength=100` and `audio_cue_volume=30`. D-pad Up changes shooting mode during active shooting; other INI changes take effect after restarting the game.
+Rail-shooting guidance: stereo position points left/right, pitch indicates elevation, and pulses accelerate as aim approaches the selected target cluster. You still aim and fire; holding L1 steers the cursor onto unlocked targets. Native lock feedback is retained, and guidance pauses at full volley capacity. Boosted mode also widens the game's acquisition cone while keeping its eligibility, range, occlusion, lock limits, homing and manual firing. See [shooting modes](docs/SHOOTING_BEACONS.md). The same modes cover melee rapid fire (holding square outside rail shooting), against enemies and incoming projectiles, with a projectiles-first or enemies-first priority; boosted widens the game's homing angle there (`boost_homing=3`). See [melee aiming](docs/MELEE_AIM.md). Defaults are `qtes=1`, `status_warnings=1`, `shooting_mode=beacons`, `boost_point_blank=2`, `boost_max_range=3`, `tracking_strength=100` and `audio_cue_volume=30`. D-pad Up changes shooting mode during active shooting; other INI changes take effect after restarting the game.
 
 Status: menus have passed synthetic, private replay and live checks. Episode 1 (rail shooting) and Episode 2 (melee) have been played with the mod; later episodes have not been tested. Custom key binding and pause menus are not claimed as fully accessible. Start the mod before entering gameplay. See the [test instructions](docs/EPISODE_1_TESTING.md), [implementation/evidence](docs/EPISODE_1_GROUNDWORK.md), [text-reader limits](docs/GAMEPLAY_TEXT_READER.md), [QTE research](docs/QTE_INPUT_RESEARCH.md) and the [roadmap](docs/ROADMAP.md). Image-only text, other conversation/interlude routes, wider combat assistance and encounter-specific exceptions remain future work.
 

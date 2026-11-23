@@ -1,4 +1,4 @@
-#include "../src/shooting_beacons.h"
+#include "../src/melee_aim.h"
 #include <iostream>
 #include <stdexcept>
 using namespace a11y;
@@ -305,6 +305,94 @@ int main() {
         real(target + 0xc0, -1000);
         check(capture_aim(memory, pc, locals, 3, 100).count == 0,
               "behind-camera candidates are not guided");
+        {
+            // Melee rapid fire: projectiles from the map cache and enemy pawns.
+            constexpr uint32_t map = 0xc000, list = 0xc100, enemyShot = 0xd000, ownShot = 0xd400,
+                               laser = 0xd800, enemy = 0xe000, ally = 0xe800;
+            put(pawn + 0x454, 0);
+            check(!melee_rapid_fire(memory, pc), "melee capture needs aimed fire");
+            data[pawn + 0x454] = 24;
+            check(melee_rapid_fire(memory, pc), "attack type 24 is rapid fire");
+            real(pc + 0x6b8, 100); // AimShotAimPoint straight ahead of the camera.
+            put(world + 0x4ac, map);
+            put(map + 0xc0, list);
+            put(map + 0xc4, 3);
+            put(map + 0xc8, 3);
+            put(list, enemyShot);
+            put(list + 4, ownShot);
+            put(list + 8, laser);
+            for (auto actor : {enemyShot, ownShot, laser, enemy, ally})
+                put(actor + 0x20, 7);
+            real(enemyShot + 0x54, 1000);
+            real(enemyShot + 0x58, 30);
+            put(ownShot + 0x98, pawn);
+            real(ownShot + 0x54, 1000);
+            real(laser + 0x54, 1000);
+            put(world + 0x3d8, enemy);
+            put(enemy + 0x1e8, ally);
+            put(ally + 0x1e8, pawn);
+            put(enemy + 0x2d8, 100);
+            put(ally + 0x2d8, 100);
+            put(pawn + 0x2d8, 100);
+            data[enemy + 0x468] = 1;
+            real(enemy + 0x54, 800);
+            real(enemy + 0x58, -200);
+            real(ally + 0x54, 800);
+            auto classes = [&](uint32_t object, std::string_view cls) {
+                if (cls == "BCProj_Laser_Base")
+                    return object == laser;
+                if (cls == "BCPawn")
+                    return object == enemy || object == ally || object == pawn;
+                return false;
+            };
+            auto melee =
+                capture_melee_aim(memory, pc, 100, AimPriority::projectiles, 2.56f, classes);
+            check(melee.active && melee.valid && melee.count == 2 && melee.window_degrees == 2.56f,
+                  "melee capture keeps enemy shots and enemies, not own shots, lasers or allies");
+            check(melee.targets[0].projectile && melee.targets[0].reachable &&
+                      !melee.targets[1].projectile && !melee.targets[1].reachable,
+                  "projectiles first: enemies wait while a projectile is reachable");
+            melee = capture_melee_aim(memory, pc, 100, AimPriority::enemies, 2.56f, classes);
+            check(!melee.targets[0].reachable && melee.targets[1].reachable,
+                  "enemies first: projectiles wait while an enemy is reachable");
+            put(enemy + 0x2d8, 0);
+            melee = capture_melee_aim(memory, pc, 100, AimPriority::enemies, 2.56f, classes);
+            check(melee.count == 1 && melee.targets[0].reachable,
+                  "with no preferred kind left, the other kind is guided");
+            put(enemy + 0x2d8, 100);
+            put(enemyShot + 0x298, 0x1000000);
+            check(capture_melee_aim(memory, pc, 100, AimPriority::projectiles, 2.56f, classes)
+                          .count == 1,
+                  "exploded projectiles are not targets");
+            put(enemyShot + 0x298, 0);
+            ShootingBeacons meleeBeacons;
+            melee = capture_melee_aim(memory, pc, 100, AimPriority::projectiles, 2.56f, classes);
+            auto cue = meleeBeacons.update(melee);
+            check(cue.active && meleeBeacons.guiding().pointer == enemyShot,
+                  "beacon guides to the reachable projectile");
+            auto plain = melee;
+            plain.window_degrees = 0;
+            ShootingBeacons railStyle;
+            auto unscaled = railStyle.update(plain);
+            check(std::abs(cue.error - unscaled.error * 4.f / 2.56f) < .01f,
+                  "beacon turns continuous at the game's homing angle");
+            data[pawn + 0x454] = 0;
+        }
+        check(std::abs(melee_homing_degrees() - 2.5626f) < .01f &&
+                  std::abs(melee_homing_threshold(1) - .001f) < .00002f,
+              "native homing window is 1 - dot < 0.001, about 2.56 degrees");
+        check(std::abs(melee_homing_degrees(3) - 7.688f) < .01f &&
+                  melee_homing_degrees(20) == 30.f && melee_homing_degrees(-1) > 2.5f,
+              "boosted homing scales the angle and stays bounded");
+        check(aim_target_words(true, 0, 0) == "Projectile, ahead." &&
+                  aim_target_words(false, -.5f, .3f) == "Enemy, left, high." &&
+                  aim_target_words(false, .4f, -.1f) == "Enemy, right." &&
+                  aim_target_words(true, 0, -.4f) == "Projectile, low.",
+              "selected targets are described by kind and direction");
+        check(aim_priority("enemies") == AimPriority::enemies &&
+                  aim_priority("x") == AimPriority::projectiles &&
+                  std::string(aim_priority_name(AimPriority::enemies)) == "enemies",
+              "aim priority setting parses with projectiles as the default");
         BeaconSynth synth;
         std::array<float, 9600> samples{};
         BeaconCue tone{true, -1, 0, 10, 1, 100};

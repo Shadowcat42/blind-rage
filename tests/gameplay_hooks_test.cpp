@@ -60,7 +60,7 @@ int main() {
                        row = 0x5000, requests = 0x6000, buttons = 0x7000, info = 0xc000,
                        track = 0x2000;
         word(base, disc_profile.layout.names_global, names);
-        word(base, disc_profile.layout.names_global + 4, 80);
+        word(base, disc_profile.layout.names_global + 4, 96);
         auto name = [&](unsigned index, const char *text) {
             word(base, names + index * 4, entries + index * 0x80);
             std::memcpy(base + entries + index * 0x80 + 8, text, std::strlen(text) + 1);
@@ -326,6 +326,22 @@ int main() {
         for (unsigned i = 0; i < 3; ++i)
             word(base, inputRows + dpadRows[i] * 0x24, i == 2 ? 60 : 12 + i);
         word(base, node + 0x2c, indices[29]);
+        {
+            // D-pad Down (row 12) is the melee priority switch: absent rows do not
+            // disable rail commands, and in rail shooting it issues nothing.
+            name(75, "DPAD_DOWN");
+            word(base, inputRows + 12 * 0x24, 75);
+            auto flags = inputRows + 12 * 0x24 + 0x18;
+            word(base, flags, 0x80000000);
+            word(base, gauge + 0xc8, 0);
+            context[0] = input;
+            call_script(context.data(), base);
+            check(source.take(overflow).empty(), "D-pad Down issues nothing in rail shooting");
+            word(base, flags, 0);
+            context[0] = input;
+            call_script(context.data(), base);
+            source.take(overflow);
+        }
         for (unsigned i = 0; i < 3; ++i) {
             auto flags = inputRows + dpadRows[i] * 0x24 + 0x18;
             word(base, flags, 0);
@@ -597,9 +613,9 @@ int main() {
         check(events.size() == 1 && events[0].script_scene && !events[0].scene_active,
               "inherited close completion ends a script-owned choice scene");
         word(base, actor + 0x34, 0x1d400);
-        name(50, "BCGFxUI_Hud");
-        name(51, "Camera");
-        name(52, "BCGFxMoviePlayer");
+        name(78, "BCGFxUI_Hud");
+        name(79, "Camera");
+        name(80, "BCGFxMoviePlayer");
         name(53, "SE_UI_lockon1_Cue");
         word(base, pc + 0x34, 0x1d000);
         word(base, 0x1d000 + 0x2c, 3);
@@ -609,7 +625,7 @@ int main() {
         word(base, 0x19000 + 0x20, 90);
         word(base, 0x1b000 + 0x34, 0x1d200);
         word(base, 0x1d200 + 0x20, 101);
-        word(base, 0x1d200 + 0x2c, 51);
+        word(base, 0x1d200 + 0x2c, 79);
         word(base, 0x1d200 + 0x44, 0x1d300);
         word(base, 0x1d300 + 0x28, 0x1d200);
         word(base, 0x1d300 + 0x2c, indices[18]);
@@ -631,10 +647,12 @@ int main() {
             word(base, nn + 0x28, no);
             word(base, nn + 0x2c, indices[kind]);
             word(base, no + 0x2c,
-                 kind == 18                 ? 51
-                 : kind == 19 || kind == 20 ? 50
-                 : kind == 21               ? 52
-                 : kind == 29               ? 6 // BCPlayerInput.InputCheckTick
+                 kind == 18                 ? 79
+                 : kind == 19 || kind == 20 ? 78
+                 : kind == 21               ? 80
+                 : kind == 29               ? 6  // BCPlayerInput.InputCheckTick
+                 : kind == 35               ? 76 // BCPlayerController.PlayButtonEventPress_LockOn
+                 : kind == 36               ? 77 // BCPawn.SearchSetAimShotHomingTargetActor
                                             : 3);
             if (kind == 8) {
                 word(base, nl + 4, lockTarget);
@@ -657,7 +675,9 @@ int main() {
             ctx[4] = nf;
             ctx[5] = 0x18000 + kind * 8;
             call_script(ctx.data(), base);
-            check(ctx[0] == 0xfeed, "diagnostic observer preserves original return context");
+            // A lock-on press skipped during melee rapid fire never runs the original.
+            check(ctx[0] == 0xfeed || (kind == 35 && base[pawn + 0x454] == 24),
+                  "diagnostic observer preserves original return context");
         };
         bool allowAcquisition = false, driveLevels = false, driveSearch = false,
              fireReturnsTarget = true, endSearchInMenu = false;
@@ -945,6 +965,49 @@ int main() {
         invoke(29, input);
         invoke(33, pc);
         check(seenUp == 0 && seenRight == 0, "releasing L1 stops tracking");
+        {
+            // Melee rapid fire: L1 tracks, so the game's lock-on press is skipped only
+            // while aimed fire is active.
+            name(76, "BCPlayerController");
+            name(77, "BCPawn");
+            base[pawn + 0x454] = 24;
+            auto before = calls;
+            invoke(35, pc);
+            check(calls == before && source.lock_on_skips() == 1,
+                  "lock-on press is skipped during melee rapid fire");
+            base[pawn + 0x454] = 0;
+            invoke(35, pc);
+            check(calls == before + 1 && source.lock_on_skips() == 1,
+                  "lock-on press runs normally outside rapid fire");
+            // Boosted melee widens the homing constant in the function's bytecode,
+            // after checking the surrounding bytes, and restores it afterwards.
+            constexpr uint32_t script = 0x20000; // Clear of the per-kind locals.
+            const uint32_t function = 0x1e000 + 36 * 0x40;
+            word(base, function + 0x4c, script);
+            word(base, function + 0x50, 1220);
+            base[script + 0x387] = 0x16;
+            base[script + 0x388] = 0x1e;
+            word(base, script + 0x389, 0x3a83126f);
+            base[script + 0x38d] = 0x16;
+            source.homing_boost(3);
+            source.shooting(ShootingMode::boosted);
+            invoke(36, pawn);
+            check(cue_word(base + script + 0x389) ==
+                          std::bit_cast<uint32_t>(melee_homing_threshold(3)) &&
+                      source.homing_state() == 1 && source.homing_calls() == 1,
+                  "boosted widens the homing window before the search runs");
+            source.shooting(ShootingMode::beacons);
+            invoke(36, pawn);
+            check(cue_word(base + script + 0x389) == 0x3a83126f && source.homing_state() == 0,
+                  "leaving boosted restores the original homing constant");
+            source.shooting(ShootingMode::boosted);
+            invoke(36, pawn);
+            source.capture(false);
+            check(cue_word(base + script + 0x389) == 0x3a83126f,
+                  "stopping the mod restores the original homing constant");
+            source.capture(true);
+            source.shooting(ShootingMode::off);
+        }
         {
             // The game declines a candidate inside its angle limit (occluded or out
             // of lock range): guidance and tracking must stop treating it as a target.

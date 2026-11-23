@@ -117,8 +117,8 @@ static DWORD WINAPI run(void *) {
         // One settings file: mods/accessibility/accessibility.ini, the parent of dist.
         auto ini = (dir.parent_path() / L"accessibility.ini").wstring();
         write("CONFIG " + utf8(ini) + (fs::exists(ini) ? "" : " (missing; defaults in use)"));
-        std::vector<std::wstring> commands = {L"repeat",  L"mute",    L"dump",   L"status",
-                                              L"aimmode", L"aimprev", L"aimnext"};
+        std::vector<std::wstring> commands = {L"repeat",  L"mute",    L"dump",    L"status",
+                                              L"aimmode", L"aimprev", L"aimnext", L"aimpriority"};
         std::vector<HANDLE> events;
         for (auto &c : commands)
             events.push_back(
@@ -127,8 +127,9 @@ static DWORD WINAPI run(void *) {
         // virtual-key codes still mean Ctrl+Alt plus that key. A missing or empty
         // value uses the default; "None" disables the shortcut.
         constexpr UINT chord = MOD_CONTROL | MOD_ALT;
-        const Hotkey defaults[] = {{chord, VK_F2}, {chord, VK_F5},  {chord, VK_F8}, {chord, VK_F4},
-                                   {chord, VK_F9}, {chord, VK_F10}, {chord, VK_F12}};
+        const Hotkey defaults[] = {{chord, VK_F2},  {chord, VK_F5}, {chord, VK_F8},
+                                   {chord, VK_F4},  {chord, VK_F9}, {chord, VK_F10},
+                                   {chord, VK_F12}, {chord, VK_F11}};
         Hotkey hotkeys[10]{};
         for (size_t i = 0; i < commands.size(); i++) {
             wchar_t text[64]{};
@@ -169,7 +170,9 @@ static DWORD WINAPI run(void *) {
         if (!prompts.initialize(runtime, reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr)),
                                 *profile))
             write("Recomp prompt labels unavailable");
-        reader.button_labels([&](std::string_view token) {
+        // One label source for menus and tutorials. The recomp's prompt names do
+        // not cover the sticks, so keyboard stick tags stay unlabeled.
+        auto buttonLabel = [&](std::string_view token) {
             if (token == "LS" || token == "RS" || token == "R3") {
                 if (prompts.device() == PromptDevice::keyboard ||
                     prompts.device() == PromptDevice::unknown)
@@ -179,9 +182,9 @@ static DWORD WINAPI run(void *) {
                                                    : "Right stick press");
             }
             return prompts.button(token);
-        });
-        GameplayText gameplay({setting(L"subtitles", 1), setting(L"tutorials", 1)},
-                              [&](std::string_view tag) { return prompts.button(tag); });
+        };
+        reader.button_labels(buttonLabel);
+        GameplayText gameplay({setting(L"subtitles", 1), setting(L"tutorials", 1)}, buttonLabel);
         GameplayStatus status(
             [&](std::string_view tag) { return prompts.button(tag); },
             GetPrivateProfileIntW(L"gameplay", L"low_health_percent", 25, ini.c_str()));
@@ -225,6 +228,12 @@ static DWORD WINAPI run(void *) {
                           setting(L"status_button", 1));
         gameHooks.tracking(trackingStrength);
         gameHooks.shooting(shootingMode);
+        gameHooks.homing_boost(multiplier(L"boost_homing", 3.f));
+        wchar_t priorityText[32]{};
+        GetPrivateProfileStringW(L"gameplay", L"aim_priority", L"projectiles", priorityText, 32,
+                                 ini.c_str());
+        auto aimPriority = aim_priority(utf8(priorityText));
+        gameHooks.aim_priority(aimPriority);
         bool lockTraceEnabled =
             GetPrivateProfileIntW(L"diagnostics", L"lock_trace", 0, ini.c_str()) != 0;
         bool stableCone = shootingMode == ShootingMode::boosted;
@@ -287,15 +296,36 @@ static DWORD WINAPI run(void *) {
                 write("SHOOTING_MODE " + std::string(shooting_mode_name(shootingMode)));
                 if (notifications.focused() && !muted && speaking)
                     speech.speak(text, false);
+            } else if (command == 4) {
+                // Melee rapid fire: guide and track projectiles or enemies first.
+                aimPriority = aimPriority == AimPriority::projectiles ? AimPriority::enemies
+                                                                      : AimPriority::projectiles;
+                gameHooks.aim_priority(aimPriority);
+                beacons.reset();
+                WritePrivateProfileStringW(L"gameplay", L"aim_priority",
+                                           wide(aim_priority_name(aimPriority)).c_str(),
+                                           ini.c_str());
+                std::string text =
+                    aimPriority == AimPriority::enemies ? "Enemies first." : "Projectiles first.";
+                write("AIM_PRIORITY " + std::string(aim_priority_name(aimPriority)));
+                if (notifications.focused() && !muted && speaking)
+                    speech.speak(text, false);
             } else if (shooting_assisted(shootingMode) && lastAim &&
                        GetTickCount64() - lastAim->tick <= 200) {
                 auto cue = beacons.update(*lastAim, command == 1 ? -1 : 1);
                 gameHooks.tracking_focus(beacons.focus());
                 beacon_output(cue);
-                std::string text = lastAim->locks >= lastAim->maximum
-                                       ? "Volley full. Fire to continue."
-                                   : cue.active ? "Target cluster selected."
-                                                : "No unlocked target clusters.";
+                const bool melee = lastAim->window_degrees > 0;
+                bool projectile = false;
+                for (unsigned i = 0; i < lastAim->count; ++i)
+                    if (lastAim->targets[i].id == beacons.guiding())
+                        projectile = lastAim->targets[i].projectile;
+                std::string text =
+                    melee ? (cue.active ? aim_target_words(projectile, cue.pan, cue.elevation)
+                                        : "No targets.")
+                    : lastAim->locks >= lastAim->maximum ? "Volley full. Fire to continue."
+                    : cue.active                         ? "Target cluster selected."
+                                                         : "No unlocked target clusters.";
                 write("BEACON_CLUSTER " + text);
                 if (notifications.focused() && !muted && speaking)
                     speech.speak(text, false);
@@ -537,7 +567,11 @@ static DWORD WINAPI run(void *) {
                     " widened_checks=" + std::to_string(gameHooks.widenings()) +
                     " lock_position_matches=" + std::to_string(gameHooks.position_matches()) +
                     " lock_position_mismatches=" + std::to_string(gameHooks.position_mismatches()) +
-                    " tracking_nudges=" + std::to_string(gameHooks.tracking_nudges()));
+                    " tracking_nudges=" + std::to_string(gameHooks.tracking_nudges()) +
+                    " lock_on_skips=" + std::to_string(gameHooks.lock_on_skips()) +
+                    " homing_calls=" + std::to_string(gameHooks.homing_calls()) +
+                    " homing_hits=" + std::to_string(gameHooks.homing_hits()) +
+                    " homing_patch=" + std::to_string(gameHooks.homing_state()));
                 return;
             }
             auto menus = base ? reader.menus(memory) : std::vector<Menu>{};
@@ -614,7 +648,7 @@ static DWORD WINAPI run(void *) {
                     if (forceContext)
                         lastSpeech = describe(menus.back(), true, true);
                     if (forceContext || !dialogReturn.quiet(current))
-                        speech.speak(lastSpeech);
+                        speech.speak(lastSpeech, menu_interrupts(menus.back(), interruptText));
                     else
                         write("MENU_RETURN unchanged after a confirmed dialog; not announced");
                     spoken = current;
@@ -663,6 +697,8 @@ static DWORD WINAPI run(void *) {
                 shooting_command(1);
             if (name == L"aimnext")
                 shooting_command(2);
+            if (name == L"aimpriority")
+                shooting_command(4);
             if (name == L"status" && speaking && !muted) {
                 auto runtimeInstance = instance();
                 auto base = runtimeInstance ? membase(runtimeInstance) : nullptr;
