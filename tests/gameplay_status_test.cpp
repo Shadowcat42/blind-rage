@@ -23,6 +23,50 @@ static PresentationEvent event(PresentationKind kind, float value = 0, bool flag
 }
 int main() {
     try {
+        {
+            // Unlimited (infinity) gauge: silent until the episode allows Unlimited,
+            // then part of status, with ready and mode start/end announcements.
+            GameplayStatus unlimited([](std::string_view button) {
+                return controller_button(button, PromptDevice::playstation);
+            });
+            unlimited.apply(event(PresentationKind::health, .76f));
+            unlimited.apply(event(PresentationKind::burst, .97f));
+            unlimited.apply(event(PresentationKind::unlimited, 1));
+            check(unlimited.status() == "Health 76 percent. Burst 97 percent." &&
+                      unlimited.take().empty(),
+                  "Unlimited stays out of status before the episode allows it");
+            unlimited.apply(event(PresentationKind::unlimited_enabled, 0, true));
+            unlimited.apply(event(PresentationKind::unlimited, .4f));
+            check(unlimited.status() ==
+                      "Health 76 percent. Burst 97 percent. Unlimited 40 percent.",
+                  "status includes the Unlimited gauge once it is available");
+            check(unlimited.take().empty(), "ordinary Unlimited updates are quiet");
+            unlimited.apply(event(PresentationKind::unlimited, 1));
+            auto said = unlimited.take();
+            check(said.size() == 1 && said[0] == "Unlimited ready. L2.",
+                  "a full Unlimited gauge announces its button");
+            unlimited.apply(event(PresentationKind::unlimited, 1));
+            check(unlimited.take().empty(), "a full gauge is announced once");
+            unlimited.apply(event(PresentationKind::unlimited_mode, 0, true));
+            unlimited.apply(event(PresentationKind::unlimited, .6f));
+            said = unlimited.take();
+            check(said.size() == 1 && said[0] == "Unlimited Mode." &&
+                      unlimited.status().ends_with("Unlimited Mode, 60 percent left."),
+                  "Unlimited Mode is announced and status reports the time left");
+            unlimited.apply(event(PresentationKind::unlimited, 1));
+            check(unlimited.take().empty(), "a full time bar during the mode is not readiness");
+            unlimited.apply(event(PresentationKind::unlimited_mode, 0, false));
+            said = unlimited.take();
+            check(said.size() == 1 && said[0] == "Unlimited Mode ended.",
+                  "the end of Unlimited Mode is announced");
+            check(presentation_route("BCGFxUI_Gauge", "CallSetNextUnlimited") ==
+                          PresentationKind::unlimited &&
+                      presentation_route("BCGFxUI_Gauge", "CallSetUnlimitedMode") ==
+                          PresentationKind::unlimited_mode &&
+                      presentation_route("BCGFxUI_Gauge", "CallSetUnlimitedButtonVisible") ==
+                          PresentationKind::unlimited_enabled,
+                  "Unlimited gauge calls are routed");
+        }
         GameplayStatus status([](std::string_view button) {
             return controller_button(button, PromptDevice::playstation);
         });

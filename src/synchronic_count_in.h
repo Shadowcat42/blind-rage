@@ -47,7 +47,10 @@ class CountInSynth {
         return out;
     }
     // start: the steady-clock time at which the first rendered frame is heard.
-    void render(const CountInCue &cue, float gain, float *out, unsigned frames, int64_t start) {
+    // audible: false while the stream is muted (a paused game clock); beats
+    // rendered then are not recorded as played, so they can still sound later.
+    void render(const CountInCue &cue, float gain, float *out, unsigned frames, int64_t start,
+                bool audible = true) {
         auto level = std::isfinite(gain) ? std::clamp(gain, 0.f, .4f) : 0.f;
         if (cue.active && played_generation_.load() != cue.generation) {
             for (auto &beat : played_)
@@ -64,8 +67,15 @@ class CountInSynth {
                     auto t = float(double(start - begin) / 1e9 + double(i) / 48000.);
                     if (t < 0 || t >= kCountInLength)
                         continue;
-                    if (!played_[size_t(beat)].load())
-                        played_[size_t(beat)] = start + int64_t(double(i) * 1e9 / 48000.);
+                    // A reschedule after a pause can move a beat that already sounded
+                    // into the future again; it is not repeated.
+                    const auto at = start + int64_t(double(i) * 1e9 / 48000.);
+                    const auto heard = played_[size_t(beat)].load();
+                    // The 30-ms margin lets a beat finish when a small resync shifts it.
+                    if (heard && at - heard >= int64_t(kCountInLength * 1e9) + 30'000'000)
+                        continue;
+                    if (!heard && audible)
+                        played_[size_t(beat)] = at;
                     auto envelope =
                         std::clamp(std::min(t, kCountInLength - t) / kCountInEdge, 0.f, 1.f);
                     auto frequency = beat == kCountInBeats - 1 ? kCountInHigh : kCountInLow;
@@ -79,14 +89,33 @@ class CountInSynth {
     // clock for every block would shift the tone's phase at each block boundary
     // (heard as crackle) and jitter the beats; resync only after real drift.
     void render_stream(const CountInCue &cue, float gain, float *out, unsigned frames,
-                       int64_t estimate) {
+                       int64_t estimate, int64_t now = 0) {
         if (!next_ || std::llabs(estimate - next_) > 15'000'000)
             next_ = estimate;
-        render(cue, gain, out, frames, next_);
+        // Follow the game's clock: while it stops advancing (a pausing tutorial
+        // popup, the pause menu), the count-in fades out instead of running on.
+        // The resumed key state reschedules it, so the beats still ahead play once.
+        const bool live = !clock_ || (now ? now : steady_ns()) - clock_->load() <= kCountInStaleNs;
+        render(cue, gain, out, frames, next_, live);
         next_ += int64_t(frames) * 1'000'000'000 / 48000;
+        const float target = live ? 1.f : 0.f, step = 1.f / (kCountInEdge * 48000.f);
+        for (unsigned i = 0; i < frames; ++i) {
+            gate_ =
+                gate_ < target ? std::min(target, gate_ + step) : std::max(target, gate_ - step);
+            out[i * 2] *= gate_;
+            out[i * 2 + 1] *= gate_;
+        }
     }
+    // Steady-clock time of the last update in which the synchronic track's own
+    // clock advanced (set by the gameplay hooks). Configure before streaming.
+    void clock(const std::atomic<int64_t> *source) {
+        clock_ = source;
+    }
+    static constexpr int64_t kCountInStaleNs = 150'000'000;
 
   private:
+    const std::atomic<int64_t> *clock_{};
+    float gate_ = 1.f;
     int64_t next_{};
     std::atomic<uint64_t> played_generation_{};
     std::array<std::atomic<int64_t>, kCountInBeats> played_{};

@@ -12,6 +12,7 @@ class GameplayStatus {
         gauge_ = {};
         health_.reset();
         burst_.reset();
+        unlimited_ = {};
         visible_ = false;
         lowAnnounced_ = false;
         ready_ = {};
@@ -44,10 +45,41 @@ class GameplayStatus {
                         burst_ = percent(event.value);
                 }
                 if (visible_ && health_ && *health_ <= low_ && !lowAnnounced_) {
-                    pending_.push_back({false, movie, {}});
+                    pending_.push_back({Notice::low_health, movie, {}});
                     lowAnnounced_ = true;
                 }
                 break;
+            case PresentationKind::unlimited:
+            case PresentationKind::unlimited_mode:
+            case PresentationKind::unlimited_enabled: {
+                if (gauge_ != movie) {
+                    gauge_ = movie;
+                    health_.reset();
+                    burst_.reset();
+                    unlimited_ = {};
+                    visible_ = false;
+                    lowAnnounced_ = false;
+                }
+                auto &u = unlimited_;
+                if (event.kind == PresentationKind::unlimited_enabled)
+                    u.enabled = event.flag;
+                else if (event.kind == PresentationKind::unlimited_mode) {
+                    if (event.flag != u.mode)
+                        pending_.push_back(
+                            {event.flag ? Notice::mode_start : Notice::mode_end, movie, {}});
+                    u.mode = event.flag;
+                    u.full = false;
+                } else {
+                    u.value = percent(event.value);
+                    // Ready once the gauge fills, outside the mode (whose value is
+                    // the time left) and only while Unlimited is available.
+                    bool full = !u.mode && *u.value >= 100;
+                    if (full && !u.full && u.enabled)
+                        pending_.push_back({Notice::unlimited_ready, movie, {}});
+                    u.full = full;
+                }
+                break;
+            }
             case PresentationKind::gauge_end:
                 closed(movie);
                 break;
@@ -58,7 +90,7 @@ class GameplayStatus {
                 if (event.type.utf8() == "BURST" && event.tag.utf8().starts_with("BurstButton")) {
                     if (ready_.movie != movie || ready_.tag != event.tag.utf8()) {
                         ready_ = {movie, event.tag.utf8(), true, true};
-                        pending_.push_back({true, movie, ready_.tag});
+                        pending_.push_back({Notice::burst_ready, movie, ready_.tag});
                     }
                 }
                 break;
@@ -71,7 +103,7 @@ class GameplayStatus {
                     else
                         ready_.enabled = event.flag;
                     if (!was && ready_.available())
-                        pending_.push_back({true, movie, ready_.tag});
+                        pending_.push_back({Notice::burst_ready, movie, ready_.tag});
                 }
                 break;
             case PresentationKind::button_success:
@@ -93,8 +125,14 @@ class GameplayStatus {
         if (!health_ || !burst_)
             return std::string("Health and Burst status is not available.") +
                    (ready_.available() ? " Burst ready." : "");
+        std::string unlimited;
+        if (unlimited_.enabled && unlimited_.value)
+            unlimited =
+                unlimited_.mode
+                    ? " Unlimited Mode, " + std::to_string(*unlimited_.value) + " percent left."
+                    : " Unlimited " + std::to_string(*unlimited_.value) + " percent.";
         return "Health " + std::to_string(*health_) + " percent. Burst " + std::to_string(*burst_) +
-               " percent." + (ready_.available() ? " Burst ready." : "");
+               " percent." + unlimited + (ready_.available() ? " Burst ready." : "");
     }
     std::string status(Movie movie) const {
         return movie == gauge_ ? status() : std::string{};
@@ -112,6 +150,7 @@ class GameplayStatus {
             gauge_ = {};
             health_.reset();
             burst_.reset();
+            unlimited_ = {};
             visible_ = false;
             lowAnnounced_ = false;
         }
@@ -122,12 +161,23 @@ class GameplayStatus {
         std::vector<std::string> out;
         for (const auto &pending : pending_) {
             std::string text;
-            if (pending.burst) {
+            if (pending.kind == Notice::burst_ready) {
                 if (ready_.movie != pending.movie || ready_.tag != pending.tag ||
                     !ready_.available())
                     continue;
                 auto label = label_ ? label_("RT") : "RT";
                 text = "Burst ready" + (label.empty() ? std::string(".") : ". " + label + ".");
+            } else if (pending.kind == Notice::unlimited_ready) {
+                if (gauge_ != pending.movie || !unlimited_.full || !unlimited_.enabled)
+                    continue;
+                // The tutorial: "Unlimited Mode can be activated by pressing <LT>".
+                auto label = label_ ? label_("LT") : "LT";
+                text = "Unlimited ready" + (label.empty() ? std::string(".") : ". " + label + ".");
+            } else if (pending.kind == Notice::mode_start || pending.kind == Notice::mode_end) {
+                if (gauge_ != pending.movie)
+                    continue;
+                text = pending.kind == Notice::mode_start ? "Unlimited Mode."
+                                                          : "Unlimited Mode ended.";
             } else {
                 if (gauge_ != pending.movie || !visible_ || !health_ || *health_ > low_)
                     continue;
@@ -153,10 +203,15 @@ class GameplayStatus {
         }
     };
     struct Notice {
-        bool burst{};
+        enum Kind { low_health, burst_ready, unlimited_ready, mode_start, mode_end } kind{};
         Movie movie{};
         std::string tag;
     };
+    struct Unlimited {
+        std::optional<int> value;
+        bool enabled{}, mode{}, full{};
+    };
+    Unlimited unlimited_;
     ButtonLabel label_;
     int low_;
     Movie gauge_{};

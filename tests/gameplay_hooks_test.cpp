@@ -198,6 +198,27 @@ int main() {
         events = source.take(overflow);
         check(events.size() == 1 && events[0].sync.window && events[0].sync.cue,
               "the press cue fires 0.2 s before the perfect time on the track clock");
+        word(base, locals + 4, std::bit_cast<uint32_t>(1.32f));
+        context[0] = track;
+        call_script(context.data(), base);
+        check(source.take(overflow).empty(), "an advancing clock alone publishes nothing");
+        {
+            // A pausing popup stops the track clock; when it moves again the key is
+            // republished with a fresh reading so the count-in reschedules at once.
+            Sleep(200);
+            word(base, locals + 4, std::bit_cast<uint32_t>(1.33f));
+            context[0] = track;
+            call_script(context.data(), base);
+            events = source.take(overflow);
+            check(events.size() == 1 && events[0].sync.active &&
+                      std::abs(events[0].sync.until - .17f) < .001f,
+                  "a resumed track clock republishes the key with the remaining time");
+            word(base, locals + 4, std::bit_cast<uint32_t>(1.34f));
+            context[0] = track;
+            call_script(context.data(), base);
+            check(source.take(overflow).empty(),
+                  "only the first reading after a pause republishes");
+        }
         windowResult = false;
         context[0] = track;
         call_script(context.data(), base);

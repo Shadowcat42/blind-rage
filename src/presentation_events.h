@@ -62,6 +62,9 @@ enum class PresentationKind {
     tutorial_box,
     health,
     burst,
+    unlimited,
+    unlimited_mode,
+    unlimited_enabled,
     gauge_visible,
     gauge_end,
     button_create,
@@ -104,6 +107,16 @@ inline PresentationKind presentation_route(std::string_view owner, std::string_v
             return PresentationKind::health;
         if (function == "CallSetBurst" || function == "CallSetNextBurst")
             return PresentationKind::burst;
+        // TickGauge sends the Unlimited (infinity) gauge every frame: its fill, or
+        // during Unlimited Mode the time left. SetUnlimitedMode reports the mode's
+        // start/end; IsDebugVisible shows the Unlimited button while the episode
+        // allows Unlimited (bActionExciteCore) outside cinematics.
+        if (function == "CallSetUnlimited" || function == "CallSetNextUnlimited")
+            return PresentationKind::unlimited;
+        if (function == "CallSetUnlimitedMode")
+            return PresentationKind::unlimited_mode;
+        if (function == "CallSetUnlimitedButtonVisible")
+            return PresentationKind::unlimited_enabled;
         if (function == "CallShowGauge")
             return PresentationKind::gauge_visible;
         if (function == "CallDest")
@@ -238,6 +251,16 @@ bool capture_presentation(Read &&read, uint32_t frame, PresentationKind kind,
             event.flag = (visible & 0x80000000) != 0; // BCGaugeFlagData.bNow, reflected mask.
             return std::isfinite(event.value) && event.value >= 0 && event.value <= 1;
         }
+        case PresentationKind::unlimited: {
+            uint32_t value{}, visible{};
+            if (!word(locals, value) || !word(movie + 0x1e0, visible))
+                return false;
+            event.value = std::bit_cast<float>(value);
+            event.flag = (visible & 0x80000000) != 0;
+            return std::isfinite(event.value) && event.value >= 0 && event.value <= 100;
+        }
+        case PresentationKind::unlimited_mode:
+        case PresentationKind::unlimited_enabled:
         case PresentationKind::gauge_visible: {
             uint32_t value{};
             if (!word(locals, value))
@@ -310,10 +333,12 @@ class PresentationFilter {
                 if (entry.movie == event.movie && (end || entry.tag == tag))
                     entry = {};
         bool flag = event.kind == PresentationKind::gauge_visible ||
+                    event.kind == PresentationKind::unlimited_mode ||
+                    event.kind == PresentationKind::unlimited_enabled ||
                     event.kind == PresentationKind::button_visible ||
                     event.kind == PresentationKind::button_active;
         if (event.kind != PresentationKind::health && event.kind != PresentationKind::burst &&
-            !flag)
+            event.kind != PresentationKind::unlimited && !flag)
             return true;
         auto value =
             flag ? int(event.flag) : int(std::lround(event.value * 100)) * 2 + int(event.flag);

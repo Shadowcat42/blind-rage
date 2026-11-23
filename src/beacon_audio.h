@@ -77,6 +77,10 @@ template <class Synth, class Cue> class ToneStream {
     const Synth &synth() const {
         return synth_;
     }
+    // Configuration before start() only; the audio thread owns the synth after.
+    Synth &synth() {
+        return synth_;
+    }
     void close() {
         if (stop_)
             SetEvent(stop_);

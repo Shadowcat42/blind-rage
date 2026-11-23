@@ -116,7 +116,7 @@ The pulse period decreases from 350 ms at 45 degrees of aiming error to 55 ms
 at zero error. Pulses have a 55-ms body with short edge ramps. Below eight degrees
 the gaps progressively fill, becoming a continuous tone at four degrees or less.
 This indicates close alignment, not confirmation of a native lock. The existing
-700-Hz middle pitch, elevation mapping, stereo pan and configured peak gain remain.
+525-Hz middle pitch (the synchronic count-in's low beat), elevation mapping, stereo pan and configured peak gain remain.
 The waveform and envelope keep running smoothly as aiming error changes.
 
 Only one cluster is guided. Candidates group within an 8-degree seed radius and

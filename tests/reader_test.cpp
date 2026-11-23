@@ -13,6 +13,38 @@ static void check(bool v, const char *message) {
 int main(int argc, char **argv) {
     try {
         {
+            // Episode records read the episode the bar shows: m_select[m_cursor]
+            // (GetSelectParamIdx), not the main object's m_cursor. Here the bar's
+            // third slot maps to data entry 1, as a remapped list would.
+            std::vector<uint8_t> bytes(0x1000);
+            auto put = [&](uint32_t at, uint32_t value) {
+                for (unsigned i = 0; i < 4; ++i)
+                    bytes[at + i] = uint8_t(value >> (24 - 8 * i));
+            };
+            Memory memory([&](uint32_t at, void *out, size_t n) {
+                if (uint64_t(at) + n > bytes.size())
+                    return false;
+                memcpy(out, bytes.data() + at, n);
+                return true;
+            });
+            put(0x100 + 0x38, 0x200);
+            put(0x100 + 0x3c, 3);
+            for (uint32_t slot = 0; slot < 3; ++slot) {
+                put(0x200 + slot * 4, 0x300 + slot * 0x10);
+                bytes[0x300 + slot * 0x10] = 4; // Integer entry.
+                put(0x300 + slot * 0x10 + 8, slot == 2 ? 1 : slot);
+            }
+            Members bar{{"m_select", {6, 0x100, 0, false}}, {"m_cursor", {3, 0, 2, false}}};
+            auto chosen = Reader::selected_episode(memory, bar, 4);
+            check(chosen && *chosen == 1, "records follow the bar's selected episode entry");
+            bar["m_cursor"].number = 3;
+            check(!Reader::selected_episode(memory, bar, 4),
+                  "a cursor past the bar's list selects nothing");
+            bar["m_cursor"].number = 2;
+            check(!Reader::selected_episode(memory, bar, 1),
+                  "an entry outside the episode data is rejected");
+        }
+        {
             Menu question;
             question.modal = true;
             question.items = {{"Yes", "", true}, {"No", "", true}};

@@ -272,11 +272,44 @@ static DWORD WINAPI run(void *) {
             if (audioReady && beaconAudio.healthy())
                 beaconAudio.update(cue);
         };
+        // Walking guidance to the nearest touch trigger not yet entered.
+        const bool walkEnabled = setting(L"walk_beacon", 1);
+        gameHooks.walk_beacon(walkEnabled);
+        BeaconAudio walkAudio;
+        AudioRetry walkRetry;
+        bool walkReady = false;
+        uint64_t walkTarget = 0;
+        auto walk_output = [&](BeaconCue cue) {
+            if (!notifications.focused() || muted || !walkEnabled)
+                cue.active = false;
+            if (cue.active && !(walkReady && walkAudio.healthy()) &&
+                walkRetry.due(GetTickCount64())) {
+                walkAudio.close();
+                walkReady = walkAudio.start(cueGain);
+                if (walkReady)
+                    walkRetry.success();
+                else
+                    walkRetry.failure(GetTickCount64());
+                write(walkReady ? "WALK_AUDIO ready" : "WALK_AUDIO unavailable");
+            }
+            if (walkReady && walkAudio.healthy())
+                walkAudio.update(cue);
+        };
         auto drain_beacons = [&] {
             if (auto sample = gameHooks.take_aim()) {
                 lastAim = *sample;
                 beacon_output(beacons.update(*sample));
                 gameHooks.tracking_focus(beacons.focus());
+            }
+            if (auto walk = gameHooks.take_walk()) {
+                auto cue = walk_cue(*walk);
+                if (cue.active && cue.generation != walkTarget)
+                    write("WALK_TARGET distance=" + std::to_string(int(walk->distance)) +
+                          " bearing=" + std::to_string(int(walk->bearing)) +
+                          " remaining=" + std::to_string(walk->remaining));
+                if (cue.active)
+                    walkTarget = cue.generation;
+                walk_output(cue);
             }
         };
         auto shooting_command = [&](int command) {
@@ -430,6 +463,8 @@ static DWORD WINAPI run(void *) {
         };
         // The synchronic count-in: started on first use, rebuilt after a device error.
         CountInAudio countInAudio;
+        // The count-in follows the synchronic track's clock and stops while it pauses.
+        countInAudio.synth().clock(gameHooks.timing_clock());
         AudioRetry countInRetry;
         bool countInReady = false;
         int64_t countInPerfect = 0;
@@ -760,6 +795,7 @@ static DWORD WINAPI run(void *) {
                         countInAudio.silence();
                         beacons.reset();
                         beaconAudio.silence();
+                        walkAudio.silence();
                         lastAim.reset();
                         reader.clear_script_scenes();
                         if (textHooks)
@@ -933,8 +969,10 @@ static DWORD WINAPI run(void *) {
                     if (message.message == WindowNotifications::focus_message) {
                         bool was = notifications.focused();
                         bool focused = notifications.update();
-                        if (!focused)
+                        if (!focused) {
                             beaconAudio.silence();
+                            walkAudio.silence();
+                        }
                         if (focused && !was) {
                             forceContext = true;
                             source.request_discovery();
@@ -955,6 +993,7 @@ static DWORD WINAPI run(void *) {
         }
         gameHooks.capture(false);
         beaconAudio.close();
+        walkAudio.close();
         countInAudio.close();
         drain_lock_trace();
         presentations.capture(false);

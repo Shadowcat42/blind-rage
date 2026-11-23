@@ -7,6 +7,7 @@
 #include "lock_trace.h"
 #include "shooting_beacons.h"
 #include "melee_aim.h"
+#include "walk_beacon.h"
 #include <atomic>
 #include <windows.h>
 
@@ -157,11 +158,19 @@ class GameplayHooks {
         ++epoch_;
         queue_.clear();
         aim_mailbox_.clear();
+        walk_mailbox_.clear();
         if (!enabled) {
             trace_.stop();
             restore_homing();
         }
         enabled_ = enabled;
+    }
+    void walk_beacon(bool enabled) {
+        walk_enabled_ = enabled;
+        walk_mailbox_.clear();
+    }
+    std::optional<WalkSnapshot> take_walk() {
+        return walk_mailbox_.take();
     }
     void aim_priority(AimPriority priority) {
         priority_ = priority;
@@ -175,6 +184,10 @@ class GameplayHooks {
     }
     bool boosted_melee() const {
         return mode_.load() == ShootingMode::boosted && homing_boost_.load() > 1;
+    }
+    // Steady-clock time when a synchronic track's clock last advanced.
+    const std::atomic<int64_t> *timing_clock() const {
+        return &timing_clock_;
     }
     uint64_t lock_on_skips() const {
         return lock_on_skips_.load();
@@ -323,6 +336,11 @@ class GameplayHooks {
         std::optional<StickNudge> tracking_choice;
         uint64_t last_guide{};
         std::map<std::pair<uint32_t, std::string>, bool> classes;
+        uint32_t clock_source{};
+        float clock_now = NAN;
+        std::vector<uint32_t> walk_events;
+        uint32_t walk_world{};
+        uint64_t walk_refreshed{};
     };
     static Thread &thread() {
         static thread_local Thread state;
@@ -576,6 +594,21 @@ class GameplayHooks {
             ++failures_;
             return;
         }
+        // The track clock (UpdateNormal's NowTime) stops while the game is paused.
+        // When it moves again after a pause, the key state is republished with a
+        // fresh clock reading so the count-in reschedules at once and plays every
+        // beat still ahead, instead of waiting for the next state change (the cue,
+        // 0.2 s before the key) and losing the low beats in between.
+        bool resumed = false;
+        if (now && std::isfinite(*now) &&
+            (state.clock_source != source || state.clock_now != *now)) {
+            const auto at = steady_ns();
+            resumed = state.clock_source == source &&
+                      at - timing_clock_.load() > CountInSynth::kCountInStaleNs;
+            state.clock_source = source;
+            state.clock_now = *now;
+            timing_clock_ = at;
+        }
         auto it = std::find_if(state.timings.begin(), state.timings.end(),
                                [&](const TimingBinding &item) {
                                    return item.source == source && item.index == value.index &&
@@ -598,7 +631,7 @@ class GameplayHooks {
         if (reset || (!it->last.active && value.active))
             it->generation = ++generation_;
         value.generation = it->generation;
-        if (!it->published || value != it->last) {
+        if (!it->published || value != it->last || (resumed && value.active)) {
             it->last = value;
             it->published = true;
             GameplayEvent event;
@@ -683,6 +716,24 @@ class GameplayHooks {
                     snapshot.active = snapshot.active && enabled_.load();
                     aim_mailbox_.put(snapshot);
                     state.tracking = snapshot;
+                    SetEvent(event_);
+                } else if (walk_enabled_.load() && !(state.locks && state.locks->pc == source) &&
+                           subclass(memory, state.reader, source, "BCPlayerController")) {
+                    auto classes = [&](uint32_t object, std::string_view cls) {
+                        return cached_subclass(memory, state, object, cls);
+                    };
+                    const auto now = GetTickCount64();
+                    // The trigger list changes only as levels stream; refresh it
+                    // every two seconds with a bounded walk of the loaded sequences.
+                    if (now - state.walk_refreshed >= 2000 ||
+                        state.walk_world != memory.u32(source + 0xd4)) {
+                        state.walk_world = memory.u32(source + 0xd4);
+                        state.walk_events = walk_touch_events(memory, state.walk_world, classes);
+                        state.walk_refreshed = now;
+                    }
+                    auto walk = capture_walk(memory, source, now, state.walk_events, classes);
+                    walk.active = walk.active && enabled_.load();
+                    walk_mailbox_.put(walk);
                     SetEvent(event_);
                 }
                 return true;
@@ -1035,6 +1086,8 @@ class GameplayHooks {
             state.blocked.clear();
             state.tracking_choice.reset();
             state.last_guide = 0;
+            state.walk_events.clear();
+            state.walk_refreshed = 0;
             state.epoch = epoch;
         }
         Memory memory(Read{base});
@@ -1476,6 +1529,9 @@ class GameplayHooks {
     std::atomic<AimPriority> priority_{AimPriority::projectiles};
     std::atomic<float> homing_boost_{3.f};
     std::atomic<uint64_t> lock_on_skips_{}, homing_calls_{}, homing_hits_{};
+    std::atomic<int64_t> timing_clock_{};
+    std::atomic<bool> walk_enabled_{true};
+    LatestMailbox<WalkSnapshot> walk_mailbox_;
     NativeHooks hooks_;
     const BuildProfile *profile_{};
     std::array<Function, 3> original_{};

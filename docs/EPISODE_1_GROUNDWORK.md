@@ -94,7 +94,12 @@ strings and per-category grades. Its StoryNo/DiffIdx/ReturnValue offsets are
 0/0x0c/0x10 in both inspected captures. Copied data is bounded and keyed by movie
 identity, episode and difficulty; a grade is used only when its label and value
 match the visible widget. Overall ranks come from the selected episode's rank
-string. Flash selects rank frames directly on this screen, leaving `m_rankIdx`
+string. The selected episode is the one the panel's own ActionScript uses:
+`SetData` calls `SetIndex(_parent.m_instBar.GetSelectParamIdx())`, which is
+`m_data[bar.m_select[bar.m_cursor]]`, the same entry the episode list shows.
+The main object's `m_cursor` stays 0 and does not follow the selection (live
+dumps on Episode 3), so it is not used. `SetRecord` draws each category's rank
+icon on its row, so the per-category grades are on screen too. Flash selects rank frames directly on this screen, leaving `m_rankIdx`
 unchanged; that property must not be used as the record grade.
 
 Right-stick presses use the existing movie `FilterButtonInput` dispatcher and

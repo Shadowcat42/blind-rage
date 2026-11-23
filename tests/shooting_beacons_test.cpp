@@ -1,4 +1,4 @@
-#include "../src/melee_aim.h"
+#include "../src/walk_beacon.h"
 #include <iostream>
 #include <stdexcept>
 using namespace a11y;
@@ -377,6 +377,69 @@ int main() {
             check(std::abs(cue.error - unscaled.error * 4.f / 2.56f) < .01f,
                   "beacon turns continuous at the game's homing angle");
             data[pawn + 0x454] = 0;
+            {
+                // Walking: nearest touch trigger not yet entered, nested sequences
+                // included, quiet while an enemy is alive.
+                constexpr uint32_t level = 0xf000, seqs = 0xf100, seq = 0xf200, items = 0xf300,
+                                   fired = 0xf400, ahead = 0xf500, nested = 0xf600,
+                                   nestedItems = 0xf680, behind = 0xf700, triggers = 0x10000;
+                put(world + 0x28, level);
+                put(level + 0xa0, seqs);
+                put(level + 0xa4, 1);
+                put(seqs, seq);
+                put(seq + 0xb0, items);
+                put(seq + 0xb4, 3);
+                put(items, fired);
+                put(items + 4, ahead);
+                put(items + 8, nested);
+                put(nested + 0xb0, nestedItems);
+                put(nested + 0xb4, 1);
+                put(nestedItems, behind);
+                unsigned n = 0;
+                for (auto event : {fired, ahead, behind}) {
+                    auto trigger = triggers + n++ * 0x100;
+                    put(event + 0x20, 9);
+                    put(event + 0xb8, trigger);
+                    put(event + 0xd0, 0x80000000);
+                    put(trigger + 0x20, 3);
+                }
+                put(fired + 0xc4, 1);
+                real(triggers + 0x100 + 0x54, 1000); // ahead
+                real(triggers + 0x200 + 0x54, -500); // behind, nearer
+                data[pawn + 0x466] = 1;
+                auto walkClasses = [&](uint32_t object, std::string_view cls) {
+                    if (cls == "SeqEvent_Touch")
+                        return object == fired || object == ahead || object == behind;
+                    if (cls == "Sequence")
+                        return object == nested;
+                    return classes(object, cls);
+                };
+                auto events = walk_touch_events(memory, world, walkClasses);
+                check(events.size() == 3, "touch triggers are found in nested level sequences");
+                auto walk = capture_walk(memory, pc, 100, events, walkClasses);
+                check(walk.active && walk.valid && walk.enemies && walk.remaining == 2 &&
+                          walk.target.pointer == behind && std::abs(walk.distance - 500) < .1f,
+                      "nearest unfired trigger is chosen; fired ones are skipped");
+                check(!walk_cue(walk).active, "walking guidance stays quiet while enemies live");
+                put(enemy + 0x2d8, 0);
+                walk = capture_walk(memory, pc, 100, events, walkClasses);
+                auto cue = walk_cue(walk);
+                check(!walk.enemies && cue.active && std::abs(std::abs(cue.pan) - 1) < .01f &&
+                          std::abs(525.f * std::pow(2.f, cue.elevation * .65f) - 440.f) < .5f,
+                      "a trigger behind plays at 440 Hz, panned fully to one side");
+                put(behind + 0xc4, 1);
+                walk = capture_walk(memory, pc, 100, events, walkClasses);
+                cue = walk_cue(walk);
+                check(walk.target.pointer == ahead && cue.elevation == 0 &&
+                          std::abs(cue.pan) < .01f && std::abs(cue.error - 15.f) < .01f,
+                      "the next trigger ahead plays at 525 Hz, centred, pulsing by distance");
+                data[pawn + 0x454] = 24;
+                check(!capture_walk(memory, pc, 100, events, walkClasses).active,
+                      "walking guidance yields to rapid fire");
+                data[pawn + 0x454] = 0;
+                data[pawn + 0x466] = 0;
+                put(enemy + 0x2d8, 100);
+            }
         }
         check(std::abs(melee_homing_degrees() - 2.5626f) < .01f &&
                   std::abs(melee_homing_threshold(1) - .001f) < .00002f,
@@ -407,14 +470,16 @@ int main() {
         {
             BeaconSynth triangle;
             BeaconCue aligned{true, -1, 0, 0, 1, 100};
-            triangle.render(aligned, .2f, samples.data(), 4800, 100);
-            triangle.render(aligned, .2f, samples.data(), 4800, 100);
+            // 0.2 s holds a whole number of 525-Hz cycles for the harmonic check.
+            std::vector<float> tone(19200);
+            triangle.render(aligned, .2f, tone.data(), 9600, 100);
+            triangle.render(aligned, .2f, tone.data(), 9600, 100);
             auto harmonic = [&](unsigned multiple) {
                 double real = 0, imaginary = 0;
-                for (unsigned i = 0; i < 4800; ++i) {
-                    auto angle = 6.283185307179586 * 700 * multiple * i / 48000.;
-                    real += samples[i * 2] * std::cos(angle);
-                    imaginary += samples[i * 2] * std::sin(angle);
+                for (unsigned i = 0; i < 9600; ++i) {
+                    auto angle = 6.283185307179586 * 525 * multiple * i / 48000.;
+                    real += tone[i * 2] * std::cos(angle);
+                    imaginary += tone[i * 2] * std::sin(angle);
                 }
                 return std::hypot(real, imaginary);
             };
@@ -425,7 +490,7 @@ int main() {
             for (unsigned block = 0; block < 10; ++block) {
                 double energy = 0;
                 for (unsigned i = block * 480; i < (block + 1) * 480; ++i)
-                    energy += samples[i * 2] * samples[i * 2];
+                    energy += tone[i * 2] * tone[i * 2];
                 check(energy > 1, "aligned beacon has no silent pulse gaps");
             }
             check(std::all_of(samples.begin(), samples.end(),
@@ -452,7 +517,7 @@ int main() {
             for (unsigned block = 0; block < 10; ++block) {
                 double energy = 0;
                 for (unsigned i = block * 480; i < (block + 1) * 480; ++i)
-                    energy += samples[i * 2] * samples[i * 2];
+                    energy += tone[i * 2] * tone[i * 2];
                 check(energy > .1,
                       "near-aligned pulse gaps fill before the fully continuous range");
             }

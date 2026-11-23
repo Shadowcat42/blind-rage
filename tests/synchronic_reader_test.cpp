@@ -104,6 +104,73 @@ int main() {
         for (size_t i = 2; i < joined.size(); i += 2)
             jump = std::max(jump, std::abs(joined[i] - joined[i - 2]));
         check(jump < .03f, "streamed blocks keep the tone continuous across block edges");
+        {
+            // A pausing tutorial popup stops the track clock: the count-in goes quiet
+            // and stays quiet until the clock advances again.
+            std::atomic<int64_t> clock{10'300'000'000};
+            CountInSynth paused;
+            paused.clock(&clock);
+            auto loudest = [&](CountInSynth &s, int64_t from, int64_t to, bool resume) {
+                float best = 0;
+                for (int64_t at = from; at < to; at += 10'000'000) {
+                    if (resume)
+                        clock = at;
+                    s.render_stream(*count, .2f, block.data(), 480, at, at);
+                    for (size_t i = 0; i < block.size(); i += 2)
+                        best = std::max(best, std::abs(block[i]));
+                }
+                return best;
+            };
+            check(loudest(paused, 10'000'000'000, 10'100'000'000, false) > .1f,
+                  "beats play while the track clock is current");
+            loudest(paused, 10'100'000'000, 10'460'000'000, false); // Clock still current.
+            check(loudest(paused, 10'460'000'000, 11'200'000'000, false) == 0,
+                  "beats due while the game is paused stay silent");
+            CountInSynth resumed;
+            resumed.clock(&clock);
+            check(loudest(resumed, 10'950'000'000, 11'100'000'000, true) > .1f,
+                  "beats play again once the track clock advances");
+        }
+        {
+            // Episode 3: the popup pauses the game just after the second beat; the
+            // key resumes 4 s later with 0.667 s left and is rescheduled. The second
+            // beat lands just after the resume again but has already sounded, so it
+            // is not repeated; the third and the high beat play once each.
+            std::atomic<int64_t> clock{0};
+            CountInSynth synth;
+            synth.clock(&clock);
+            CountInCue cue{11'000'000'000, 10'000'000'000, 77, true};
+            auto stream = [&](CountInSynth &s, const CountInCue &c, int64_t from, int64_t to,
+                              bool advance) {
+                std::vector<float> all;
+                for (int64_t at = from; at < to; at += 10'000'000) {
+                    if (advance)
+                        clock = at;
+                    s.render_stream(c, .2f, block.data(), 480, at, at);
+                    all.insert(all.end(), block.begin(), block.end());
+                }
+                return all;
+            };
+            auto loud = [](const std::vector<float> &all, int64_t from, int64_t at, int64_t to) {
+                float best = 0;
+                for (auto i = size_t((at - from) * 48 / 1'000'000);
+                     i < size_t((to - from) * 48 / 1'000'000) && i * 2 < all.size(); ++i)
+                    best = std::max(best, std::abs(all[i * 2]));
+                return best;
+            };
+            auto before = stream(synth, cue, 10'000'000'000, 10'360'000'000, true);
+            check(loud(before, 10'000'000'000, 10'010'000'000, 10'060'000'000) > .1f &&
+                      loud(before, 10'000'000'000, 10'340'000'000, 10'360'000'000) > .1f,
+                  "first two beats sound before the pause");
+            stream(synth, cue, 10'360'000'000, 14'360'000'000, false); // Paused.
+            cue.perfect = 14'360'000'000 + 667'000'000;                // Resumed and rescheduled.
+            auto after = stream(synth, cue, 14'360'000'000, 15'200'000'000, true);
+            check(loud(after, 14'360'000'000, 14'360'000'000, 14'420'000'000) == 0,
+                  "the second beat is not repeated after the resume");
+            check(loud(after, 14'360'000'000, 14'697'000'000, 14'747'000'000) > .1f &&
+                      loud(after, 14'360'000'000, 15'027'000'000, 15'077'000'000) > .1f,
+                  "the third and the high beat play after the resume");
+        }
         CountInCue late{11'000'000'000, 10'500'000'000, 9, true};
         std::fill(samples.begin(), samples.end(), 0.f);
         synth.render(late, .2f, samples.data(), 96000, 10'000'000'000);

@@ -615,7 +615,8 @@ class BeaconSynth {
             generation_ = cue.generation;
         }
         auto pan = std::isfinite(cue.pan) ? std::clamp(cue.pan, -1.f, 1.f) : 0.f;
-        auto frequency = 700.f * std::pow(2.f, std::isfinite(cue.elevation)
+        // Middle pitch matches the synchronic count-in's low beat (525 Hz).
+        auto frequency = 525.f * std::pow(2.f, std::isfinite(cue.elevation)
                                                    ? std::clamp(cue.elevation, -1.f, 1.f) * .65f
                                                    : 0.f);
         auto error = std::isfinite(cue.error) ? std::clamp(cue.error, 0.f, 45.f) : 45.f;

@@ -734,17 +734,10 @@ class Reader {
         // The accessibility cursor browses an immutable record table. Revalidate
         // the live episode identity, rather than decoding every widget per press.
         auto fields = members(m, m.u32(record_browser_.root + 0x1c8));
-        auto data = get(fields, "m_data"), cursor = get(fields, "m_cursor");
-        if (!data || data->type != 6 || !cursor || (cursor->type != 3 && cursor->type != 4) ||
-            !std::isfinite(cursor->number) || cursor->number < 0 || cursor->number > 255 ||
-            std::floor(cursor->number) != cursor->number)
+        auto entry = selected_episode_entry(m, fields);
+        if (!entry)
             return {};
-        auto count = m.u32(data->pointer + 0x3c), entries = m.u32(data->pointer + 0x38);
-        if (!entries || count > 256 || uint32_t(cursor->number) >= count)
-            return {};
-        auto entry = m.u32(entries + uint32_t(cursor->number) * 4);
-        if (m.u8(entry) != 6 ||
-            value_text(m, get(members(m, m.u32(entry + 4)), "Tag")) != record_browser_.story)
+        if (value_text(m, get(members(m, m.u32(*entry + 4)), "Tag")) != record_browser_.story)
             return {};
         record_browser_.move(command);
         auto menu = record_panels_[record_browser_.difficulty];
@@ -757,24 +750,62 @@ class Reader {
     bool move_record(const Memory &m, uint32_t movie, int command) {
         return navigate_record(m, movie, command).has_value();
     }
-    std::optional<Menu> record_menu(const Memory &m, uint32_t movie, const Members &fields) {
-        auto reference = get(fields, "m_instRecord"), data = get(fields, "m_data"),
-             cursor = get(fields, "m_cursor");
-        if (!reference || reference->type != 7 || !data || data->type != 6 || !cursor ||
+    // An m_select entry: a number (type 3 double or 4 int) indexing m_data.
+    static std::optional<uint32_t> episode_entry_index(const Memory &m, uint32_t value,
+                                                       uint32_t records) {
+        auto type = m.u8(value);
+        double index =
+            type == 4
+                ? double(int32_t(m.u32(value + 8)))
+                : std::bit_cast<double>((uint64_t(m.u32(value + 8)) << 32) | m.u32(value + 12));
+        if ((type != 3 && type != 4) || !std::isfinite(index) || index < 0 || index >= records ||
+            std::floor(index) != index)
+            return {};
+        return uint32_t(index);
+    }
+    // The episode bar's GetSelectParamIdx: m_select[m_cursor], an index into m_data.
+    static std::optional<uint32_t> selected_episode(const Memory &m, const Members &bar,
+                                                    uint32_t records) {
+        auto selection = get(bar, "m_select"), cursor = get(bar, "m_cursor");
+        if (!selection || selection->type != 6 || !cursor ||
             (cursor->type != 3 && cursor->type != 4) || !std::isfinite(cursor->number) ||
-            cursor->number < 0 || cursor->number > 255 ||
-            std::floor(cursor->number) != cursor->number)
+            cursor->number < 0 || std::floor(cursor->number) != cursor->number)
+            return {};
+        auto count = m.u32(selection->pointer + 0x3c);
+        if (!count || count > 256 || cursor->number >= count)
+            return {};
+        return episode_entry_index(
+            m, m.u32(m.u32(selection->pointer + 0x38) + uint32_t(cursor->number) * 4), records);
+    }
+    // The record panel's own SetData reads SetIndex(_parent.m_instBar.GetSelectParamIdx()),
+    // i.e. m_data[bar.m_select[bar.m_cursor]], the same entry the episode list shows.
+    // The main object's m_cursor does not follow the selected episode.
+    std::optional<uint32_t> selected_episode_entry(const Memory &m, const Members &fields) {
+        auto data = get(fields, "m_data"), bar = get(fields, "m_instBar");
+        if (!data || data->type != 6 || !bar || bar->type != 7)
+            return {};
+        auto count = m.u32(data->pointer + 0x3c), entries = m.u32(data->pointer + 0x38);
+        if (!entries || count > 256)
+            return {};
+        auto index = selected_episode(m, members(m, m.u32(m.u32(bar->pointer + 4) + 0x1c8)), count);
+        if (!index)
+            return {};
+        auto entry = m.u32(entries + *index * 4);
+        if (m.u8(entry) != 6)
+            return {};
+        return entry;
+    }
+    std::optional<Menu> record_menu(const Memory &m, uint32_t movie, const Members &fields) {
+        auto reference = get(fields, "m_instRecord");
+        if (!reference || reference->type != 7)
             return {};
         auto panel = m.u32(reference->pointer + 4);
         if (!panel || !visible(m, panel))
             return {};
-        auto count = m.u32(data->pointer + 0x3c), entries = m.u32(data->pointer + 0x38);
-        if (!entries || count > 256 || uint32_t(cursor->number) >= count)
+        auto entry = selected_episode_entry(m, fields);
+        if (!entry)
             return {};
-        auto entry = m.u32(entries + uint32_t(cursor->number) * 4);
-        if (m.u8(entry) != 6)
-            return {};
-        auto selected = members(m, m.u32(entry + 4));
+        auto selected = members(m, m.u32(*entry + 4));
         auto story = value_text(m, get(selected, "Tag"));
         auto ranks = value_text(m, get(selected, "Rank"));
         if (story.empty() || ranks.size() != 3 ||
@@ -1026,17 +1057,11 @@ class Reader {
                                 auto indexes = m.u32(selection->pointer + 0x38);
                                 auto entries = m.u32(data->pointer + 0x38);
                                 for (uint32_t i = 0; i < count; ++i) {
-                                    auto value = m.u32(indexes + i * 4);
-                                    auto type = m.u8(value);
-                                    double index = type == 4
-                                                       ? double(int32_t(m.u32(value + 8)))
-                                                       : std::bit_cast<double>(
-                                                             (uint64_t(m.u32(value + 8)) << 32) |
-                                                             m.u32(value + 12));
-                                    if ((type != 3 && type != 4) || !std::isfinite(index) ||
-                                        index < 0 || index >= records || std::floor(index) != index)
+                                    auto index =
+                                        episode_entry_index(m, m.u32(indexes + i * 4), records);
+                                    if (!index)
                                         break;
-                                    auto record = m.u32(entries + uint32_t(index) * 4);
+                                    auto record = m.u32(entries + *index * 4);
                                     if (m.u8(record) != 6)
                                         break;
                                     auto row = members(m, m.u32(record + 4));
