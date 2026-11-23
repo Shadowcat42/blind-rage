@@ -1,0 +1,53 @@
+name: Release
+# Pushing a version tag (for example v0.1.0) builds, tests and packages the mod,
+# then publishes a GitHub release with the package and that version's changelog.
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read this version's changelog
+        shell: pwsh
+        run: |
+          $version = '${{ github.ref_name }}'.TrimStart('v')
+          $notes = [System.Collections.Generic.List[string]]::new()
+          $found = $false
+          foreach ($line in Get-Content CHANGELOG.md) {
+            if ($line -match '^## (\S+)') {
+              if ($found) { break }
+              $found = $Matches[1] -eq $version
+              continue
+            }
+            if ($found) { $notes.Add($line) }
+          }
+          if (!$found) { throw "CHANGELOG.md has no '## $version' section. Add one before tagging." }
+          ($notes -join "`n").Trim() | Set-Content -Encoding utf8 release-notes.md
+          "VERSION=$version" | Add-Content $env:GITHUB_ENV
+      - name: Fetch pinned dependencies
+        shell: pwsh
+        run: ./bootstrap.ps1
+      - name: Check C++ formatting
+        shell: pwsh
+        run: ./format.ps1 -Check
+      - name: Build and run synthetic tests
+        shell: pwsh
+        run: ./build.ps1 -Test
+      - name: Package
+        shell: pwsh
+        run: |
+          ./package.ps1
+          $asset = "artifacts/blind-rage-$env:VERSION-windows-x64.zip"
+          Move-Item artifacts/blind-rage-windows-x64.zip $asset
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          [IO.Compression.ZipFile]::OpenRead((Resolve-Path $asset)).Entries.FullName
+          "ASSET=$asset" | Add-Content $env:GITHUB_ENV
+      - name: Publish release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create '${{ github.ref_name }}' $env:ASSET --title "Blind Rage $env:VERSION" --notes-file release-notes.md --verify-tag

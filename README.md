@@ -116,6 +116,18 @@ The log records every spoken line (`SPEAK`), plus gameplay markers such as `GAME
 
 `./format.ps1` formats the C++ source and tests with the pinned clang-format; `./format.ps1 -Check` only checks. `package.ps1` builds `artifacts/blind-rage-windows-x64.zip` from an explicit file list.
 
+### Releasing
+
+1. Add a section for the new version to [CHANGELOG.md](CHANGELOG.md), headed `## 0.2.0` for example, and commit it.
+2. Tag that commit with the version and push the tag:
+
+   ```powershell
+   git tag v0.2.0
+   git push origin v0.2.0
+   ```
+
+The [release workflow](.github/workflows/release.yml) then builds and tests the mod from a clean checkout, packages it, and publishes a GitHub release named after the version, with that changelog section as its notes and `blind-rage-0.2.0-windows-x64.zip` attached. It stops without publishing if the changelog has no section for the tag, or if any test fails. Fix the problem, then delete and push the tag again.
+
 Developer notes: [build profiles](docs/BUILD_PROFILES.md), [event-driven menu reader](docs/HOOK_RESEARCH.md), [text narration](docs/GAMEPLAY_TEXT_READER.md), [input prompts](docs/INPUT_PROMPTS.md), [gameplay systems](docs/GAMEPLAY_SYSTEMS.md), [Synchronic timing](docs/SYNCHRONIC_TIMING.md), [lock tracing](docs/LOCK_TRACE.md) and the [roadmap](docs/ROADMAP.md). Earlier research: [gameplay cues](docs/GAMEPLAY_CUE_RESEARCH.md), [QTE input](docs/QTE_INPUT_RESEARCH.md) and [Episode 1 groundwork](docs/EPISODE_1_GROUNDWORK.md).
 
 Contributions should keep new support in the shared readers and the single narration pipeline, and add a synthetic test for each fixed failure. Never include game or recomp code, extracted assets, saves or memory captures.

@@ -2,7 +2,7 @@
 
 ## 0.1.0 (first public release)
 
-First public release for the Mark2 2026.11.01.1627 disc and title-update builds of the Asura's Wrath PC recompilation.
+First public release for the Mark2 2026.11.01.1627 builds of the Asura's Wrath PC recompilation (title update recommended).
 
 - Spoken menus: settings, episode select, records, results, collections, confirmations and Control Settings, including the Custom key editor.
 - Spoken subtitles, tutorials and quick-time events, with button names for your controller or key bindings.
