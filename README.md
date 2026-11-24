@@ -8,7 +8,7 @@ This is an independent, experimental mod. **You need the PC recompilation and yo
 
 - **Controller is the primary way to play.** Xbox and PlayStation button names follow the recomp's own button-icon setting.
 - **Keyboard and mouse support is still in progress.** Prompts name your bound keys, and most of the game can be played that way, but some prompts still need work. Some actions also don't respond to the keyboard (for example lock-on target switching; see [known issues](#known-issues)).
-- Episodes 1 to 5 have been played with the mod. Later episodes haven't been tested yet, so expect gaps.
+- Episodes 1 to 7 have been played with the mod. Later episodes haven't been tested yet, so expect gaps.
 
 ## Compatibility
 
@@ -98,7 +98,7 @@ Settings live in `mods/accessibility/accessibility.ini`. The package doesn't inc
 - **Keyboard:** lock-on target switching didn't respond to the arrow keys or the mouse in testing. The recomp's mouse control (`mnk_mouse`, on by default) means the arrow keys don't act as the right stick; the Ctrl+arrow shortcuts are the mod's replacement. Other keyboard prompts may still be worded wrongly.
 - **Episode 5:** counter prompts for incoming missiles can come too late to react to.
 - **Control Settings:** browsing with the right stick needs a nearly full tilt.
-- **Recomp setup:** installing the recomp and game data currently needs OCR.
+- **Setup:** Blind Rage's first-time setup has been tested by two players; the PC version's own graphical setup still needs OCR.
 - Holding L1 once stayed stuck on an unknown target.
 
 ## Diagnostics
