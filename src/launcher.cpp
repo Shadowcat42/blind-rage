@@ -54,7 +54,10 @@ static DWORD remote_call(HANDLE process, uintptr_t fn, void *arg) {
 int wmain(int argc, wchar_t **argv) {
     try {
         auto dir = module_path().parent_path();
-        auto root = fs::exists(dir / L"mods" / L"accessibility")
+        // The installation is this folder when the mod or the game is beside the
+        // launcher; otherwise this is a development build in mods/accessibility/dist.
+        auto here = [&](const wchar_t *name) { return fs::exists(dir / name); };
+        auto root = here(L"mods") || here(L"AsurasWrath.exe") || here(L"bin") || here(L"bin_disc")
                         ? dir
                         : dir.parent_path().parent_path().parent_path();
         auto dist = root / L"mods" / L"accessibility" / L"dist";
@@ -92,6 +95,14 @@ int wmain(int argc, wchar_t **argv) {
                 throw std::runtime_error(
                     "Usage: BlindRage.exe [--build auto|disc|updated] [--setup] [--check] [--attach PID] [--command repeat|mute|dump|status|aimmode|aimprev|aimnext|aimpriority|rsup|rsdown|rsleft|rsright]");
         }
+        // BlindRage.exe copied without the rest of the package cannot load the mod.
+        if (!checkOnly && command.empty() &&
+            (!fs::exists(dist / L"asura_accessibility.dll") || !fs::exists(dist / L"prism.dll")))
+            throw std::runtime_error(
+                "Blind Rage's files are missing: " + utf8(dist.wstring()) +
+                " does not contain asura_accessibility.dll and prism.dll. Extract the whole "
+                "Blind Rage package into the folder with AsurasWrath.exe, so the mods folder sits "
+                "next to BlindRage.exe.");
         // Setup: add the title update or DLC later (the "Blind Rage setup" shortcut).
         if (setupMode) {
             RecompSetup(root).extras();
