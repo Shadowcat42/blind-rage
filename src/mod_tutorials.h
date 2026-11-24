@@ -1,0 +1,143 @@
+#pragma once
+// The mod's own tutorial boxes: content and sequencing. The boxes are the
+// game's pausing tutorial box (see docs/MOD_TUTORIALS_RESEARCH.md); the wording
+// was agreed with the player (docs/MOD_TUTORIAL_TEXT.md).
+#include <cstddef>
+#include <cstdint>
+#include <string>
+#include <string_view>
+#include <vector>
+namespace a11y {
+enum class TutorialSound { none, lock_tone, full_lock_tone, beacon };
+struct TutorialBox {
+    std::string text;
+    // Played after the box is confirmed, while the game is unpaused, so a game
+    // sound is not cut and nothing overlaps speech. The next box opens once
+    // `delay_ms` has passed.
+    TutorialSound after = TutorialSound::none;
+    uint32_t delay_ms = 0;
+};
+// Button names as the player's controls call them.
+struct TutorialLabels {
+    std::string cross = "cross", square = "square", triangle = "triangle", l1 = "L1";
+    std::string dpad_up = "up on the D-pad", dpad_left_right = "left or right on the D-pad";
+};
+inline std::string tutorial_fill(std::string text, const TutorialLabels &labels) {
+    const std::pair<std::string_view, const std::string *> names[]{
+        {"{cross}", &labels.cross},       {"{square}", &labels.square},
+        {"{triangle}", &labels.triangle}, {"{l1}", &labels.l1},
+        {"{dpad_up}", &labels.dpad_up},   {"{dpad_left_right}", &labels.dpad_left_right}};
+    for (auto [token, value] : names)
+        for (size_t at; (at = text.find(token)) != std::string::npos;) {
+            text.replace(at, token.size(), *value);
+            // A name that starts a sentence is capitalized.
+            bool starts =
+                at == 0 || (at >= 2 && text[at - 1] == ' ' &&
+                            (text[at - 2] == '.' || text[at - 2] == '?' || text[at - 2] == '!'));
+            if (starts && at < text.size() && text[at] >= 'a' && text[at] <= 'z')
+                text[at] = char(text[at] - 'a' + 'A');
+        }
+    return text;
+}
+// Episode 1's first rail-shooting section.
+inline std::vector<TutorialBox> rail_shooting_tutorial(const TutorialLabels &labels) {
+    std::vector<TutorialBox> boxes{
+        {"Welcome to Asura's Wrath! Before you get to punching, welcome to the wonderful world "
+         "of the rail shooter. In these sections, the game moves Asura and the camera for you, "
+         "along a set route. You don't steer, but you can dodge with {cross}, which later "
+         "episodes may expect of you. You aim a reticle with the left stick and fire at what "
+         "comes at you. Pressing or holding {square} fires a constant stream of fast, but weak "
+         "shots. {triangle}, though slower, fires a number of homing projectiles based off how "
+         "many targets are currently locked... more on this next."},
+        {"As you move your reticle over targets, they're locked onto. Think of it as marking "
+         "multiple targets. You can only mark so many at once. You will know when a target is "
+         "locked because of this beep, which gets higher as you mark more.",
+         TutorialSound::lock_tone, 900},
+        {"When you hear this sound, it means you have maxed out the number of targets you can "
+         "possibly hit. Press {triangle} to unleash your wrath and fire homing shots at all "
+         "marked targets.",
+         TutorialSound::full_lock_tone, 900},
+        {"An audio beacon leads your aim to a group of targets. Left or right in your ears "
+         "means left or right. Higher or lower pitch means above or below, respectively. The "
+         "pulses speed up as your aim closes in, and become a steady tone when you're on "
+         "target.",
+         TutorialSound::beacon, 1200},
+        {"Pressing {dpad_up} will change your aiming mode: no guidance, the beacon, or the "
+         "beacon with a wider locking cone than normal for slightly assisted aiming. "
+         "{dpad_left_right} will change which enemy cluster the beacon is pointing at, however "
+         "you shouldn't need this often. Don't feel like manually aiming? Hold {l1} for auto "
+         "aim, and just blast away."}};
+    for (auto &box : boxes)
+        box.text = tutorial_fill(box.text, labels);
+    return boxes;
+}
+// Steps through a run of boxes, driven by the tutorial box's own updates.
+class TutorialSequence {
+  public:
+    struct Action {
+        enum Kind { none, open, play, finished, failed } kind = none;
+        size_t box = 0;
+        TutorialSound sound = TutorialSound::none;
+    };
+    explicit TutorialSequence(std::vector<TutorialBox> boxes) : boxes_(std::move(boxes)) {}
+    const std::vector<TutorialBox> &boxes() const {
+        return boxes_;
+    }
+    bool done() const {
+        return done_;
+    }
+    // `paused`: the game's tutorial pause is on (the box's bUsePause flag).
+    Action update(uint64_t now, bool paused) {
+        if (done_)
+            return {};
+        if (!started_) {
+            started_ = true;
+            return open(0, now);
+        }
+        if (open_) {
+            if (paused) {
+                seen_paused_ = true;
+                return {};
+            }
+            // A box that never paused the game did not open.
+            if (!seen_paused_) {
+                if (now - opened_ < kOpenTimeoutMs)
+                    return {};
+                done_ = true;
+                return {Action::failed, current_};
+            }
+            // Confirmed: the game cleared its pause.
+            open_ = false;
+            const auto &box = boxes_[current_];
+            wait_until_ = now + box.delay_ms;
+            if (box.after != TutorialSound::none)
+                return {Action::play, current_, box.after};
+        }
+        if (now < wait_until_)
+            return {};
+        if (current_ + 1 >= boxes_.size()) {
+            done_ = true;
+            return {Action::finished, current_};
+        }
+        return open(current_ + 1, now);
+    }
+    static constexpr uint64_t kOpenTimeoutMs = 2000;
+
+  private:
+    Action open(size_t box, uint64_t now) {
+        current_ = box;
+        open_ = true;
+        seen_paused_ = false;
+        opened_ = now;
+        if (boxes_.empty()) {
+            done_ = true;
+            return {Action::finished};
+        }
+        return {Action::open, box};
+    }
+    std::vector<TutorialBox> boxes_;
+    size_t current_ = 0;
+    bool started_ = false, open_ = false, seen_paused_ = false, done_ = false;
+    uint64_t opened_ = 0, wait_until_ = 0;
+};
+} // namespace a11y

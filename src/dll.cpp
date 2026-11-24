@@ -268,6 +268,10 @@ static DWORD WINAPI run(void *) {
         AudioRetry audioRetry;
         bool audioReady = false, audioAnnounced = false;
         auto beacon_output = [&](BeaconCue cue) {
+            // A running mod tutorial holds the live beacon back: its demonstrations
+            // play between boxes and must not be covered.
+            if (gameHooks.tutorial_running())
+                return;
             if (!notifications.focused() || muted || !shooting_assisted(shootingMode))
                 cue.active = false;
             // Start on first need and rebuild after a device error, with backoff.
@@ -292,6 +296,27 @@ static DWORD WINAPI run(void *) {
                 beaconAudio.update(cue);
         };
         // Walking guidance to the nearest touch trigger not yet entered.
+        // The mod's own tutorial boxes (Episode 1's rail-shooting introduction).
+        const bool modTutorials = setting(L"mod_tutorials", 1);
+        gameHooks.mod_tutorials(modTutorials);
+        uint64_t tutorialLevel = 0, beaconDemo = 0;
+        auto beacon_demo = [&] {
+            if (!notifications.focused() || muted)
+                return;
+            if (!(audioReady && beaconAudio.healthy())) {
+                beaconAudio.close();
+                audioReady = beaconAudio.start(cueGain);
+            }
+            if (!audioReady)
+                return;
+            // On target: centred, middle pitch, continuous, for one second.
+            BeaconCue cue;
+            cue.active = true;
+            cue.tick = GetTickCount64();
+            cue.hold_ms = 1000;
+            cue.generation = ~0ull - ++beaconDemo;
+            beaconAudio.update(cue);
+        };
         const bool walkEnabled = setting(L"walk_beacon", 1);
         gameHooks.walk_beacon(walkEnabled);
         BeaconAudio walkAudio;
@@ -956,6 +981,71 @@ static DWORD WINAPI run(void *) {
                                                 forceContext = false;
                                             }
                                         }
+                                } else if (event.tutorial_level) {
+                                    auto level = reader.object_name(memory, event.tutorial_level);
+                                    write("MOD_TUTORIAL rail shooting in " + level);
+                                    uint64_t key = uint64_t(event.tutorial_level) << 32 |
+                                                   event.tutorial_level_index;
+                                    if (level == "BC-S000" && key != tutorialLevel) {
+                                        tutorialLevel = key;
+                                        GameplayHooks::TutorialRun run;
+                                        const auto &layout = reader.layout();
+                                        auto advertise = ScriptLookup::find(
+                                            memory, reader, layout, "BCGFxUI_Advertise", "Class");
+                                        run.advertise_class = advertise;
+                                        run.create = ScriptLookup::function(
+                                            memory, reader, advertise, "CallCreate");
+                                        run.show = ScriptLookup::function(memory, reader, advertise,
+                                                                          "ShowAdvertise");
+                                        run.sound = ScriptLookup::function(
+                                            memory, reader, advertise, "PlayGFxUISound");
+                                        auto [offset, mask] = ScriptLookup::property(
+                                            memory, reader, advertise, "bUsePause");
+                                        run.use_pause_offset = offset;
+                                        run.use_pause_mask = mask;
+                                        run.lock_tone = ScriptLookup::find(memory, reader, layout,
+                                                                           "SE_UI_lockon1_Cue",
+                                                                           "SoundCue", "SE_UI");
+                                        run.full_lock_tone = ScriptLookup::find(
+                                            memory, reader, layout, "SE_UI_lockon2_Cue", "SoundCue",
+                                            "SE_UI");
+                                        auto names = memory.u32(layout.names_global + 4);
+                                        for (uint32_t i = 0;
+                                             i < names && i < 250000 && !run.tick_name; ++i)
+                                            if (reader.name(memory, i) == "Tick")
+                                                run.tick_name = i;
+                                        TutorialLabels labels;
+                                        auto label = [&](std::string_view token, std::string &out) {
+                                            if (auto name = prompts.button(token); !name.empty())
+                                                out = name;
+                                        };
+                                        label("A", labels.cross);
+                                        label("X", labels.square);
+                                        label("Y", labels.triangle);
+                                        label("LB", labels.l1);
+                                        auto up = prompts.dpad_key("up"),
+                                             left = prompts.dpad_key("left"),
+                                             right = prompts.dpad_key("right");
+                                        if (!up.empty())
+                                            labels.dpad_up = up;
+                                        if (!left.empty() && !right.empty())
+                                            labels.dpad_left_right = left + " or " + right;
+                                        run.boxes = rail_shooting_tutorial(labels);
+                                        if (run.valid()) {
+                                            gameHooks.start_tutorial(std::move(run));
+                                            write("MOD_TUTORIAL rail shooting started");
+                                        } else
+                                            write("MOD_TUTORIAL unavailable: lookup incomplete");
+                                    }
+                                } else if (event.tutorial_step) {
+                                    constexpr const char *steps[] = {
+                                        "", "opened", "sound", "finished", "failed", "beacon"};
+                                    write("MOD_TUTORIAL box " +
+                                          std::to_string(event.tutorial_box + 1) + " " +
+                                          (event.tutorial_step < 6 ? steps[event.tutorial_step]
+                                                                   : "unknown"));
+                                    if (event.tutorial_step == GameplayHooks::tutorial_beacon)
+                                        beacon_demo();
                                 } else if (event.shooting_command) {
                                     if (notifications.focused() &&
                                         capture_status_context(memory, event.status.input, false) ==

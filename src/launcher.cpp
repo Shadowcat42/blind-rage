@@ -1,7 +1,41 @@
 #include "platform.h"
 #include "restart_support.h"
+#include "settings_file.h"
+#include "default_settings.h"
+#include <fstream>
 #include <iostream>
+#include <sstream>
 using namespace a11y;
+// Creates accessibility.ini from the built-in defaults, or adds new settings and
+// drops retired ones while keeping every value already set. A failure is
+// reported but does not stop the launch: the mod then uses its defaults.
+static void refresh_settings(const fs::path &path) {
+    std::optional<std::string> existing;
+    if (fs::exists(path)) {
+        std::ifstream in(path, std::ios::binary);
+        std::ostringstream text;
+        text << in.rdbuf();
+        if (!in && !in.eof()) {
+            std::cerr << "Could not read " << utf8(path.wstring()) << "\n";
+            return;
+        }
+        existing = text.str();
+    }
+    auto update = update_settings(
+        kDefaultSettings, existing ? std::optional<std::string_view>(*existing) : std::nullopt);
+    if (!update.created && !update.changed)
+        return;
+    std::error_code ignored;
+    fs::create_directories(path.parent_path(), ignored);
+    std::ofstream out(path, std::ios::binary | std::ios::trunc);
+    out << update.text;
+    if (!out) {
+        std::cerr << "Could not write " << utf8(path.wstring()) << "\n";
+        return;
+    }
+    std::cout << (update.created ? "Created accessibility.ini with default settings.\n"
+                                 : "Updated accessibility.ini; existing values kept.\n");
+}
 static DWORD remote_call(HANDLE process, uintptr_t fn, void *arg) {
     HANDLE thread =
         CreateRemoteThread(process, nullptr, 0, (LPTHREAD_START_ROUTINE)fn, arg, 0, nullptr);
@@ -135,6 +169,8 @@ int wmain(int argc, wchar_t **argv) {
                       << "\n";
             return 0;
         }
+        if (command.empty())
+            refresh_settings(root / L"mods" / L"accessibility" / L"accessibility.ini");
         if (!pid) {
             if (!command.empty())
                 throw std::runtime_error("No running game");

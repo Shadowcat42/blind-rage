@@ -382,6 +382,9 @@ struct BeaconCue {
     bool active{};
     float pan{}, elevation{}, error{};
     uint64_t generation{}, tick{};
+    // How long the cue stays audible without a fresh update; 0 means 200 ms.
+    // Live guidance refreshes every frame; a demonstration holds one cue.
+    uint32_t hold_ms{};
 };
 class ShootingBeacons {
   public:
@@ -607,9 +610,9 @@ class ShootingBeacons {
 class BeaconSynth {
   public:
     void render(const BeaconCue &cue, float gain, float *out, unsigned frames, uint64_t now) {
-        bool audible = cue.active && now >= cue.tick && now - cue.tick <= 200 &&
-                       std::isfinite(cue.pan) && std::isfinite(cue.elevation) &&
-                       std::isfinite(cue.error);
+        bool audible =
+            cue.active && now >= cue.tick && now - cue.tick <= (cue.hold_ms ? cue.hold_ms : 200u) &&
+            std::isfinite(cue.pan) && std::isfinite(cue.elevation) && std::isfinite(cue.error);
         if (generation_ != cue.generation) {
             pulse_ = 0;
             generation_ = cue.generation;

@@ -1,4 +1,5 @@
 #include "../src/gameplay_hooks.h"
+#include "../src/script_calls.h"
 #include <iostream>
 #include <stdexcept>
 using namespace a11y;
@@ -48,6 +49,71 @@ extern "C" __declspec(noinline) void movie_event_target(void *context, uint8_t *
 }
 int main() {
     try {
+        {
+            // Calling a script function: the parameter block, its string data and the
+            // registers ProcessEvent receives, all restored afterwards.
+            ScriptFunction function;
+            function.function = 0x41000000;
+            function.parms_size = 0x20;
+            ScriptCall call(0x40000000, function);
+            call.u32(0, 0x01020304);
+            call.u8(4, 4);
+            call.string(8, "Hi");
+            call.string(0x14, "");
+            auto placed = call.placed(0x70000100);
+            check(placed[0] == 1 && placed[3] == 4 && placed[4] == 4, "big-endian parameters");
+            check(placed[8] == 0x70 && placed[11] == 0x20 && placed[15] == 3 && placed[19] == 3,
+                  "string points past the block with count including the terminator");
+            check(placed[0x21] == 'H' && placed[0x23] == 'i' && placed[0x24] == 0 &&
+                      placed[0x25] == 0,
+                  "UTF-16 big-endian string data");
+            check(placed[0x14] == 0 && placed[0x18] == 0, "an empty string has no data");
+            check(!script_call_frame(0, 16) && !script_call_frame(0xe0000100, 16) &&
+                      !script_call_frame(0x8000, 16),
+                  "unsuitable stacks are refused");
+            auto frame = script_call_frame(0x70010000, call.size());
+            check(frame && *frame % 16 == 0 && *frame + 0x100 + call.size() <= 0x70010000 - 0x100,
+                  "frame stays below the stack pointer with room for the callee");
+            alignas(8) uint8_t context[0x110]{};
+            guest_context::set(context, guest_context::r1, 0x70010000);
+            guest_context::set(context, guest_context::r3, 11);
+            guest_context::set(context, guest_context::r4, 12);
+            guest_context::set(context, guest_context::r5, 13);
+            guest_context::set(context, guest_context::r6, 14);
+            guest_context::set(context, guest_context::lr, 15);
+            std::map<uint32_t, std::vector<uint8_t>> writes;
+            static uint64_t seen[5];
+            auto process_event = [](void *ctx, uint8_t *) {
+                using namespace guest_context;
+                seen[0] = get(ctx, r1), seen[1] = get(ctx, r3), seen[2] = get(ctx, r4);
+                seen[3] = get(ctx, r5), seen[4] = get(ctx, r6);
+                set(ctx, lr, 99);
+                set(ctx, r3, 98);
+            };
+            check(invoke_script(process_event, context, nullptr, call,
+                                [&](uint32_t at, const void *data, size_t size) {
+                                    auto bytes = static_cast<const uint8_t *>(data);
+                                    writes[at].assign(bytes, bytes + size);
+                                    return true;
+                                }),
+                  "script call runs");
+            check(seen[0] == *frame && seen[1] == 0x40000000 && seen[2] == 0x41000000 &&
+                      seen[3] == *frame + 0x100 && seen[4] == 0,
+                  "ProcessEvent receives object, function, parameters and its own frame");
+            check(writes.size() == 2 && writes[*frame].size() == 4 && writes[*frame][0] == 0x70 &&
+                      writes[*frame][1] == 0x01 &&
+                      writes[*frame + 0x100] == call.placed(*frame + 0x100),
+                  "back chain and parameter block are written");
+            using namespace guest_context;
+            check(get(context, r1) == 0x70010000 && get(context, r3) == 11 &&
+                      get(context, r4) == 12 && get(context, r5) == 13 && get(context, r6) == 14 &&
+                      get(context, lr) == 15,
+                  "every changed register is restored");
+            check(!invoke_script(process_event, context, nullptr, call,
+                                 [](uint32_t, const void *, size_t) { return false; }) &&
+                      get(context, r3) == 11,
+                  "a failed write makes no call");
+        }
         auto *base = static_cast<uint8_t *>(
             VirtualAlloc(nullptr, 0x100000000ull, MEM_RESERVE, PAGE_NOACCESS));
         check(base, "reserve synthetic guest address space");

@@ -28,6 +28,16 @@ try {
  if($LASTEXITCODE){throw 'Fake speech backend compilation failed'}
  & $compiler @common 'tests/diagnostics_test.cpp' '-o' 'build/speech/diagnostics_test.exe' '-lbcrypt' '-luser32'
  if($LASTEXITCODE){throw 'Diagnostic test compilation failed'}
+ # The launcher embeds the default settings and creates or refreshes the
+ # installation's accessibility.ini from them; packages never ship the file.
+ New-Item -ItemType Directory -Force build/generated | Out-Null
+ $defaults=[IO.File]::ReadAllText((Join-Path $PSScriptRoot 'config/accessibility.ini'))
+ if($defaults.Contains(')BRINI"')){throw 'Default settings contain the embedding delimiter'}
+ [IO.File]::WriteAllText((Join-Path $PSScriptRoot 'build/generated/default_settings.h'),"#pragma once`nnamespace a11y {`ninline constexpr const char kDefaultSettings[] = R`"BRINI($defaults)BRINI`";`n}`n",[Text.UTF8Encoding]::new($false))
+ & $compiler @common '-Ibuild/generated' 'tests/settings_file_test.cpp' '-o' 'build/tests/settings_file_test.exe'
+ if($LASTEXITCODE){throw 'Settings file test compilation failed'}
+ & $compiler @common 'tests/mod_tutorials_test.cpp' '-o' 'build/tests/mod_tutorials_test.exe'
+ if($LASTEXITCODE){throw 'Mod tutorial test compilation failed'}
  & $compiler @common 'tests/build_profile_test.cpp' '-o' 'build/hooks/build_profile_test.exe'
  if($LASTEXITCODE){throw 'Build profile test compilation failed'}
  & $compiler @common 'tests/gameplay_text_test.cpp' '-o' 'build/hooks/gameplay_text_test.exe'
@@ -54,7 +64,7 @@ try {
  if($LASTEXITCODE){throw 'Lock trace test compilation failed'}
  & $compiler @common "-I$hookRoot/include" '-shared' 'src/dll.cpp' @hookObjects '-o' 'dist/asura_accessibility.dll' '-lbcrypt' '-lole32' '-luser32'
  if($LASTEXITCODE){throw 'DLL compilation failed'}
- & $compiler @common '-municode' 'src/launcher.cpp' '-o' 'dist/BlindRage.exe' '-lbcrypt' '-luser32'
+ & $compiler @common '-Ibuild/generated' '-municode' 'src/launcher.cpp' '-o' 'dist/BlindRage.exe' '-lbcrypt' '-luser32'
  if($LASTEXITCODE){throw 'Launcher compilation failed'}
  & $compiler @common 'tests/reader_test.cpp' '-o' 'build/tests/reader_test.exe'
  if($LASTEXITCODE){throw 'Test compilation failed'}
@@ -70,6 +80,8 @@ try {
  Copy-Item -LiteralPath "$hookRoot/LICENSE.txt" -Destination dist/licenses/MinHook-LICENSE.txt
  if($Test){
   & ./build/tests/hotkey_names_test.exe; if($LASTEXITCODE){throw 'Hotkey name tests failed'}
+  & ./build/tests/settings_file_test.exe; if($LASTEXITCODE){throw 'Settings file tests failed'}
+  & ./build/tests/mod_tutorials_test.exe; if($LASTEXITCODE){throw 'Mod tutorial tests failed'}
   & ./build/tests/shooting_beacons_test.exe; if($LASTEXITCODE){throw 'Shooting beacon tests failed'}
   & ./build/tests/reader_test.exe; if($LASTEXITCODE){throw 'Reader tests failed'}
   & ./build/hooks/hook_test.exe; if($LASTEXITCODE){throw 'Hook tests failed'}

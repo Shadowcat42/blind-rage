@@ -9,6 +9,8 @@
 #include "melee_aim.h"
 #include "walk_beacon.h"
 #include "hotkey_names.h"
+#include "mod_tutorials.h"
+#include "script_calls.h"
 #include <atomic>
 #include <windows.h>
 
@@ -177,6 +179,42 @@ class GameplayHooks {
         return stick_writes_.load();
     }
     // Injects an event as if a hook had published it (keyboard equivalents).
+    // Mod tutorial boxes (src/mod_tutorials.h). The worker resolves the game's
+    // functions and cues by reflection and builds the text; the game thread opens
+    // each box on the tutorial box's own updates, through ProcessEvent.
+    struct TutorialRun {
+        ScriptFunction create, show, sound;
+        uint32_t tick_name{}, advertise_class{}, use_pause_offset{}, use_pause_mask{};
+        uint32_t lock_tone{}, full_lock_tone{};
+        std::vector<TutorialBox> boxes;
+        bool valid() const {
+            return create.valid() && show.valid() && sound.valid() && tick_name &&
+                   advertise_class && use_pause_offset && use_pause_mask && lock_tone &&
+                   full_lock_tone && !boxes.empty() && create.offsets.contains("Icon") &&
+                   create.offsets.contains("Text") && show.offsets.contains("bShow") &&
+                   show.offsets.contains("ShowType") && sound.offsets.contains("Snd");
+        }
+    };
+    enum TutorialStep {
+        tutorial_opened = 1,
+        tutorial_sound,
+        tutorial_finished,
+        tutorial_failed,
+        tutorial_beacon
+    };
+    void mod_tutorials(bool enabled) {
+        mod_tutorials_ = enabled;
+    }
+    void start_tutorial(TutorialRun run) {
+        std::lock_guard lock(tutorial_mutex_);
+        tutorial_sequence_.emplace(run.boxes);
+        tutorial_ = std::move(run);
+        tutorial_movie_ = tutorial_movie_index_ = 0;
+        tutorial_active_ = true;
+    }
+    bool tutorial_running() const {
+        return tutorial_active_.load();
+    }
     void inject(const GameplayEvent &event) {
         publish(event);
     }
@@ -356,6 +394,7 @@ class GameplayHooks {
         float clock_now = NAN;
         std::vector<uint32_t> walk_events;
         uint32_t walk_world{};
+        uint32_t tutorial_controller{};
         uint64_t walk_refreshed{};
     };
     static Thread &thread() {
@@ -715,6 +754,25 @@ class GameplayHooks {
     bool observe_lock(Route route, void *context, uint8_t *base, const Memory &memory,
                       Thread &state, uint32_t source, uint32_t locals) {
         if (route == Route::shoot_tick) {
+            // A new rail-shooting controller: report its map, which decides whether
+            // a mod tutorial belongs to this section (the worker checks the name).
+            if (mod_tutorials_.load(std::memory_order_relaxed) &&
+                source != state.tutorial_controller) {
+                state.tutorial_controller = source;
+                if (subclass(memory, state.reader, source, "BCPlayerController_HeavyShoot")) {
+                    auto top = source;
+                    for (unsigned depth = 0; depth < 16; ++depth) {
+                        auto outer = memory.u32(top + 0x28);
+                        if (!outer)
+                            break;
+                        top = outer;
+                    }
+                    GameplayEvent event;
+                    event.tutorial_level = top;
+                    event.tutorial_level_index = memory.u32(top + 0x20);
+                    publish(event);
+                }
+            }
             // Guidance data is captured in every mode: L1 tracking works in all of
             // them, and the beacon also needs it in beacons and boosted modes.
             if (!subclass(memory, state.reader, source, "BCPlayerController_HeavyShoot") ||
@@ -1421,6 +1479,9 @@ class GameplayHooks {
         auto &self = instance();
         auto node = ui_argument(context, 4);
         auto name = node ? frame_word(base, node + 0x2c) : UINT32_MAX;
+        if (self.tutorial_active_.load(std::memory_order_relaxed) &&
+            self.run_tutorial(context, base, name))
+            return;
         // ProcessEvent sees native-origin movie callbacks even when their script
         // body is undefined. ProcessInternal never runs that default empty event.
         // The original dispatcher reads this UFunction field too; exclude unrelated
@@ -1617,5 +1678,98 @@ class GameplayHooks {
     AimMailbox aim_mailbox_;
     std::atomic<uint64_t> fired_{};
     std::atomic<uint64_t> lock_frames_{};
+    std::atomic<bool> mod_tutorials_{}, tutorial_active_{};
+    std::mutex tutorial_mutex_;
+    TutorialRun tutorial_;
+    std::optional<TutorialSequence> tutorial_sequence_;
+    uint32_t tutorial_movie_{}, tutorial_movie_index_{};
+    static bool guest_write(uint8_t *base, uint32_t at, const void *data, size_t size) {
+        SIZE_T done{};
+        // The recomp maps guest addresses from 0xE0000000 one page higher.
+        auto host = base + at + (at >= 0xe0000000u ? 0x1000 : 0);
+        return at && WriteProcessMemory(GetCurrentProcess(), host, data, size, &done) &&
+               done == size;
+    }
+    bool script(void *context, uint8_t *base, const ScriptCall &call) {
+        return invoke_script(original_[2], context, base, call,
+                             [base](uint32_t at, const void *data, size_t size) {
+                                 return guest_write(base, at, data, size);
+                             });
+    }
+    void tutorial_event(int step, size_t box) {
+        GameplayEvent event;
+        event.tutorial_step = step;
+        event.tutorial_box = uint32_t(box);
+        publish(event);
+    }
+    // Runs on the tutorial box's own Tick (a ProcessEvent call). Returns true when
+    // it ran the game's call (the original) itself.
+    bool run_tutorial(void *context, uint8_t *base, uint32_t name) {
+        // The calls below run ProcessEvent again; those take the normal path.
+        static thread_local bool inside = false;
+        if (inside)
+            return false;
+        std::lock_guard lock(tutorial_mutex_);
+        if (!tutorial_sequence_ || name != tutorial_.tick_name)
+            return false;
+        Memory memory(Read{base});
+        auto source = ui_argument(context, 3);
+        if (tutorial_movie_) {
+            if (source != tutorial_movie_)
+                return false;
+            if (memory.u32(source + 0x20) != tutorial_movie_index_) {
+                tutorial_active_ = false;
+                tutorial_event(tutorial_failed, 0);
+                return false;
+            }
+        } else {
+            bool advertise = false;
+            for (auto cls = source ? memory.u32(source + 0x34) : 0, depth = 0u;
+                 cls && depth < 24 && !advertise; cls = memory.u32(cls + 0x40), ++depth)
+                advertise = cls == tutorial_.advertise_class;
+            if (!advertise)
+                return false;
+            tutorial_movie_ = source;
+            tutorial_movie_index_ = memory.u32(source + 0x20);
+        }
+        bool paused = memory.u32(source + tutorial_.use_pause_offset) & tutorial_.use_pause_mask;
+        auto action = tutorial_sequence_->update(GetTickCount64(), paused);
+        using Kind = TutorialSequence::Action::Kind;
+        if (action.kind == Kind::none)
+            return false;
+        if (action.kind == Kind::finished || action.kind == Kind::failed) {
+            tutorial_active_ = false;
+            tutorial_event(action.kind == Kind::finished ? tutorial_finished : tutorial_failed,
+                           action.box);
+            return false;
+        }
+        inside = true;
+        original_[2](context, base);
+        bool ok = true;
+        if (action.kind == Kind::open) {
+            ScriptCall create(source, tutorial_.create);
+            create.string(tutorial_.create.offsets["Icon"], "");
+            create.string(tutorial_.create.offsets["Text"], tutorial_.boxes[action.box].text);
+            ScriptCall show(source, tutorial_.show);
+            show.u32(tutorial_.show.offsets["bShow"], 0xffffffffu);
+            show.u8(tutorial_.show.offsets["ShowType"], 4); // BCAT_CenterPause
+            ok = script(context, base, create) && script(context, base, show);
+            tutorial_event(ok ? tutorial_opened : tutorial_failed, action.box);
+        } else if (action.sound == TutorialSound::beacon) {
+            // The mod's own beacon plays on the worker's audio stream.
+            tutorial_event(tutorial_beacon, action.box);
+        } else {
+            ScriptCall tone(source, tutorial_.sound);
+            tone.u32(tutorial_.sound.offsets["Snd"], action.sound == TutorialSound::lock_tone
+                                                         ? tutorial_.lock_tone
+                                                         : tutorial_.full_lock_tone);
+            ok = script(context, base, tone);
+            tutorial_event(ok ? tutorial_sound : tutorial_failed, action.box);
+        }
+        if (!ok)
+            tutorial_active_ = false;
+        inside = false;
+        return true;
+    }
 };
 }

@@ -159,6 +159,16 @@ class RecompPrompts {
     // (ARROWS). With mouse control on (mnk_mouse: "Use the mouse (camera and
     // aiming). Off means the right stick comes from the keybind_rstick_* keys
     // only") the right stick is the mouse. Empty when nothing is bound.
+    // Keyboard name of a D-pad direction's first bound key; empty on a controller
+    // or when the direction has no binding.
+    std::string dpad_key(std::string_view direction) const {
+        if (device() != PromptDevice::keyboard)
+            return {};
+        auto value = binding(std::string("keybind_dpad_") + std::string(direction));
+        if (auto comma = value.find(','); comma != std::string::npos)
+            value.resize(comma);
+        return value.empty() ? std::string{} : spoken_key(value);
+    }
     std::string keyboard_stick(std::string_view token) const {
         if (token == "LS")
             return key_name(9);

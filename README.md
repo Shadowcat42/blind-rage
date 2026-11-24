@@ -74,7 +74,7 @@ Image-only text and some conversation and interlude routes aren't read yet.
 
 ## Settings
 
-Settings live in `mods/accessibility/accessibility.ini`. Installing creates it from [the defaults](config/accessibility.ini), which explain each setting. Later installs add new settings and keep your values. The mod never rewrites the file, except to save the shooting mode and aim priority you choose in game. Restart the game after editing it.
+Settings live in `mods/accessibility/accessibility.ini`. The package doesn't include it: BlindRage.exe creates it on first launch from its built-in [defaults](config/accessibility.ini), which explain each setting, so extracting an update never resets your choices. After an update, BlindRage.exe adds any new settings and removes retired ones, keeping every value you set. Otherwise only the mod's in-game choices change the file (the shooting mode and aim priority). Restart the game after editing it.
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
@@ -86,6 +86,7 @@ Settings live in `mods/accessibility/accessibility.ini`. Installing creates it f
 | `boost_point_blank`, `boost_max_range` | 2, 3 | Boosted lock-on cone, as multiples of the game's limits (50 degrees at point blank, 3.6 degrees at maximum range in Episode 1) |
 | `boost_homing` | 3 | Boosted melee homing, as a multiple of the game's 2.6-degree homing angle |
 | `aim_priority` | projectiles | Melee rapid fire tracks `projectiles` or `enemies` first |
+| `mod_tutorials` | 1 | The mod's own tutorial boxes (Episode 1's rail-shooting introduction); 0 skips them |
 | `walk_beacon` | 1 | Walking-section beacon |
 | `tracking_strength` | 100 | L1 steering speed as a percentage of the game's cursor speed |
 | `audio_cue_volume` | 60 | Volume of the mod's beacons and count-in, 0-100 |

@@ -117,6 +117,11 @@ struct GameplayEvent {
     int sync_grade{};
     uint32_t repeat_movie{}, repeat_index{};
     int shooting_command{};
+    // Mod tutorials: a new rail-shooting controller's top-level package (its map),
+    // and steps of a running tutorial (TutorialStep), with the box number.
+    uint32_t tutorial_level{}, tutorial_level_index{};
+    int tutorial_step{};
+    uint32_t tutorial_box{};
     QteGroup group;
     TimingState sync;
     StatusContext status;

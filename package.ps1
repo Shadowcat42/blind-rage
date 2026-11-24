@@ -1,6 +1,5 @@
 param(
- [string]$BuildDirectory=(Join-Path $PSScriptRoot 'dist'),
- [string]$ConfigurationFile=(Join-Path $PSScriptRoot 'config/accessibility.ini')
+ [string]$BuildDirectory=(Join-Path $PSScriptRoot 'dist')
 )
 $ErrorActionPreference='Stop'
 $distribution=(Resolve-Path -LiteralPath $BuildDirectory).Path
@@ -11,8 +10,8 @@ try {
  # Explicit allowlist: never package the game directory or all of dist.
  Copy-Item -LiteralPath (Join-Path $distribution 'BlindRage.exe') -Destination $stage
  foreach($name in @('asura_accessibility.dll','prism.dll')){Copy-Item -LiteralPath (Join-Path $distribution $name) -Destination $mod}
- # Ship project defaults; do not export a developer's preserved local INI.
- Copy-Item -LiteralPath $ConfigurationFile -Destination (Join-Path (Split-Path -Parent $mod) 'accessibility.ini')
+ # No accessibility.ini: BlindRage.exe creates it from built-in defaults, so
+ # extracting an update never replaces a player's settings.
  Copy-Item -LiteralPath (Join-Path $distribution 'licenses') -Destination $mod -Recurse
  # Documentation goes beside the mod rather than into the game's root folder.
  $docs=Split-Path -Parent $mod
