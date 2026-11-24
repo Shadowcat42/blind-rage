@@ -1148,7 +1148,19 @@ class Reader {
                                 Menu episodes;
                                 episodes.movie = movie.p;
                                 episodes.selector = selector;
-                                episodes.heading = "Episode Menu";
+                                // The part ("Part II: Rebirth") the game shows beside the
+                                // menu title: mcInst_Base.mcInst_Chapter, which the movie
+                                // fills from OnGetEpisode (BCStoryInfo.GetChapter).
+                                std::string part;
+                                if (auto base = get(fields, "m_instBase"); base && base->type == 7)
+                                    for (auto child : children(m, m.u32(base->pointer + 4)))
+                                        if (character_name(m, child).ends_with(".mcInst_Chapter")) {
+                                            for (const auto &line : text(m, child))
+                                                part += (part.empty() ? "" : " ") + line;
+                                            break;
+                                        }
+                                part = clean_text(part);
+                                episodes.heading = part.empty() ? "Episode Menu" : part;
                                 episodes.cursor = int(cursor->number);
                                 auto indexes = m.u32(selection->pointer + 0x38);
                                 auto entries = m.u32(data->pointer + 0x38);
