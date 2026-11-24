@@ -215,6 +215,12 @@ class GameplayHooks {
     bool tutorial_running() const {
         return tutorial_active_.load();
     }
+    // Stops a run whose box has not opened; an open box still closes normally.
+    void cancel_tutorial() {
+        std::lock_guard lock(tutorial_mutex_);
+        tutorial_active_ = false;
+        tutorial_sequence_.reset();
+    }
     void inject(const GameplayEvent &event) {
         publish(event);
     }

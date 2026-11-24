@@ -40,6 +40,11 @@ int main() {
         for (const auto &box : kb)
             check(!contains(box.text, "{"), "every name is filled in");
 
+        auto note = qte_note();
+        check(note.size() == 1 && note[0].after == TutorialSound::none &&
+                  note[0].text.starts_with("Central to the Asura's Wrath experience") &&
+                  contains(note[0].text, "Be ready!"),
+              "one QTE note box with the agreed wording");
         TutorialSequence run({{"one"}, {"two", TutorialSound::lock_tone, 900}, {"three"}});
         using Kind = TutorialSequence::Action::Kind;
         auto a = run.update(1000, false);

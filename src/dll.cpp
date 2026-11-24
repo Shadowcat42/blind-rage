@@ -300,6 +300,14 @@ static DWORD WINAPI run(void *) {
         const bool modTutorials = setting(L"mod_tutorials", 1);
         gameHooks.mod_tutorials(modTutorials);
         uint64_t tutorialLevel = 0, beaconDemo = 0;
+        // Lookups from the first tutorial, reused: script classes and the SE_UI cues
+        // stay loaded for the whole session.
+        std::optional<GameplayHooks::TutorialRun> tutorialBase;
+        // The QTE note holds Episode 1's first QTE announcement until its box is
+        // confirmed. If the box does not open promptly, the QTE is announced anyway.
+        uint64_t qteNoteLevel = 0, qteNoteStarted = 0;
+        bool qteNoteActive = false, qteNoteOpened = false;
+        constexpr uint64_t kQteNoteOpenMs = 400;
         auto beacon_demo = [&] {
             if (!notifications.focused() || muted)
                 return;
@@ -551,6 +559,17 @@ static DWORD WINAPI run(void *) {
                 write(text);
             }
         };
+        // After the QTE note: announce the QTE that is current now.
+        auto release_qte = [&](const char *why) {
+            qteNoteActive = false;
+            auto text = timing.repeat();
+            if (text.empty())
+                text = qtes.repeat();
+            write(std::string("MOD_TUTORIAL QTE note ") + why +
+                  (text.empty() ? "; no QTE still active" : "; announcing: " + text));
+            if (qteEnabled && !text.empty() && notifications.focused() && !muted && speaking)
+                speech.speak(text, interruptQte);
+        };
         auto narrate_qtes = [&] {
             auto lines = timing.take();
             auto normal = qtes.take();
@@ -559,6 +578,27 @@ static DWORD WINAPI run(void *) {
             for (const auto &line : lines) {
                 write("GAME_QTE " + line);
                 append_phrase(combined, line);
+            }
+            if (qteNoteActive && !qteNoteOpened &&
+                GetTickCount64() - qteNoteStarted > kQteNoteOpenMs) {
+                gameHooks.cancel_tutorial();
+                release_qte("box did not open");
+                return;
+            }
+            // Held while the note is up; announced once it is confirmed.
+            if (qteNoteActive)
+                return;
+            if (!combined.empty() && qteEnabled && modTutorials && tutorialBase && tutorialLevel &&
+                qteNoteLevel != tutorialLevel && !gameHooks.tutorial_running()) {
+                qteNoteLevel = tutorialLevel;
+                auto run = *tutorialBase;
+                run.boxes = qte_note();
+                gameHooks.start_tutorial(std::move(run));
+                qteNoteActive = true;
+                qteNoteOpened = false;
+                qteNoteStarted = GetTickCount64();
+                write("MOD_TUTORIAL QTE note before: " + combined);
+                return;
             }
             if (qteEnabled && !combined.empty() && notifications.focused() && !muted && speaking)
                 speech.speak(combined, interruptQte);
@@ -1014,6 +1054,9 @@ static DWORD WINAPI run(void *) {
                                              i < names && i < 250000 && !run.tick_name; ++i)
                                             if (reader.name(memory, i) == "Tick")
                                                 run.tick_name = i;
+                                        run.boxes = qte_note();
+                                        if (run.valid())
+                                            tutorialBase = run;
                                         TutorialLabels labels;
                                         auto label = [&](std::string_view token, std::string &out) {
                                             if (auto name = prompts.button(token); !name.empty())
@@ -1046,6 +1089,16 @@ static DWORD WINAPI run(void *) {
                                                                    : "unknown"));
                                     if (event.tutorial_step == GameplayHooks::tutorial_beacon)
                                         beacon_demo();
+                                    if (qteNoteActive &&
+                                        event.tutorial_step == GameplayHooks::tutorial_opened)
+                                        qteNoteOpened = true;
+                                    if (qteNoteActive &&
+                                        (event.tutorial_step == GameplayHooks::tutorial_finished ||
+                                         event.tutorial_step == GameplayHooks::tutorial_failed))
+                                        release_qte(event.tutorial_step ==
+                                                            GameplayHooks::tutorial_finished
+                                                        ? "confirmed"
+                                                        : "failed");
                                 } else if (event.shooting_command) {
                                     if (notifications.focused() &&
                                         capture_status_context(memory, event.status.input, false) ==

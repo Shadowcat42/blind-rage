@@ -71,6 +71,12 @@ inline std::vector<TutorialBox> rail_shooting_tutorial(const TutorialLabels &lab
         box.text = tutorial_fill(box.text, labels);
     return boxes;
 }
+// Shown when Episode 1's first QTE appears, before that QTE is announced.
+inline std::vector<TutorialBox> qte_note() {
+    return {{"Central to the Asura's Wrath experience are many, many QTEs, all of which are "
+             "announced. Be ready! You could be asked to press something, multiple somethings or "
+             "do something with either stick at any time."}};
+}
 // Steps through a run of boxes, driven by the tutorial box's own updates.
 class TutorialSequence {
   public:

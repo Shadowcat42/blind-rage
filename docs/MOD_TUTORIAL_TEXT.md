@@ -25,3 +25,9 @@ Shown at Episode 1's first rail-shooting section, after the game's own shooting 
 Evidence: the left stick moving the reticle and the two fire buttons come from Episode 1's own tutorial text; the lock limit differs between sections (the lock tone has versions at 4, 8 and 12 locks); the shooting controller keeps the normal combat movement, and dodging was confirmed in play. The set route and rapid fire being weaker come from play, not from the scripts.
 
 Open implementation point: confirming a box unpauses the game while the next sound plays (under a second). If that matters at the start of Episode 1's section, start the sound and open the next box together instead, which needs a test of whether a sound started just before a pause keeps playing.
+
+## QTE note (Episode 1 only)
+
+Shown when Episode 1's first QTE appears (in a run where its rail-shooting section was reported), before that QTE is announced. The game is frozen with the QTE on screen; after the box is confirmed the QTE is announced as usual. If the box has not opened within 0.4 seconds, the note is dropped and the QTE is announced at once.
+
+1. Central to the Asura's Wrath experience are many, many QTEs, all of which are announced. Be ready! You could be asked to press something, multiple somethings or do something with either stick at any time.
