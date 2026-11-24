@@ -1,6 +1,7 @@
 #include "platform.h"
 #include "restart_support.h"
 #include "settings_file.h"
+#include "recomp_setup.h"
 #include "default_settings.h"
 #include <fstream>
 #include <iostream>
@@ -62,7 +63,7 @@ int wmain(int argc, wchar_t **argv) {
         DWORD pid = 0, restartParent = 0;
         std::wstring command;
         std::optional<std::wstring> restartCommand;
-        bool checkOnly = false;
+        bool checkOnly = false, setupMode = false;
         const BuildProfile *requested = nullptr;
         const BuildProfile *selected = nullptr;
         for (int i = 1; i < argc; i++) {
@@ -74,6 +75,8 @@ int wmain(int argc, wchar_t **argv) {
                     throw std::runtime_error("Invalid process ID");
             } else if (arg == L"--command" && i + 1 < argc)
                 command = argv[++i];
+            else if (arg == L"--setup")
+                setupMode = true;
             else if (arg == L"--check")
                 checkOnly = true;
             else if (arg == L"--restart-parent" && i + 1 < argc)
@@ -87,7 +90,18 @@ int wmain(int argc, wchar_t **argv) {
                     throw std::runtime_error("Unknown build; choose auto, disc, or updated");
             } else
                 throw std::runtime_error(
-                    "Usage: BlindRage.exe [--build auto|disc|updated] [--check] [--attach PID] [--command repeat|mute|dump|status|aimmode|aimprev|aimnext|aimpriority|rsup|rsdown|rsleft|rsright]");
+                    "Usage: BlindRage.exe [--build auto|disc|updated] [--setup] [--check] [--attach PID] [--command repeat|mute|dump|status|aimmode|aimprev|aimnext|aimpriority|rsup|rsdown|rsleft|rsright]");
+        }
+        // Setup: add the title update or DLC later (the "Blind Rage setup" shortcut).
+        if (setupMode) {
+            RecompSetup(root).extras();
+            return 0;
+        }
+        // First launch on an installation without the game: install it first.
+        if (!pid && !checkOnly && command.empty() && !restartParent && !game_installed(root) &&
+            !RecompSetup(root).first_time()) {
+            ask("Press Enter to close.");
+            return 1;
         }
         if (restartCommand && !restartParent)
             throw std::runtime_error("Restart arguments require a restart parent");

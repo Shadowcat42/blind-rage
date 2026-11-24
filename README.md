@@ -18,9 +18,11 @@ You need Windows x64. Start NVDA before the mod to use its voice; otherwise [Pri
 
 ## Install and run
 
-1. Install the supported recomp and your game data. The recomp's setup isn't screen-reader accessible yet and currently needs OCR; an issue is open with the recomp.
-2. Extract the Blind Rage package into the game's installation folder. It adds `BlindRage.exe` and `mods/accessibility`.
-3. Start NVDA, then run **BlindRage.exe**. The recomp's ordinary launcher doesn't load the mod.
+1. Put the PC version's `AsurasWrath.exe` in a folder of its own, and extract the Blind Rage package into the same folder. It adds `BlindRage.exe` and `mods/accessibility`.
+2. Start NVDA, then run **BlindRage.exe**. The recomp's ordinary launcher doesn't load the mod.
+3. The first time, BlindRage.exe sets the game up in its console window, using the PC version's own installer. It downloads the program files (about 1.6 GB) and asks for your Xbox 360 disc image, reading out progress as it goes. Then it offers to add the title update or DLC: 1, add the title update; 2, add a DLC package; 3, no. Afterwards the game starts. Run the "Blind Rage setup" shortcut it creates (`BlindRage.exe --setup`) to add the title update or DLC later.
+
+If the game is already installed, steps 1 and 3 are skipped. The PC version's own graphical setup still works, but isn't screen-reader accessible and needs OCR; an issue is open with the recomp.
 
 BlindRage.exe attaches to a recognized game already running from this installation. Otherwise it starts the game: the title-update build when it's installed, otherwise the disc build. To choose explicitly, run `BlindRage.exe --build disc` or `BlindRage.exe --build updated`. The disc build is refused once the title update is installed, because it can't run with the update's patch. `BlindRage.exe --check` reports which build would be used without starting anything.
 

@@ -614,7 +614,6 @@ static DWORD WINAPI run(void *) {
             retries = 10;
         };
         auto inspect = [&](bool dumpOnly) {
-            auto started = GetTickCount64();
             auto runtimeInstance = instance();
             auto base = runtimeInstance ? membase(runtimeInstance) : nullptr;
             std::unordered_map<uint32_t, Page> pages;
@@ -792,11 +791,8 @@ static DWORD WINAPI run(void *) {
             } else
                 scheduled = false;
             burst = GetTickCount64();
+            // Counted for EVENT_STATS in dumps; each read is no longer logged.
             ++reads;
-            write("EVENT_READ " + std::to_string(reads) +
-                  " ms=" + std::to_string(GetTickCount64() - started) + " pages=" +
-                  std::to_string(pages.size()) + " discover=" + std::to_string(discover) +
-                  " mutations=" + std::to_string(source.changes()));
         };
         auto command = [&](unsigned i) {
             if (i >= commands.size())
