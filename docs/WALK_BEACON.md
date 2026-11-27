@@ -52,6 +52,22 @@ streamed level, nested sequences included: `WorldInfo.StreamingLevels` (+0x334),
 (+0xb0). Each player tick reads the triggers' state (`SequenceEvent.Originator`
 +0xb8, `TriggerCount` +0xc4, `bEnabled` +0xd0) and the volume's `Location`.
 
+## Known limitation: no route around obstacles
+
+The beacon points in a straight line to its target. Where the route winds, the
+line can cross walls, rocks or drops, and the player has to find a way around
+(Episode 10's flashback: two dumps showed the player sliding along, then stopped
+against, scenery while the beacon aimed correctly). F5 dumps list the position,
+triggers and blocking volumes near the line at such spots.
+
+A route finder that maps the level with the game's collision traces was built
+and tested offline (branch `walk-pathfinder`), but it cannot trace yet: native
+engine functions, `Actor.Trace` among them, do not run when the mod calls them
+through `ProcessEvent` (in Episode 4, `Object.Sqrt(16)` returned 0 and a trace
+changed no bytes), while script functions do. Tracing through the Engine script
+`Weapon.CalcWeaponFire` on the default Weapon object crashed the game. The next
+step is to read how the recomp's compiled `ProcessEvent` handles native functions.
+
 ## Not yet verified
 
 - Live behaviour, including whether "nearest first" matches each section's
