@@ -203,7 +203,8 @@ class GameplayHooks {
         tutorial_sound,
         tutorial_finished,
         tutorial_failed,
-        tutorial_beacon
+        tutorial_beacon,
+        tutorial_fire
     };
     void mod_tutorials(bool enabled) {
         mod_tutorials_ = enabled;
@@ -833,6 +834,15 @@ class GameplayHooks {
                     GameplayEvent event;
                     event.tutorial_level = top;
                     event.tutorial_level_index = memory.u32(top + 0x20);
+                    auto cls = memory.u32(source + 0x34);
+                    auto field = state.no_lock_fields.find(cls);
+                    if (field == state.no_lock_fields.end())
+                        field = state.no_lock_fields
+                                    .emplace(cls, ScriptLookup::property(memory, state.reader, cls,
+                                                                         "bNoUseLockOnShot"))
+                                    .first;
+                    auto [offset, mask] = field->second;
+                    event.tutorial_no_lock = offset && mask && (memory.u32(source + offset) & mask);
                     publish(event);
                 }
             }
@@ -1971,9 +1981,11 @@ class GameplayHooks {
             show.u8(tutorial_.show.offsets["ShowType"], 4); // BCAT_CenterPause
             ok = script(context, base, create) && script(context, base, show);
             tutorial_event(ok ? tutorial_opened : tutorial_failed, action.box);
-        } else if (action.sound == TutorialSound::beacon) {
-            // The mod's own beacon plays on the worker's audio stream.
-            tutorial_event(tutorial_beacon, action.box);
+        } else if (action.sound == TutorialSound::beacon ||
+                   action.sound == TutorialSound::fire_warning) {
+            // The mod's own sounds play on the worker's audio streams.
+            tutorial_event(action.sound == TutorialSound::beacon ? tutorial_beacon : tutorial_fire,
+                           action.box);
         } else {
             ScriptCall tone(source, tutorial_.sound);
             tone.u32(tutorial_.sound.offsets["Snd"], action.sound == TutorialSound::lock_tone

@@ -31,3 +31,14 @@ Open implementation point: confirming a box unpauses the game while the next sou
 Shown when Episode 1's first QTE appears (in a run where its rail-shooting section was reported), before that QTE is announced. The game is frozen with the QTE on screen; after the box is confirmed the QTE is announced as usual. If the box has not opened within 0.4 seconds, the note is dropped and the QTE is announced at once.
 
 1. Central to the Asura's Wrath experience are many, many QTEs, all of which are announced. Be ready! You could be asked to press something, multiple somethings or do something with either stick at any time.
+
+## Episode 8 chase
+
+Shown when Episode 8's chase starts (`BC-S070`, a shooting section whose controller has the game's lock-on off).
+
+1. This is a chase. Like rail shooting, the game moves Asura forward for you, but there is no lock-on here, and pushing left or right moves Asura himself across the path as well as your aim. Hold square to fire at the enemy you're chasing.
+2. The enemy fires blasts that skim along the ground towards you, and it fires more as your Burst gauge fills. This buzz warns you. Centred means it's coming straight at you, so move aside or dodge with cross. Off to one side means it will pass on that side.
+   - After confirming: the warning buzz for two seconds, sliding from centre to the right.
+3. When the enemy drops back to you, the game tells you to attack: hit it with circle for combos. Fill your Burst gauge and press R2 to finish the chase. The beacon here points only at the enemy. Hold L1 to auto aim up and down; left and right stay with you, since they also move Asura.
+
+Evidence: the missing lock-on, the cursor moving Asura sideways, fire skimming the ground and increasing with Burst, and the attack prompt are from the game's scripts and level data; square rapid fire and Burst with R2 ending the chase are from play. Dodging with cross was confirmed in play, in this chase as well as Episode 1's rail shooting.

@@ -120,6 +120,7 @@ struct GameplayEvent {
     // Mod tutorials: a new rail-shooting controller's top-level package (its map),
     // and steps of a running tutorial (TutorialStep), with the box number.
     uint32_t tutorial_level{}, tutorial_level_index{};
+    bool tutorial_no_lock{};
     int tutorial_step{};
     uint32_t tutorial_box{};
     // Settings menu input from the controller (GameplayHooks::MenuInput).

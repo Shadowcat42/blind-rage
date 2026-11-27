@@ -304,7 +304,7 @@ static DWORD WINAPI run(void *) {
         // The mod's own tutorial boxes (Episode 1's rail-shooting introduction).
         bool modTutorials = setting(L"mod_tutorials", 1);
         gameHooks.mod_tutorials(modTutorials);
-        uint64_t tutorialLevel = 0, beaconDemo = 0;
+        uint64_t tutorialLevel = 0, chaseLevel = 0, beaconDemo = 0;
         // Lookups from the first tutorial, reused: script classes and the SE_UI cues
         // stay loaded for the whole session.
         std::optional<GameplayHooks::TutorialRun> tutorialBase;
@@ -356,8 +356,11 @@ static DWORD WINAPI run(void *) {
         FireAudio fireAudio;
         AudioRetry fireRetry;
         bool fireReady = false;
-        auto fire_output = [&](FireCue cue) {
-            if (!notifications.focused() || muted || gameHooks.tutorial_running())
+        auto fire_output = [&](FireCue cue, bool demo = false) {
+            // A running tutorial holds live warnings back; its demonstration plays.
+            if (gameHooks.tutorial_running() && !demo)
+                return;
+            if (!notifications.focused() || muted)
                 cue.active = false;
             if (cue.active && !(fireReady && fireAudio.healthy()) &&
                 fireRetry.due(GetTickCount64())) {
@@ -1188,8 +1191,14 @@ static DWORD WINAPI run(void *) {
                                     write("MOD_TUTORIAL rail shooting in " + level);
                                     uint64_t key = uint64_t(event.tutorial_level) << 32 |
                                                    event.tutorial_level_index;
-                                    if (level == "BC-S000" && key != tutorialLevel) {
-                                        tutorialLevel = key;
+                                    // Episode 1's first rail shooting, or Episode 8's chase (a
+                                    // shooting section with the game's lock-on off).
+                                    const bool episode1 =
+                                                   level == "BC-S000" && key != tutorialLevel,
+                                               chase = level == "BC-S070" &&
+                                                       event.tutorial_no_lock && key != chaseLevel;
+                                    if (episode1 || chase) {
+                                        (episode1 ? tutorialLevel : chaseLevel) = key;
                                         GameplayHooks::TutorialRun run;
                                         const auto &layout = reader.layout();
                                         auto advertise = ScriptLookup::find(
@@ -1228,6 +1237,8 @@ static DWORD WINAPI run(void *) {
                                         label("X", labels.square);
                                         label("Y", labels.triangle);
                                         label("LB", labels.l1);
+                                        label("B", labels.circle);
+                                        label("RT", labels.r2);
                                         auto up = prompts.dpad_key("up"),
                                              left = prompts.dpad_key("left"),
                                              right = prompts.dpad_key("right");
@@ -1235,22 +1246,30 @@ static DWORD WINAPI run(void *) {
                                             labels.dpad_up = up;
                                         if (!left.empty() && !right.empty())
                                             labels.dpad_left_right = left + " or " + right;
-                                        run.boxes = rail_shooting_tutorial(labels);
+                                        run.boxes = episode1 ? rail_shooting_tutorial(labels)
+                                                             : chase_tutorial(labels);
                                         if (run.valid()) {
                                             gameHooks.start_tutorial(std::move(run));
-                                            write("MOD_TUTORIAL rail shooting started");
+                                            write(episode1 ? "MOD_TUTORIAL rail shooting started"
+                                                           : "MOD_TUTORIAL chase started");
                                         } else
                                             write("MOD_TUTORIAL unavailable: lookup incomplete");
                                     }
                                 } else if (event.tutorial_step) {
-                                    constexpr const char *steps[] = {
-                                        "", "opened", "sound", "finished", "failed", "beacon"};
+                                    constexpr const char *steps[] = {"",         "opened", "sound",
+                                                                     "finished", "failed", "beacon",
+                                                                     "fire"};
                                     write("MOD_TUTORIAL box " +
                                           std::to_string(event.tutorial_box + 1) + " " +
-                                          (event.tutorial_step < 6 ? steps[event.tutorial_step]
+                                          (event.tutorial_step < 7 ? steps[event.tutorial_step]
                                                                    : "unknown"));
                                     if (event.tutorial_step == GameplayHooks::tutorial_beacon)
                                         beacon_demo();
+                                    // The fire warning: centred, sliding to the right.
+                                    if (event.tutorial_step == GameplayHooks::tutorial_fire) {
+                                        FireCue demo{true, 0.f, 1.f, GetTickCount64(), 2000, 1.f};
+                                        fire_output(demo, true);
+                                    }
                                     if (qteNoteActive &&
                                         event.tutorial_step == GameplayHooks::tutorial_opened)
                                         qteNoteOpened = true;

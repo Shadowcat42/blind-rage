@@ -8,7 +8,7 @@
 #include <string_view>
 #include <vector>
 namespace a11y {
-enum class TutorialSound { none, lock_tone, full_lock_tone, beacon };
+enum class TutorialSound { none, lock_tone, full_lock_tone, beacon, fire_warning };
 struct TutorialBox {
     std::string text;
     // Played after the box is confirmed, while the game is unpaused, so a game
@@ -19,14 +19,20 @@ struct TutorialBox {
 };
 // Button names as the player's controls call them.
 struct TutorialLabels {
-    std::string cross = "cross", square = "square", triangle = "triangle", l1 = "L1";
+    std::string cross = "cross", square = "square", triangle = "triangle", circle = "circle",
+                l1 = "L1", r2 = "R2";
     std::string dpad_up = "up on the D-pad", dpad_left_right = "left or right on the D-pad";
 };
 inline std::string tutorial_fill(std::string text, const TutorialLabels &labels) {
     const std::pair<std::string_view, const std::string *> names[]{
-        {"{cross}", &labels.cross},       {"{square}", &labels.square},
-        {"{triangle}", &labels.triangle}, {"{l1}", &labels.l1},
-        {"{dpad_up}", &labels.dpad_up},   {"{dpad_left_right}", &labels.dpad_left_right}};
+        {"{cross}", &labels.cross},
+        {"{square}", &labels.square},
+        {"{triangle}", &labels.triangle},
+        {"{circle}", &labels.circle},
+        {"{r2}", &labels.r2},
+        {"{l1}", &labels.l1},
+        {"{dpad_up}", &labels.dpad_up},
+        {"{dpad_left_right}", &labels.dpad_left_right}};
     for (auto [token, value] : names)
         for (size_t at; (at = text.find(token)) != std::string::npos;) {
             text.replace(at, token.size(), *value);
@@ -67,6 +73,25 @@ inline std::vector<TutorialBox> rail_shooting_tutorial(const TutorialLabels &lab
          "{dpad_left_right} will change which enemy cluster the beacon is pointing at, however "
          "you shouldn't need this often. Don't feel like manually aiming? Hold {l1} for auto "
          "aim, and just blast away."}};
+    for (auto &box : boxes)
+        box.text = tutorial_fill(box.text, labels);
+    return boxes;
+}
+// Episode 8's chase: a shooting section without the game's lock-on.
+inline std::vector<TutorialBox> chase_tutorial(const TutorialLabels &labels) {
+    std::vector<TutorialBox> boxes{
+        {"This is a chase. Like rail shooting, the game moves Asura forward for you, but there "
+         "is no lock-on here, and pushing left or right moves Asura himself across the path as "
+         "well as your aim. Hold {square} to fire at the enemy you're chasing."},
+        {"The enemy fires blasts that skim along the ground towards you, and it fires more as "
+         "your Burst gauge fills. This buzz warns you. Centred means it's coming straight at "
+         "you, so move aside or dodge with {cross}. Off to one side means it will pass on that "
+         "side.",
+         TutorialSound::fire_warning, 2300},
+        {"When the enemy drops back to you, the game tells you to attack: hit it with {circle} "
+         "for combos. Fill your Burst gauge and press {r2} to finish the chase. The beacon here "
+         "points only at the enemy. Hold {l1} to auto aim up and down; left and right stay "
+         "with you, since they also move Asura."}};
     for (auto &box : boxes)
         box.text = tutorial_fill(box.text, labels);
     return boxes;

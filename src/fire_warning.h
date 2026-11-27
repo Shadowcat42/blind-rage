@@ -16,6 +16,9 @@ struct FireCue {
     float pan{};     // -1 left of the player, +1 right
     float urgency{}; // 0 far, 1 about to arrive
     uint64_t tick{};
+    // Demonstration: hold for hold_ms without updates, panning from pan to pan_to.
+    uint32_t hold_ms{};
+    float pan_to{};
 };
 struct FireSample {
     uint32_t id{};
@@ -109,9 +112,14 @@ inline std::vector<FireSample> fire_samples(const Memory &m, uint32_t pc) {
 class FireSynth {
   public:
     void render(const FireCue &cue, float gain, float *out, unsigned frames, uint64_t now) {
-        bool audible = cue.active && now >= cue.tick && now - cue.tick <= 200 &&
+        bool audible = cue.active && now >= cue.tick &&
+                       now - cue.tick <= (cue.hold_ms ? cue.hold_ms : 200u) &&
                        std::isfinite(cue.pan) && std::isfinite(cue.urgency);
-        auto pan = audible ? std::clamp(cue.pan, -1.f, 1.f) : pan_;
+        auto target = cue.pan;
+        if (cue.hold_ms && std::isfinite(cue.pan_to))
+            target += (cue.pan_to - cue.pan) *
+                      std::clamp(float(now - cue.tick) / float(cue.hold_ms), 0.f, 1.f);
+        auto pan = audible ? std::clamp(target, -1.f, 1.f) : pan_;
         auto urgency = audible ? std::clamp(cue.urgency, 0.f, 1.f) : 0.f;
         auto frequency = 140.f + 120.f * urgency;
         for (unsigned i = 0; i < frames; ++i) {

@@ -40,6 +40,15 @@ int main() {
         for (const auto &box : kb)
             check(!contains(box.text, "{"), "every name is filled in");
 
+        auto chase = chase_tutorial({});
+        check(chase.size() == 3 && chase[1].after == TutorialSound::fire_warning &&
+                  contains(chase[0].text, "Hold square to fire") &&
+                  contains(chase[1].text, "dodge with cross") &&
+                  contains(chase[2].text, "hit it with circle") &&
+                  contains(chase[2].text, "press R2") && contains(chase[2].text, "Hold L1"),
+              "Episode 8 chase boxes with the warning demonstrated after the second");
+        for (const auto &box : chase)
+            check(!contains(box.text, "{"), "every chase name is filled in");
         auto note = qte_note();
         check(note.size() == 1 && note[0].after == TutorialSound::none &&
                   note[0].text.starts_with("Central to the Asura's Wrath experience") &&
