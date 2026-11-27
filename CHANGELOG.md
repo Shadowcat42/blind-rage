@@ -1,8 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.3.0
 
-- Updates itself: on launch, BlindRage.exe checks for a newer Blind Rage release, reads out what changed since your version, and offers to install it. It downloads the package, checks it against the release's checksum, replaces the mod's files (putting the old ones back if anything fails) and starts the new version. Settings are kept. Turn the check off with `update_check=0`. The first release that can update itself is the one after this.
+- Updates itself: on launch, BlindRage.exe checks for a newer Blind Rage release, reads out what changed since your version, and offers to install it. It downloads the package, checks it against the release's checksum, replaces the mod's files (putting the old ones back if anything fails) and starts the new version. Settings are kept. Turn the check off with `update_check=0`. This is the first version with the updater, so updating to it from 0.2.0 is still done by hand.
 - A spoken settings menu: Ctrl+O, or both stick clicks on a controller. It pauses gameplay; changes apply at once and are saved.
 - Episode 8's chase: the beacon points at the enemy, a buzz warns of incoming fire and which side it passes on, and holding L1 aims up and down. Three tutorial boxes introduce it.
 - Start no longer opens the pause menu while one of the mod's tutorials is running.
@@ -13,6 +13,8 @@
 - A melee beacon: a square wave an octave below the other beacons. In fights, it points to the enemy your attacks will turn to, steady once it's in reach, or else to the nearest enemy. D-pad Up or M toggles it outside rapid fire; `melee_beacon=0` turns it off.
 - The walking beacon is now a sine tone, so it sounds different from the shooting and melee beacons.
 - The walking beacon points at doors the game marks for Burst, such as Episode 9's last door, where the R2 prompt only appears close to the door.
+- Back/Select reads Health and Burst in scripted scenes that show the gauge, such as Episode 10's hot spring.
+- The mod's tutorials now reliably appear in the first section they belong to, and the QTE note only follows Episode 1's rail tutorial.
 
 ## 0.2.0
 
