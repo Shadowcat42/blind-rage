@@ -1,5 +1,6 @@
 #pragma once
 #include "shooting_beacons.h"
+#include "fire_warning.h"
 #include "synchronic_count_in.h"
 #include <windows.h>
 #include <xaudio2.h>
@@ -9,6 +10,10 @@
 namespace a11y {
 // ahead: how long the audio already submitted ahead of this block will play.
 inline void stream_render(BeaconSynth &synth, const BeaconCue &cue, float gain, float *out,
+                          unsigned frames, int64_t) {
+    synth.render(cue, gain, out, frames, GetTickCount64());
+}
+inline void stream_render(FireSynth &synth, const FireCue &cue, float gain, float *out,
                           unsigned frames, int64_t) {
     synth.render(cue, gain, out, frames, GetTickCount64());
 }
@@ -170,4 +175,5 @@ template <class Synth, class Cue> class ToneStream {
 };
 using BeaconAudio = ToneStream<BeaconSynth, BeaconCue>;
 using CountInAudio = ToneStream<CountInSynth, CountInCue>;
+using FireAudio = ToneStream<FireSynth, FireCue>;
 }

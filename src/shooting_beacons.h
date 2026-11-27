@@ -175,6 +175,9 @@ struct AimSnapshot {
     // When positive, the angle within which the game itself takes the shot (melee
     // rapid-fire homing); the beacon becomes continuous at that edge.
     float window_degrees{};
+    // Hold one target until it is gone instead of following clusters (sections
+    // without the game's lock-on, where targets dash in and out).
+    bool hold_target{};
     std::array<AimTarget, capacity> targets{};
 };
 // The game producer replaces one copied snapshot, never queues large payloads
@@ -440,6 +443,36 @@ class ShootingBeacons {
         std::sort(targets.begin(), targets.end(), [](const auto &a, const auto &b) {
             return a.distance != b.distance ? a.distance < b.distance : a.id < b.id;
         });
+        if (snapshot.hold_target) {
+            // One target at a time: the current one until it is gone, otherwise the
+            // nearest; D-pad steps to the next target left or right of it.
+            groups_.clear();
+            focus_.clear();
+            if (targets.empty())
+                return silent;
+            auto current = std::find_if(targets.begin(), targets.end(),
+                                        [&](const auto &t) { return t.id == guiding_; });
+            AimTarget guide = current != targets.end() ? *current : targets.front();
+            if (cycle) {
+                auto ordered = targets;
+                std::sort(ordered.begin(), ordered.end(), [&](const auto &a, const auto &b) {
+                    return aim_dot(a.direction, *right) < aim_dot(b.direction, *right);
+                });
+                auto at = std::find_if(ordered.begin(), ordered.end(),
+                                       [&](const auto &t) { return t.id == guide.id; });
+                auto index = int(at - ordered.begin()), n = int(ordered.size());
+                guide = ordered[size_t((index + (cycle > 0 ? 1 : n - 1)) % n)];
+                manual_focus_ = true;
+                ++generation_;
+            }
+            if (guiding_ != guide.id) {
+                guiding_ = guide.id;
+                ++generation_;
+            }
+            focus_.insert(guide.id);
+            groups_.push_back({guide.direction, guide.distance, {guide}});
+            return cue_for(guide, *aim, *right, up, snapshot);
+        }
         groups_.clear();
         // Fixed angular seed radius prevents a chain of neighbors from joining
         // the whole sky into one cluster. Identity, not list order, holds focus.
@@ -543,6 +576,13 @@ class ShootingBeacons {
             guiding_ = guide.id;
             ++generation_;
         }
+        return cue_for(guide, *aim, *right, up, snapshot);
+    }
+    BeaconCue cue_for(const AimTarget &guide, LockVector aim_line, LockVector right_axis,
+                      LockVector up, const AimSnapshot &snapshot) {
+        BeaconCue silent;
+        silent.tick = snapshot.tick;
+        auto *aim = &aim_line, *right = &right_axis;
         auto unit = aim_unit(guide.direction);
         if (!unit)
             return silent;

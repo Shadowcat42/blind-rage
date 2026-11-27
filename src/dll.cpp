@@ -347,7 +347,29 @@ static DWORD WINAPI run(void *) {
             if (walkReady && walkAudio.healthy())
                 walkAudio.update(cue);
         };
+        // Incoming-fire warning in shooting sections without the game's lock-on.
+        FireAudio fireAudio;
+        AudioRetry fireRetry;
+        bool fireReady = false;
+        auto fire_output = [&](FireCue cue) {
+            if (!notifications.focused() || muted || gameHooks.tutorial_running())
+                cue.active = false;
+            if (cue.active && !(fireReady && fireAudio.healthy()) &&
+                fireRetry.due(GetTickCount64())) {
+                fireAudio.close();
+                fireReady = fireAudio.start(cueGain);
+                if (fireReady)
+                    fireRetry.success();
+                else
+                    fireRetry.failure(GetTickCount64());
+                write(fireReady ? "FIRE_AUDIO ready" : "FIRE_AUDIO unavailable");
+            }
+            if (fireReady && fireAudio.healthy())
+                fireAudio.update(cue);
+        };
         auto drain_beacons = [&] {
+            if (auto fire = gameHooks.take_fire())
+                fire_output(*fire);
             if (auto sample = gameHooks.take_aim()) {
                 lastAim = *sample;
                 beacon_output(beacons.update(*sample));

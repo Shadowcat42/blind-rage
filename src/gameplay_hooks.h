@@ -10,6 +10,7 @@
 #include "walk_beacon.h"
 #include "hotkey_names.h"
 #include "mod_tutorials.h"
+#include "fire_warning.h"
 #include "script_calls.h"
 #include <atomic>
 #include <windows.h>
@@ -162,6 +163,7 @@ class GameplayHooks {
         queue_.clear();
         aim_mailbox_.clear();
         walk_mailbox_.clear();
+        fire_mailbox_.clear();
         if (!enabled) {
             trace_.stop();
             restore_homing();
@@ -230,6 +232,9 @@ class GameplayHooks {
     }
     std::optional<WalkSnapshot> take_walk() {
         return walk_mailbox_.take();
+    }
+    std::optional<FireCue> take_fire() {
+        return fire_mailbox_.take();
     }
     void aim_priority(AimPriority priority) {
         priority_ = priority;
@@ -401,6 +406,9 @@ class GameplayHooks {
         std::vector<uint32_t> walk_events;
         uint32_t walk_world{};
         uint32_t tutorial_controller{};
+        // Per controller class: bNoUseLockOnShot {offset, mask}, 0 when absent.
+        std::map<uint32_t, std::pair<uint32_t, uint32_t>> no_lock_fields;
+        FireTracker fire;
         uint64_t walk_refreshed{};
     };
     static Thread &thread() {
@@ -821,6 +829,24 @@ class GameplayHooks {
                 return true;
             }
             auto world = memory.u32(source + 0xd4);
+            // Some shooting sections (Episode 8's chase, BCPlayerController_March)
+            // switch the game's lock-on search off with bNoUseLockOnShot, so the
+            // acquisition callbacks that supply targets never run. Those controllers
+            // take their targets from the same enemies and projectiles melee rapid
+            // fire aims at, through the same cursor (AimShotAimPoint).
+            bool nativeLocks = true;
+            {
+                auto cls = memory.u32(source + 0x34);
+                auto field = state.no_lock_fields.find(cls);
+                if (field == state.no_lock_fields.end())
+                    field = state.no_lock_fields
+                                .emplace(cls, ScriptLookup::property(memory, state.reader, cls,
+                                                                     "bNoUseLockOnShot"))
+                                .first;
+                auto [offset, mask] = field->second;
+                if (offset && mask && (memory.u32(source + offset) & mask))
+                    nativeLocks = false;
+            }
             LockFrame frame{};
             frame.previous = state.locks;
             frame.pc = source;
@@ -834,6 +860,33 @@ class GameplayHooks {
             trace_record(lock_record(memory, state, LockTraceKind::frame), state);
             original_[0](context, base);
             state.locks = frame.previous;
+            if (!nativeLocks) {
+                // Enemies only: aiming at a projectile here also moves the player
+                // into its path. Incoming fire gets its own warning instead.
+                frame.snapshot = capture_melee_aim(
+                    memory, source, GetTickCount64(), AimPriority::enemies,
+                    melee_homing_degrees(boosted_melee() ? homing_boost_.load() : 1.f),
+                    [&](uint32_t object, std::string_view cls) {
+                        return cached_subclass(memory, state, object, cls);
+                    });
+                unsigned kept = 0;
+                for (unsigned i = 0; i < frame.snapshot.count; ++i)
+                    if (!frame.snapshot.targets[i].projectile)
+                        frame.snapshot.targets[kept++] = frame.snapshot.targets[i];
+                frame.snapshot.count = kept;
+                frame.snapshot.hold_target = true;
+                auto pawn = memory.u32(source + 0x5c4);
+                LockVector at;
+                const auto camera = lock_camera(memory, source);
+                auto right = camera.valid ? aim_unit({-camera.forward.y, camera.forward.x, 0})
+                                          : std::nullopt;
+                if (pawn && right && lock_vector(memory, pawn + 0x54, at)) {
+                    auto cue = state.fire.update(fire_samples(memory, source), at.x, at.y, right->x,
+                                                 right->y, GetTickCount64());
+                    cue.active = cue.active && enabled_.load() && frame.active;
+                    fire_mailbox_.put(cue);
+                }
+            }
             {
                 if (!frame.snapshot.tick)
                     frame.snapshot.tick = GetTickCount64();
@@ -897,7 +950,9 @@ class GameplayHooks {
                     frame.snapshot.active && enabled_.load() &&
                     aim_context_active(memory, frame.snapshot.controller, frame.snapshot.pawn);
                 aim_mailbox_.put(frame.snapshot);
-                state.tracking = frame.snapshot;
+                // Without native locks the cursor also moves the player sideways
+                // (March.PlayerOffsetCtrl), so L1 steering is not offered there.
+                state.tracking = nativeLocks ? frame.snapshot : AimSnapshot{};
                 SetEvent(event_);
             }
             if (trace_.pending())
@@ -1659,6 +1714,7 @@ class GameplayHooks {
         return turn != 0 || look != 0;
     }
     LatestMailbox<WalkSnapshot> walk_mailbox_;
+    LatestMailbox<FireCue> fire_mailbox_;
     NativeHooks hooks_;
     const BuildProfile *profile_{};
     std::array<Function, 3> original_{};

@@ -130,6 +130,27 @@ int main() {
             lone.targets[0].reachable = true;
             check(only.update(lone).active, "the same target is guided once reachable");
         }
+        {
+            // Sections without lock-on: one target held until it is gone.
+            AimSnapshot chase = frame;
+            chase.hold_target = true;
+            chase.count = 2;
+            chase.targets[0] = {{40, 1}, direction(-10), false, 2000.f};
+            chase.targets[1] = {{41, 1}, direction(12), false, 1500.f};
+            ShootingBeacons hold;
+            auto held = hold.update(chase);
+            check(held.active && held.pan > 0 && hold.guiding().pointer == 41,
+                  "a held beacon starts with the nearest target");
+            chase.targets[0].distance = 500.f;
+            hold.update(chase);
+            check(hold.guiding().pointer == 41, "it keeps its target when another comes nearer");
+            hold.update(chase, -1);
+            check(hold.guiding().pointer == 40, "D-pad steps to the next target to the left");
+            chase.count = 1;
+            chase.targets[0] = {{41, 1}, direction(12), false, 1500.f};
+            hold.update(chase);
+            check(hold.guiding().pointer == 41, "a lost target hands over to the one remaining");
+        }
         ShootingBeacons beacons;
         auto cue = beacons.update(frame);
         check(cue.active && cue.pan < 0 && beacons.clusters() == 2,
