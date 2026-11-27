@@ -33,10 +33,18 @@ class WindowNotifications {
                         nullptr, 100 + int(i), keys_[i].modifiers | MOD_NOREPEAT, keys_[i].key);
             }
         focused_ = focused;
+        register_menu(menu_ && focused_);
         return focused_;
     }
     bool focused() const {
         return focused_;
+    }
+    // The settings menu borrows Up, Down, Left, Right, Enter and Escape while
+    // it is open (hotkey IDs 300-305); the game does not receive them then.
+    static constexpr int kMenuKeyBase = 300;
+    void menu_keys(bool on) {
+        menu_ = on;
+        register_menu(on && focused_);
     }
     bool hotkey_registered(unsigned i) const {
         return i < registered_.size() && registered_[i];
@@ -47,10 +55,21 @@ class WindowNotifications {
         for (unsigned i = 0; i < keys_.size(); i++)
             if (registered_[i])
                 UnregisterHotKey(nullptr, 100 + int(i));
+        register_menu(false);
         thread_ = 0;
     }
 
   private:
+    void register_menu(bool on) {
+        static constexpr UINT keys[]{VK_UP, VK_DOWN, VK_LEFT, VK_RIGHT, VK_RETURN, VK_ESCAPE};
+        for (int i = 0; i < 6; ++i) {
+            if (menu_registered_[size_t(i)] && !on) {
+                UnregisterHotKey(nullptr, kMenuKeyBase + i);
+                menu_registered_[size_t(i)] = false;
+            } else if (on && !menu_registered_[size_t(i)])
+                menu_registered_[size_t(i)] = RegisterHotKey(nullptr, kMenuKeyBase + i, 0, keys[i]);
+        }
+    }
     static void CALLBACK focus(HWINEVENTHOOK, DWORD, HWND, LONG, LONG, DWORD, DWORD) {
         auto thread = thread_.load();
         if (thread)
@@ -60,6 +79,7 @@ class WindowNotifications {
     HWINEVENTHOOK hook_{};
     std::array<Hotkey, 16> keys_{};
     std::array<bool, 16> registered_{};
-    bool focused_{};
+    std::array<bool, 6> menu_registered_{};
+    bool focused_{}, menu_{};
 };
 }

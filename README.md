@@ -56,6 +56,7 @@ These work with any controller or keyboard setup.
 | M | Cycle shooting assistance (D-pad Up) |
 | , (comma) / . (period) | Previous / next target cluster (D-pad Left / Right) |
 | / (slash) | Switch melee aim priority (D-pad Down) |
+| Ctrl+O | Open or close the settings menu (on a controller: click both sticks) |
 | F5 | Save a diagnostic dump (see [diagnostics](#diagnostics)) |
 | Ctrl+Up / Down / Left / Right | Keyboard right stick: hold during gameplay (camera, lock-on target switching); press in Control Settings and Episode records to browse |
 
@@ -76,7 +77,7 @@ Image-only text and some conversation and interlude routes aren't read yet.
 
 ## Settings
 
-Settings live in `mods/accessibility/accessibility.ini`. The package doesn't include it: BlindRage.exe creates it on first launch from its built-in [defaults](config/accessibility.ini), which explain each setting, so extracting an update never resets your choices. After an update, BlindRage.exe adds any new settings and removes retired ones, keeping every value you set. Otherwise only the mod's in-game choices change the file (the shooting mode and aim priority). Restart the game after editing it.
+Press **Ctrl+O**, or click both sticks on a controller, to open the spoken settings menu. During gameplay the game pauses while it's open. Up and down choose a setting, left and right (or Enter and cross) change it, and Escape, circle or Start close the menu. Changes apply at once and are saved. Settings live in `mods/accessibility/accessibility.ini`. The package doesn't include it: BlindRage.exe creates it on first launch from its built-in [defaults](config/accessibility.ini), which explain each setting, so extracting an update never resets your choices. After an update, BlindRage.exe adds any new settings and removes retired ones, keeping every value you set. Otherwise only the mod's in-game choices change the file (the shooting mode and aim priority). Restart the game after editing it.
 
 | Setting | Default | Meaning |
 | --- | --- | --- |

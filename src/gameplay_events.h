@@ -122,6 +122,8 @@ struct GameplayEvent {
     uint32_t tutorial_level{}, tutorial_level_index{};
     int tutorial_step{};
     uint32_t tutorial_box{};
+    // Settings menu input from the controller (GameplayHooks::MenuInput).
+    int menu_input{};
     QteGroup group;
     TimingState sync;
     StatusContext status;

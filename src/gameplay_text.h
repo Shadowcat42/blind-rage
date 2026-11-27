@@ -86,6 +86,9 @@ class GameplayText {
     };
     explicit GameplayText(Options options, ButtonLabel label = {})
         : options_(options), label_(std::move(label)) {}
+    void options(Options options) {
+        options_ = options;
+    }
     void reset() {
         active_.clear();
         tutorials_.clear();

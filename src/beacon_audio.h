@@ -72,6 +72,10 @@ template <class Synth, class Cue> class ToneStream {
         }
         return true;
     }
+    // The settings menu changes the volume while streams run.
+    void set_gain(float gain) {
+        gain_ = std::clamp(gain, 0.f, .4f);
+    }
     void update(Cue cue) {
         std::lock_guard lock(mutex_);
         cue_ = cue;
@@ -145,7 +149,7 @@ template <class Synth, class Cue> class ToneStream {
                 // SamplesPlayed advances in 10-ms processing passes.
                 auto ahead = int64_t(submitted_ - std::min(submitted_, state.SamplesPlayed)) *
                              1'000'000'000 / 48000;
-                stream_render(synth_, cue, gain_, samples.data(), 480, ahead);
+                stream_render(synth_, cue, gain_.load(), samples.data(), 480, ahead);
                 XAUDIO2_BUFFER buffer{};
                 buffer.AudioBytes = sizeof(samples);
                 buffer.pAudioData = reinterpret_cast<const BYTE *>(samples.data());
@@ -170,7 +174,7 @@ template <class Synth, class Cue> class ToneStream {
     std::mutex mutex_;
     Cue cue_;
     Synth synth_;
-    float gain_{};
+    std::atomic<float> gain_{};
     std::array<std::array<float, 960>, 8> buffers_{};
 };
 using BeaconAudio = ToneStream<BeaconSynth, BeaconCue>;

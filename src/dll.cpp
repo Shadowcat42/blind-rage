@@ -98,6 +98,8 @@ static DWORD WINAPI run(void *) {
             gameHooks.install(reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr)), *profile);
         if (!nativeGameplay)
             write("Gameplay state hooks unavailable; QTEs and shooting aid not started");
+        if (!gameHooks.install_input(runtime))
+            write("Controller input hook unavailable; the settings menu uses the keyboard only");
         GameplayGuard gameplayGuard{gameHooks};
         auto &restart = RestartHook::instance();
         RestartGuard restartGuard{restart};
@@ -117,9 +119,9 @@ static DWORD WINAPI run(void *) {
         // One settings file: mods/accessibility/accessibility.ini, the parent of dist.
         auto ini = (dir.parent_path() / L"accessibility.ini").wstring();
         write("CONFIG " + utf8(ini) + (fs::exists(ini) ? "" : " (missing; defaults in use)"));
-        std::vector<std::wstring> commands = {L"repeat",  L"mute",    L"dump",    L"status",
-                                              L"aimmode", L"aimprev", L"aimnext", L"aimpriority",
-                                              L"rsup",    L"rsdown",  L"rsleft",  L"rsright"};
+        std::vector<std::wstring> commands = {
+            L"repeat",      L"mute", L"dump",   L"status", L"aimmode", L"aimprev", L"aimnext",
+            L"aimpriority", L"rsup", L"rsdown", L"rsleft", L"rsright", L"settings"};
         std::vector<HANDLE> events;
         for (auto &c : commands)
             events.push_back(
@@ -142,7 +144,9 @@ static DWORD WINAPI run(void *) {
                                    {MOD_CONTROL, VK_UP},
                                    {MOD_CONTROL, VK_DOWN},
                                    {MOD_CONTROL, VK_LEFT},
-                                   {MOD_CONTROL, VK_RIGHT}};
+                                   {MOD_CONTROL, VK_RIGHT},
+                                   // The settings menu.
+                                   {MOD_CONTROL, 'O'}};
         Hotkey hotkeys[16]{};
         for (size_t i = 0; i < commands.size(); i++) {
             wchar_t text[64]{};
@@ -204,7 +208,8 @@ static DWORD WINAPI run(void *) {
                                     const std::map<std::string, std::string> &actions) {
             return prompts.describe_row(keys, actions);
         });
-        GameplayText gameplay({setting(L"subtitles", 1), setting(L"tutorials", 1)}, buttonLabel);
+        GameplayText::Options textOptions{setting(L"subtitles", 1), setting(L"tutorials", 1)};
+        GameplayText gameplay(textOptions, buttonLabel);
         GameplayStatus status(
             [&](std::string_view tag) { return prompts.button(tag); },
             GetPrivateProfileIntW(L"gameplay", L"low_health_percent", 25, ini.c_str()));
@@ -297,7 +302,7 @@ static DWORD WINAPI run(void *) {
         };
         // Walking guidance to the nearest touch trigger not yet entered.
         // The mod's own tutorial boxes (Episode 1's rail-shooting introduction).
-        const bool modTutorials = setting(L"mod_tutorials", 1);
+        bool modTutorials = setting(L"mod_tutorials", 1);
         gameHooks.mod_tutorials(modTutorials);
         uint64_t tutorialLevel = 0, beaconDemo = 0;
         // Lookups from the first tutorial, reused: script classes and the SE_UI cues
@@ -325,7 +330,7 @@ static DWORD WINAPI run(void *) {
             cue.generation = ~0ull - ++beaconDemo;
             beaconAudio.update(cue);
         };
-        const bool walkEnabled = setting(L"walk_beacon", 1);
+        bool walkEnabled = setting(L"walk_beacon", 1);
         gameHooks.walk_beacon(walkEnabled);
         BeaconAudio walkAudio;
         AudioRetry walkRetry;
@@ -755,6 +760,15 @@ static DWORD WINAPI run(void *) {
                 current = menu_selection_state(menu);
             }
             dialogReturn.observe(current, menus.empty() ? nullptr : &menus.back());
+            // A game menu (the pause menu) taking over during a mod tutorial ends the
+            // tutorial: its box can no longer be confirmed, and the beacon must not
+            // stay held back.
+            if (!current.empty() && gameHooks.tutorial_running()) {
+                gameHooks.cancel_tutorial();
+                write("MOD_TUTORIAL interrupted by a game menu");
+                if (qteNoteActive)
+                    release_qte("interrupted");
+            }
             if (current == pending)
                 stable++;
             else {
@@ -816,6 +830,132 @@ static DWORD WINAPI run(void *) {
             // Counted for EVENT_STATS in dumps; each read is no longer logged.
             ++reads;
         };
+        // The spoken settings menu (Ctrl+O or both stick clicks). Each change applies
+        // at once and is saved to accessibility.ini.
+        SettingsMenu settingsMenu;
+        bool menuPaused = false;
+        auto menu_say = [&](const std::string &text) {
+            write("SETTINGS " + text);
+            if (speaking && !text.empty())
+                speech.speak(text, true);
+        };
+        auto apply_setting = [&](const std::string &key, const std::string &value) {
+            WritePrivateProfileStringW(L"gameplay", wide(key).c_str(), wide(value).c_str(),
+                                       ini.c_str());
+            const bool on = value == "1";
+            const float number = float(std::atof(value.c_str()));
+            if (key == "subtitles" || key == "tutorials") {
+                (key == "subtitles" ? textOptions.subtitles : textOptions.tutorials) = on;
+                gameplay.options(textOptions);
+            } else if (key == "qtes") {
+                qteEnabled = on;
+                gameHooks.options(textHooks && qteEnabled, boostPointBlank, boostMaxRange);
+            } else if (key == "qte_interrupt")
+                interruptQte = on;
+            else if (key == "interrupt")
+                interruptText = on;
+            else if (key == "status_warnings")
+                statusWarnings = on;
+            else if (key == "low_health_percent")
+                status.low_health(int(number));
+            else if (key == "shooting_mode") {
+                gameHooks.stop_lock_trace();
+                shootingMode = shooting_mode(value, -1);
+                gameHooks.shooting(shootingMode);
+                beacons.reset();
+                lastAim.reset();
+                beaconAudio.silence();
+            } else if (key == "aim_priority")
+                gameHooks.aim_priority(aim_priority(value));
+            else if (key == "boost_point_blank" || key == "boost_max_range") {
+                (key == "boost_point_blank" ? boostPointBlank : boostMaxRange) =
+                    std::clamp(number, 1.f, 10.f);
+                gameHooks.options(textHooks && qteEnabled, boostPointBlank, boostMaxRange);
+            } else if (key == "boost_homing")
+                gameHooks.homing_boost(std::clamp(number, 1.f, 10.f));
+            else if (key == "tracking_strength")
+                gameHooks.tracking(std::clamp(number, 0.f, 100.f) / 100.f);
+            else if (key == "walk_beacon") {
+                walkEnabled = on;
+                gameHooks.walk_beacon(on);
+                if (!on)
+                    walkAudio.silence();
+            } else if (key == "mod_tutorials") {
+                modTutorials = on;
+                gameHooks.mod_tutorials(on);
+            } else if (key == "audio_cue_volume") {
+                cueGain = std::clamp(number, 0.f, 100.f) * .004f;
+                beaconAudio.set_gain(cueGain);
+                walkAudio.set_gain(cueGain);
+                countInAudio.set_gain(cueGain);
+                fireAudio.set_gain(cueGain);
+            }
+        };
+        // Pausing uses BCGFxMovieScene.SetGamePause, resolved once.
+        auto pause_ready = [&] {
+            if (gameHooks.pause_configured())
+                return true;
+            auto runtimeInstance = instance();
+            auto base = runtimeInstance ? membase(runtimeInstance) : nullptr;
+            Memory memory([&](uint32_t at, void *out, size_t size) {
+                SIZE_T got{};
+                return base && ReadProcessMemory(GetCurrentProcess(), base + at, out, size, &got) &&
+                       got == size;
+            });
+            if (!reader.ready(memory))
+                return false;
+            const auto &layout = reader.layout();
+            auto scene = ScriptLookup::find(memory, reader, layout, "BCGFxMovieScene", "Class");
+            auto setPause = ScriptLookup::function(memory, reader, scene, "SetGamePause");
+            uint32_t tick = 0;
+            auto names = memory.u32(layout.names_global + 4);
+            for (uint32_t i = 0; i < names && i < 250000 && !tick; ++i)
+                if (reader.name(memory, i) == "Tick")
+                    tick = i;
+            gameHooks.configure_pause(setPause, scene, tick);
+            return gameHooks.pause_configured();
+        };
+        auto open_menu = [&] {
+            auto text = settingsMenu.open([&](const std::string &key, const std::string &fallback) {
+                wchar_t value[64]{};
+                GetPrivateProfileStringW(L"gameplay", wide(key).c_str(), wide(fallback).c_str(),
+                                         value, 64, ini.c_str());
+                return utf8(value);
+            });
+            gameHooks.menu_open(true);
+            notifications.menu_keys(true);
+            // Pause gameplay only: a game menu or the pause menu already stops it.
+            if (last.empty() && pause_ready()) {
+                gameHooks.request_pause(true);
+                menuPaused = true;
+            }
+            menu_say(text);
+        };
+        auto close_menu = [&] {
+            if (menuPaused)
+                gameHooks.request_pause(false);
+            menuPaused = false;
+            gameHooks.menu_open(false);
+            notifications.menu_keys(false);
+            menu_say(settingsMenu.close());
+        };
+        auto menu_input = [&](int input) {
+            if (input == GameplayHooks::menu_toggle) {
+                settingsMenu.is_open() ? close_menu() : open_menu();
+                return;
+            }
+            if (!settingsMenu.is_open())
+                return;
+            if (input == GameplayHooks::menu_up || input == GameplayHooks::menu_down)
+                menu_say(settingsMenu.move(input == GameplayHooks::menu_up ? -1 : 1));
+            else if (input == GameplayHooks::menu_back)
+                close_menu();
+            else if (auto change =
+                         settingsMenu.adjust(input == GameplayHooks::menu_left ? -1 : 1)) {
+                apply_setting(change->key, change->value);
+                menu_say(change->speech);
+            }
+        };
         auto command = [&](unsigned i) {
             if (i >= commands.size())
                 return;
@@ -839,6 +979,8 @@ static DWORD WINAPI run(void *) {
             }
             if (name == L"dump")
                 inspect(true);
+            if (name == L"settings")
+                menu_input(GameplayHooks::menu_toggle);
             // Keyboard equivalents of the D-pad shooting controls.
             if (name == L"aimmode")
                 shooting_command(3);
@@ -1039,6 +1181,8 @@ static DWORD WINAPI run(void *) {
                                                 forceContext = false;
                                             }
                                         }
+                                } else if (event.menu_input) {
+                                    menu_input(event.menu_input);
                                 } else if (event.tutorial_level) {
                                     auto level = reader.object_name(memory, event.tutorial_level);
                                     write("MOD_TUTORIAL rail shooting in " + level);
@@ -1209,7 +1353,14 @@ static DWORD WINAPI run(void *) {
                     } else if (message.message == WM_HOTKEY && message.wParam >= 100 &&
                                message.wParam < 100 + commands.size() && notifications.focused())
                         command(unsigned(message.wParam - 100));
-                    else {
+                    else if (message.message == WM_HOTKEY &&
+                             message.wParam >= WindowNotifications::kMenuKeyBase &&
+                             message.wParam < WindowNotifications::kMenuKeyBase + 6) {
+                        constexpr int keys[]{GameplayHooks::menu_up,      GameplayHooks::menu_down,
+                                             GameplayHooks::menu_left,    GameplayHooks::menu_right,
+                                             GameplayHooks::menu_confirm, GameplayHooks::menu_back};
+                        menu_input(keys[message.wParam - WindowNotifications::kMenuKeyBase]);
+                    } else {
                         TranslateMessage(&message);
                         DispatchMessageW(&message);
                     }

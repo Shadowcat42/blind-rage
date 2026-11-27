@@ -8,6 +8,9 @@ class GameplayStatus {
     using Movie = GameplayText::Movie;
     explicit GameplayStatus(ButtonLabel label = {}, int lowHealth = 25)
         : label_(std::move(label)), low_(std::clamp(lowHealth, 1, 90)) {}
+    void low_health(int percent) {
+        low_ = std::clamp(percent, 1, 90);
+    }
     void reset() {
         gauge_ = {};
         health_.reset();

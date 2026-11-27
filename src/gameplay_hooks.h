@@ -11,6 +11,7 @@
 #include "hotkey_names.h"
 #include "mod_tutorials.h"
 #include "fire_warning.h"
+#include "settings_menu.h"
 #include "script_calls.h"
 #include <atomic>
 #include <windows.h>
@@ -206,6 +207,54 @@ class GameplayHooks {
     };
     void mod_tutorials(bool enabled) {
         mod_tutorials_ = enabled;
+    }
+    // Settings menu: controller input comes from the runtime's XamInputGetState
+    // bridge, which every supported pad (SDL, XInput, keyboard emulation) feeds.
+    enum MenuInput {
+        menu_toggle = 1,
+        menu_up,
+        menu_down,
+        menu_left,
+        menu_right,
+        menu_confirm,
+        menu_back
+    };
+    bool install_input(HMODULE runtime) {
+        if (input_installed_)
+            return true;
+        auto target = runtime ? reinterpret_cast<void *>(GetProcAddress(
+                                    runtime, "??$HostToGuestFunction@$MP6AIIIV?$MappedPtr@UX_INPUT_"
+                                             "STATE@input@rex@@@rex@@@Z1?XamInputGetState_entry@"
+                                             "xam@kernel@2@YAIII0@Z@ppc@rex@@YAXAEAUPPCContext@@"
+                                             "PEAE@Z"))
+                              : nullptr;
+        if (!target || !input_hooks_.initialize() ||
+            !input_hooks_.add(target, reinterpret_cast<void *>(input_state),
+                              reinterpret_cast<void **>(&input_original_)) ||
+            !input_hooks_.enable())
+            return false;
+        input_installed_ = true;
+        return true;
+    }
+    // While open, the game receives an idle pad and the presses become menu input.
+    void menu_open(bool open) {
+        menu_open_ = open;
+    }
+    // Pausing for the menu: BCGFxMovieScene.SetGamePause, run on the next Tick of
+    // a movie scene (the HUD's tutorial box ticks throughout gameplay).
+    void configure_pause(ScriptFunction set_pause, uint32_t scene_class, uint32_t tick_name) {
+        std::lock_guard lock(pause_mutex_);
+        pause_function_ = std::move(set_pause);
+        pause_class_ = scene_class;
+        pause_tick_ = tick_name;
+    }
+    bool pause_configured() {
+        std::lock_guard lock(pause_mutex_);
+        return pause_function_.valid() && pause_class_ && pause_tick_ &&
+               pause_function_.offsets.contains("bPause");
+    }
+    void request_pause(bool pause) {
+        pause_request_ = pause ? 1 : 2;
     }
     void start_tutorial(TutorialRun run) {
         std::lock_guard lock(tutorial_mutex_);
@@ -1543,6 +1592,9 @@ class GameplayHooks {
         if (self.tutorial_active_.load(std::memory_order_relaxed) &&
             self.run_tutorial(context, base, name))
             return;
+        if (self.pause_request_.load(std::memory_order_relaxed) &&
+            self.run_pause(context, base, name))
+            return;
         // ProcessEvent sees native-origin movie callbacks even when their script
         // body is undefined. ProcessInternal never runs that default empty event.
         // The original dispatcher reads this UFunction field too; exclude unrelated
@@ -1741,6 +1793,92 @@ class GameplayHooks {
     std::atomic<uint64_t> fired_{};
     std::atomic<uint64_t> lock_frames_{};
     std::atomic<bool> mod_tutorials_{}, tutorial_active_{};
+    NativeHooks input_hooks_;
+    Function input_original_{};
+    bool input_installed_{};
+    std::atomic<bool> menu_open_{};
+    std::array<uint16_t, 4> input_previous_{}, input_swallow_{};
+    std::array<bool, 4> input_menu_was_open_{};
+    std::mutex pause_mutex_;
+    ScriptFunction pause_function_;
+    uint32_t pause_class_{}, pause_tick_{};
+    std::atomic<int> pause_request_{};
+    static void input_state(void *context, uint8_t *base) {
+        auto &self = instance();
+        auto user = ui_argument(context, 3), state = ui_argument(context, 5);
+        self.input_original_(context, base);
+        uint32_t result{};
+        std::memcpy(&result, context, 4);
+        if (result || !state || user > 3 || uint64_t(state) + 16 > 0x100000000ull)
+            return;
+        // X_INPUT_STATE: packet number, then the big-endian gamepad (buttons,
+        // triggers, sticks).
+        auto *pad = base + state + 4 + (state >= 0xe0000000u ? 0x1000 : 0);
+        uint16_t buttons = uint16_t(pad[0] << 8 | pad[1]);
+        auto previous = self.input_previous_[user];
+        self.input_previous_[user] = buttons;
+        const uint16_t pressed = buttons & ~previous;
+        constexpr uint16_t up = 0x1, down = 0x2, left = 0x4, right = 0x8, start = 0x10, l3 = 0x40,
+                           r3 = 0x80, cross = 0x1000, circle = 0x2000;
+        auto send = [&](int input) {
+            GameplayEvent event;
+            event.menu_input = input;
+            self.publish(event);
+        };
+        // Both stick clicks open or close the menu.
+        if (((buttons & l3) && (pressed & r3)) || ((pressed & l3) && (buttons & r3)))
+            send(menu_toggle);
+        const bool open = self.menu_open_.load();
+        // Buttons still held when the menu closes (the circle that closed it) stay
+        // hidden from the game until released, so closing never presses them.
+        if (self.input_menu_was_open_[user] && !open)
+            self.input_swallow_[user] = buttons;
+        self.input_menu_was_open_[user] = open;
+        self.input_swallow_[user] &= buttons;
+        if (!open && self.input_swallow_[user]) {
+            auto shown = uint16_t(buttons & ~self.input_swallow_[user]);
+            pad[0] = uint8_t(shown >> 8);
+            pad[1] = uint8_t(shown);
+        }
+        if (open) {
+            const std::pair<uint16_t, int> keys[]{
+                {up, menu_up},         {down, menu_down},   {left, menu_left}, {right, menu_right},
+                {cross, menu_confirm}, {circle, menu_back}, {start, menu_back}};
+            for (auto [bit, input] : keys)
+                if (pressed & bit)
+                    send(input);
+            std::memset(pad, 0, 12);
+        } else if (buttons & l3)
+            // L3 does nothing in the released game; while it is held, R3 (camera
+            // reset) is hidden so the menu chord never moves the camera.
+            pad[1] &= uint8_t(~r3);
+    }
+    bool run_pause(void *context, uint8_t *base, uint32_t name) {
+        static thread_local bool inside = false;
+        if (inside)
+            return false;
+        std::lock_guard lock(pause_mutex_);
+        if (!pause_tick_ || name != pause_tick_ || !pause_function_.valid())
+            return false;
+        Memory memory(Read{base});
+        auto source = ui_argument(context, 3);
+        bool scene = false;
+        for (auto cls = source ? memory.u32(source + 0x34) : 0, depth = 0u;
+             cls && depth < 24 && !scene; cls = memory.u32(cls + 0x40), ++depth)
+            scene = cls == pause_class_;
+        if (!scene)
+            return false;
+        auto request = pause_request_.exchange(0);
+        if (!request)
+            return false;
+        inside = true;
+        original_[2](context, base);
+        ScriptCall call(source, pause_function_);
+        call.u32(pause_function_.offsets["bPause"], request == 1 ? 0xffffffffu : 0);
+        script(context, base, call);
+        inside = false;
+        return true;
+    }
     std::mutex tutorial_mutex_;
     TutorialRun tutorial_;
     std::optional<TutorialSequence> tutorial_sequence_;

@@ -38,6 +38,8 @@ try {
  if($LASTEXITCODE){throw 'Settings file test compilation failed'}
  & $compiler @common 'tests/recomp_setup_test.cpp' '-o' 'build/tests/recomp_setup_test.exe' '-lwinhttp' '-lole32' '-luuid' '-luser32' '-lbcrypt'
  if($LASTEXITCODE){throw 'Recomp setup test compilation failed'}
+ & $compiler @common 'tests/settings_menu_test.cpp' '-o' 'build/tests/settings_menu_test.exe'
+ if($LASTEXITCODE){throw 'Settings menu test compilation failed'}
  & $compiler @common 'tests/fire_warning_test.cpp' '-o' 'build/tests/fire_warning_test.exe'
  if($LASTEXITCODE){throw 'Fire warning test compilation failed'}
  & $compiler @common 'tests/mod_tutorials_test.cpp' '-o' 'build/tests/mod_tutorials_test.exe'
@@ -87,6 +89,7 @@ try {
   & ./build/tests/settings_file_test.exe; if($LASTEXITCODE){throw 'Settings file tests failed'}
   & ./build/tests/mod_tutorials_test.exe; if($LASTEXITCODE){throw 'Mod tutorial tests failed'}
   & ./build/tests/fire_warning_test.exe; if($LASTEXITCODE){throw 'Fire warning tests failed'}
+  & ./build/tests/settings_menu_test.exe; if($LASTEXITCODE){throw 'Settings menu tests failed'}
   & ./build/tests/recomp_setup_test.exe; if($LASTEXITCODE){throw 'Recomp setup tests failed'}
   & ./build/tests/shooting_beacons_test.exe; if($LASTEXITCODE){throw 'Shooting beacon tests failed'}
   & ./build/tests/reader_test.exe; if($LASTEXITCODE){throw 'Reader tests failed'}
