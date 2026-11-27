@@ -8,6 +8,8 @@
 #include "shooting_beacons.h"
 #include "melee_aim.h"
 #include "walk_beacon.h"
+#include "melee_locator.h"
+#include "look_around.h"
 #include "hotkey_names.h"
 #include "mod_tutorials.h"
 #include "fire_warning.h"
@@ -17,6 +19,17 @@
 #include <windows.h>
 
 namespace a11y {
+// A controller and its outermost object (the map package), with object indices.
+inline std::array<uint32_t, 4> tutorial_section(const Memory &memory, uint32_t controller) {
+    auto top = controller;
+    for (unsigned depth = 0; depth < 16; ++depth) {
+        auto outer = memory.u32(top + 0x28);
+        if (!outer)
+            break;
+        top = outer;
+    }
+    return {controller, memory.u32(controller + 0x20), top, memory.u32(top + 0x20)};
+}
 class GameplayHooks {
   public:
     using Function = void (*)(void *, uint8_t *);
@@ -164,6 +177,7 @@ class GameplayHooks {
         queue_.clear();
         aim_mailbox_.clear();
         walk_mailbox_.clear();
+        melee_mailbox_.clear();
         fire_mailbox_.clear();
         if (!enabled) {
             trace_.stop();
@@ -282,6 +296,14 @@ class GameplayHooks {
     }
     std::optional<WalkSnapshot> take_walk() {
         return walk_mailbox_.take();
+    }
+    // Melee beacon snapshots arrive in every melee section; whether they play is
+    // the caller's setting (D-pad Up toggles it outside rapid fire).
+    std::optional<MeleeSnapshot> take_melee() {
+        return melee_mailbox_.take();
+    }
+    std::optional<LookSnapshot> take_look() {
+        return look_mailbox_.take();
     }
     std::optional<FireCue> take_fire() {
         return fire_mailbox_.take();
@@ -455,9 +477,21 @@ class GameplayHooks {
         float clock_now = NAN;
         std::vector<uint32_t> walk_events;
         uint32_t walk_world{};
-        uint32_t tutorial_controller{};
+        // The last section reported for mod tutorials: controller and its map, each
+        // with its object index. A new map's controller can reuse the old address.
+        std::array<uint32_t, 4> tutorial_section{}, melee_tutorial_section{};
         // Per controller class: bNoUseLockOnShot {offset, mask}, 0 when absent.
         std::map<uint32_t, std::pair<uint32_t, uint32_t>> no_lock_fields;
+        // Per controller class: BurstGuideTargetActor's offset, 0 when absent.
+        std::map<uint32_t, uint32_t> guide_fields;
+        // Per controller class: its TargetControl offset; per control class: the
+        // LockedActor offset and bFixLock {offset, mask}.
+        std::map<uint32_t, uint32_t> target_control_fields;
+        std::map<uint32_t, MeleeFields> lock_control_fields;
+        // Look-around cameras: fields resolved once, and the groups found so far.
+        LookFields look_fields;
+        bool look_view_resolved{}, look_camera_resolved{};
+        LookTracker look;
         FireTracker fire;
         uint64_t walk_refreshed{};
     };
@@ -820,17 +854,12 @@ class GameplayHooks {
         if (route == Route::shoot_tick) {
             // A new rail-shooting controller: report its map, which decides whether
             // a mod tutorial belongs to this section (the worker checks the name).
-            if (mod_tutorials_.load(std::memory_order_relaxed) &&
-                source != state.tutorial_controller) {
-                state.tutorial_controller = source;
+            if (auto section = tutorial_section(memory, source);
+                mod_tutorials_.load(std::memory_order_relaxed) &&
+                section != state.tutorial_section) {
+                state.tutorial_section = section;
                 if (subclass(memory, state.reader, source, "BCPlayerController_HeavyShoot")) {
-                    auto top = source;
-                    for (unsigned depth = 0; depth < 16; ++depth) {
-                        auto outer = memory.u32(top + 0x28);
-                        if (!outer)
-                            break;
-                        top = outer;
-                    }
+                    auto top = section[2];
                     GameplayEvent event;
                     event.tutorial_level = top;
                     event.tutorial_level_index = memory.u32(top + 0x20);
@@ -866,12 +895,62 @@ class GameplayHooks {
                     aim_mailbox_.put(snapshot);
                     state.tracking = snapshot;
                     SetEvent(event_);
-                } else if (walk_enabled_.load() && !(state.locks && state.locks->pc == source) &&
+                } else if (!(state.locks && state.locks->pc == source) &&
                            subclass(memory, state.reader, source, "BCPlayerController")) {
                     auto classes = [&](uint32_t object, std::string_view cls) {
                         return cached_subclass(memory, state, object, cls);
                     };
                     const auto now = GetTickCount64();
+                    {
+                        auto cls = memory.u32(source + 0x34);
+                        auto control = state.target_control_fields.find(cls);
+                        if (control == state.target_control_fields.end())
+                            control = state.target_control_fields
+                                          .emplace(cls, ScriptLookup::property(memory, state.reader,
+                                                                               cls, "TargetControl")
+                                                            .first)
+                                          .first;
+                        MeleeFields fields;
+                        if (auto object =
+                                control->second ? memory.u32(source + control->second) : 0) {
+                            auto controlClass = memory.u32(object + 0x34);
+                            auto known = state.lock_control_fields.find(controlClass);
+                            if (known == state.lock_control_fields.end()) {
+                                MeleeFields found;
+                                found.locked_actor =
+                                    ScriptLookup::property(memory, state.reader, controlClass,
+                                                           "LockedActor")
+                                        .first;
+                                std::tie(found.fix_offset, found.fix_mask) = ScriptLookup::property(
+                                    memory, state.reader, controlClass, "bFixLock");
+                                known =
+                                    state.lock_control_fields.emplace(controlClass, found).first;
+                            }
+                            fields = known->second;
+                            fields.target_control = control->second;
+                        }
+                        auto melee = capture_melee(memory, source, now, fields, classes);
+                        // A melee section under a new controller: report its map, which
+                        // decides whether the melee tutorial belongs here.
+                        if (auto section = tutorial_section(memory, source);
+                            melee.active && mod_tutorials_.load(std::memory_order_relaxed) &&
+                            section != state.melee_tutorial_section) {
+                            state.melee_tutorial_section = section;
+                            auto top = section[2];
+                            GameplayEvent event;
+                            event.tutorial_level = top;
+                            event.tutorial_level_index = memory.u32(top + 0x20);
+                            event.tutorial_melee = true;
+                            publish(event);
+                        }
+                        melee.active = melee.active && enabled_.load();
+                        melee_mailbox_.put(melee);
+                    }
+                    look_capture(memory, state, source, classes, now);
+                    if (!walk_enabled_.load()) {
+                        SetEvent(event_);
+                        return true;
+                    }
                     // The trigger list changes only as levels stream; refresh it
                     // every two seconds with a bounded walk of the loaded sequences.
                     if (now - state.walk_refreshed >= 2000 ||
@@ -880,7 +959,16 @@ class GameplayHooks {
                         state.walk_events = walk_touch_events(memory, state.walk_world, classes);
                         state.walk_refreshed = now;
                     }
-                    auto walk = capture_walk(memory, source, now, state.walk_events, classes);
+                    auto cls = memory.u32(source + 0x34);
+                    auto guide = state.guide_fields.find(cls);
+                    if (guide == state.guide_fields.end())
+                        guide = state.guide_fields
+                                    .emplace(cls, ScriptLookup::property(memory, state.reader, cls,
+                                                                         "BurstGuideTargetActor")
+                                                      .first)
+                                    .first;
+                    auto walk = capture_walk(memory, source, now, state.walk_events, classes,
+                                             guide->second);
                     walk.active = walk.active && enabled_.load();
                     walk_mailbox_.put(walk);
                     SetEvent(event_);
@@ -1426,15 +1514,25 @@ class GameplayHooks {
                                            "BCPlayerController_HeavyShoot");
             bool melee = before && !rail && melee_rapid_fire(memory, before->controller);
             bool active = rail || melee;
+            // Melee outside rapid fire: D-pad Up toggles the melee beacon (command 5).
+            bool walking = false;
+            if (before && !active) {
+                auto pawn = memory.u32(before->controller + 0x5c4);
+                walking = pawn && memory.u8(pawn + 0x466) == 1;
+            }
             if (!melee)
                 pressed &= uint8_t(7);
+            if (walking) {
+                pressed &= uint8_t(4);
+                active = true;
+            }
             self.original_[0](context, base);
             if (active && self.enabled_.load() && epoch == self.epoch_.load() &&
                 capture_status_context(memory, source, false) == before)
                 for (unsigned i = 0; i < rows.size(); ++i)
                     if (pressed & (1 << i)) {
                         GameplayEvent event;
-                        event.shooting_command = int(i + 1);
+                        event.shooting_command = walking ? 5 : int(i + 1);
                         event.status = *before;
                         self.publish(event);
                     }
@@ -1785,6 +1883,62 @@ class GameplayHooks {
         return turn != 0 || look != 0;
     }
     LatestMailbox<WalkSnapshot> walk_mailbox_;
+    LatestMailbox<MeleeSnapshot> melee_mailbox_;
+    LatestMailbox<LookSnapshot> look_mailbox_;
+    // Resolves the look-around camera's fields by name the first time each is
+    // seen, then tracks which of its groups the view has found.
+    void look_capture(const Memory &memory, Thread &state, uint32_t pc, const ClassTest &classes,
+                      uint64_t now) {
+        auto manager = memory.u32(pc + 0x370);
+        if (manager && !state.look_view_resolved) {
+            state.look_view_resolved = true;
+            state.look_fields.view_target =
+                ScriptLookup::property(memory, state.reader, memory.u32(manager + 0x34),
+                                       "ViewTarget")
+                    .first;
+        }
+        auto actor = manager && state.look_fields.view_target
+                         ? memory.u32(manager + state.look_fields.view_target)
+                         : 0;
+        if (actor && !state.look_camera_resolved && classes(actor, "BCCameraActorViewCheck")) {
+            state.look_camera_resolved = true;
+            auto cls = memory.u32(actor + 0x34);
+            auto &f = state.look_fields;
+            std::tie(f.enable_offset, f.enable_mask) =
+                ScriptLookup::property(memory, state.reader, cls, "bEnableViewCheck");
+            f.angle_rate =
+                ScriptLookup::property(memory, state.reader, cls, "CheckAngleRate").first;
+            f.list = ScriptLookup::property(memory, state.reader, cls, "ViewCheckTargetList").first;
+            // The list's element struct: ArrayProperty.Inner, a StructProperty whose
+            // Struct is BCViewCheckTargetParams (both at +0x64, checked by name).
+            uint32_t field = 0;
+            for (auto c = cls, depth = 0u; c && depth < 24 && !field;
+                 c = memory.u32(c + 0x40), ++depth)
+                for (auto it = memory.u32(c + 0x44), n = 0u; it && n < 4096 && !field;
+                     it = memory.u32(it + 0x3c), ++n)
+                    if (state.reader.object_name(memory, it) == "ViewCheckTargetList")
+                        field = it;
+            auto inner = field ? memory.u32(field + 0x64) : 0;
+            auto strct = inner && state.reader.class_name(memory, inner) == "StructProperty"
+                             ? memory.u32(inner + 0x64)
+                             : 0;
+            if (strct && state.reader.object_name(memory, strct) == "BCViewCheckTargetParams") {
+                f.group_name =
+                    ScriptLookup::property(memory, state.reader, strct, "GroupName").first;
+                f.targets = ScriptLookup::property(memory, state.reader, strct, "Targets").first;
+                f.trigger_time =
+                    ScriptLookup::property(memory, state.reader, strct, "StartTriggerTime").first;
+                auto passed =
+                    ScriptLookup::property(memory, state.reader, strct, "StartTriggerPassedTime")
+                        .first;
+                f.element_size =
+                    std::max({f.group_name + 12, f.targets + 12, f.trigger_time + 4, passed + 4});
+            }
+        }
+        auto look = state.look.update(memory, pc, state.look_fields, classes, now);
+        look.active = look.active && enabled_.load();
+        look_mailbox_.put(look);
+    }
     LatestMailbox<FireCue> fire_mailbox_;
     NativeHooks hooks_;
     const BuildProfile *profile_{};

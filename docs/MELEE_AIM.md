@@ -67,7 +67,40 @@ another mode is selected or the mod stops. `GAMEPLAY_STATS` in a diagnostics dum
 reports `lock_on_skips`, `homing_calls`, `homing_hits` (searches that found a
 target) and `homing_patch` (1 widened, 0 original, -1 unrecognized code).
 
+## Melee beacon
+
+Outside rapid fire in melee sections (`PDEMode` 1), a beacon points to an enemy.
+The game keeps its current target on the controller's `BCTargetLockControl`
+(`BCPlayerController.TargetControl`): `SetTargetInformation` stores `LockedActor`,
+and `bFixLock` is set while L1 lock-on holds it. Without a lock,
+`UpdateTargetingActor` re-picks `LockedActor` every 0.2 s from enemies within
+`LockOnDistance` (500) in line of sight, favouring those in front, and attacks turn
+Asura toward it when they start.
+
+- With a target the game picked itself, the beacon points to it with a steady tone:
+  attacks will turn to it.
+- Locked on with L1, it points to the locked enemy, steady within 500 units and
+  pulsing beyond.
+- Otherwise it points to the nearest live enemy, always pulsing, faster as the
+  distance shrinks (slowest beyond 3000 units).
+- A band-limited square wave, an octave below the other beacons: 262.5 Hz ahead,
+  220 Hz behind. Stereo shows the side relative to the camera. The walking beacon
+  (a sine) is silent while enemies live, and the shooting beacon (a triangle) only
+  plays during rapid fire, so they never overlap.
+
+`melee_beacon=1` (default) enables it, also in the settings menu. D-pad Up toggles
+it in melee outside rapid fire (the game's own D-pad handlers are empty), and so
+does the `aimmode` key; during rapid fire both still cycle the shooting mode. The
+log records `MELEE_TARGET distance= bearing= locked= reach=` when the target or
+its reach changes. Field offsets are looked up by name in the controller's and
+target control's classes.
+
 ## Not yet verified
+
+- The melee beacon in a live session, including that the game's automatic target
+  matches what attacks actually turn to, and that 500 units is a sensible "in
+  reach" while locked on (it is the automatic targeting radius, not a measured
+  attack range).
 
 - All of the above in a live session: audibility, guidance, the priority switch,
   L1 tracking and the lock-on skip.

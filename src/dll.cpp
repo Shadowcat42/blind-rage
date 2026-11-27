@@ -8,6 +8,7 @@
 #include "gameplay_text.h"
 #include "recomp_prompts.h"
 #include "gameplay_status.h"
+#include "gameplay_dump.h"
 #include "gameplay_hooks.h"
 #include "synchronic_reader.h"
 #include "beacon_audio.h"
@@ -270,6 +271,18 @@ static DWORD WINAPI run(void *) {
             float(std::clamp<int>(
                 GetPrivateProfileIntW(L"gameplay", L"audio_cue_volume", 60, ini.c_str()), 0, 100)) *
             .004f;
+        // Each cue's share of the overall cue volume, 0-100 percent.
+        auto cue_share = [&](const wchar_t *key) {
+            return float(std::clamp<int>(GetPrivateProfileIntW(L"gameplay", key, 100, ini.c_str()),
+                                         0, 100)) /
+                   100.f;
+        };
+        float shootShare = cue_share(L"shooting_beacon_volume"),
+              walkShare = cue_share(L"walk_beacon_volume"),
+              meleeShare = cue_share(L"melee_beacon_volume"),
+              lookShare = cue_share(L"look_beacon_volume"),
+              fireShare = cue_share(L"fire_warning_volume"),
+              countInShare = cue_share(L"count_in_volume");
         AudioRetry audioRetry;
         bool audioReady = false, audioAnnounced = false;
         auto beacon_output = [&](BeaconCue cue) {
@@ -285,7 +298,7 @@ static DWORD WINAPI run(void *) {
                 if (audioReady)
                     write("BEACON_AUDIO lost; restarting");
                 beaconAudio.close();
-                audioReady = beaconAudio.start(cueGain);
+                audioReady = beaconAudio.start(cueGain * shootShare);
                 if (audioReady)
                     audioRetry.success();
                 else
@@ -304,7 +317,7 @@ static DWORD WINAPI run(void *) {
         // The mod's own tutorial boxes (Episode 1's rail-shooting introduction).
         bool modTutorials = setting(L"mod_tutorials", 1);
         gameHooks.mod_tutorials(modTutorials);
-        uint64_t tutorialLevel = 0, chaseLevel = 0, beaconDemo = 0;
+        uint64_t tutorialLevel = 0, chaseLevel = 0, meleeLevel = 0, beaconDemo = 0;
         // Lookups from the first tutorial, reused: script classes and the SE_UI cues
         // stay loaded for the whole session.
         std::optional<GameplayHooks::TutorialRun> tutorialBase;
@@ -318,7 +331,7 @@ static DWORD WINAPI run(void *) {
                 return;
             if (!(audioReady && beaconAudio.healthy())) {
                 beaconAudio.close();
-                audioReady = beaconAudio.start(cueGain);
+                audioReady = beaconAudio.start(cueGain * shootShare);
             }
             if (!audioReady)
                 return;
@@ -333,6 +346,7 @@ static DWORD WINAPI run(void *) {
         bool walkEnabled = setting(L"walk_beacon", 1);
         gameHooks.walk_beacon(walkEnabled);
         BeaconAudio walkAudio;
+        walkAudio.synth().voice(BeaconVoice::sine);
         AudioRetry walkRetry;
         bool walkReady = false;
         uint64_t walkTarget = 0;
@@ -342,7 +356,7 @@ static DWORD WINAPI run(void *) {
             if (cue.active && !(walkReady && walkAudio.healthy()) &&
                 walkRetry.due(GetTickCount64())) {
                 walkAudio.close();
-                walkReady = walkAudio.start(cueGain);
+                walkReady = walkAudio.start(cueGain * walkShare);
                 if (walkReady)
                     walkRetry.success();
                 else
@@ -351,6 +365,55 @@ static DWORD WINAPI run(void *) {
             }
             if (walkReady && walkAudio.healthy())
                 walkAudio.update(cue);
+        };
+        // Melee beacon: the enemy the game would attack, or the nearest one.
+        bool meleeEnabled = setting(L"melee_beacon", 1);
+        BeaconAudio meleeAudio;
+        // An octave below the other beacons: 262.5 Hz ahead, 220 Hz behind.
+        meleeAudio.synth().voice(BeaconVoice::square, kMeleeBeaconPitch);
+        AudioRetry meleeRetry;
+        bool meleeReady = false;
+        uint64_t meleeTarget = 0, meleeSeen = 0;
+        uint32_t lastController = 0; // For F5 dumps' gameplay section.
+        bool meleeReach = false;
+        auto melee_output = [&](BeaconCue cue) {
+            if (!notifications.focused() || muted || !meleeEnabled)
+                cue.active = false;
+            if (cue.active && !(meleeReady && meleeAudio.healthy()) &&
+                meleeRetry.due(GetTickCount64())) {
+                meleeAudio.close();
+                meleeReady = meleeAudio.start(cueGain * meleeShare);
+                if (meleeReady)
+                    meleeRetry.success();
+                else
+                    meleeRetry.failure(GetTickCount64());
+                write(meleeReady ? "MELEE_AUDIO ready" : "MELEE_AUDIO unavailable");
+            }
+            if (meleeReady && meleeAudio.healthy())
+                meleeAudio.update(cue);
+        };
+        // Look-around beacon: camera scenes the right stick turns (the hot spring).
+        bool lookEnabled = setting(L"look_beacon", 1);
+        BeaconAudio lookAudio;
+        AudioRetry lookRetry;
+        bool lookReady = false;
+        int lookGroup = -1;
+        unsigned lookFound = 0;
+        auto look_output = [&](BeaconCue cue) {
+            if (!notifications.focused() || muted || !lookEnabled)
+                cue.active = false;
+            if (cue.active && !(lookReady && lookAudio.healthy()) &&
+                lookRetry.due(GetTickCount64())) {
+                lookAudio.close();
+                lookReady = lookAudio.start(cueGain * lookShare);
+                if (lookReady)
+                    lookRetry.success();
+                else
+                    lookRetry.failure(GetTickCount64());
+                write(lookReady ? "LOOK_AUDIO ready" : "LOOK_AUDIO unavailable");
+            }
+            if (lookReady && lookAudio.healthy())
+                lookAudio.update(cue);
         };
         // Incoming-fire warning in shooting sections without the game's lock-on.
         FireAudio fireAudio;
@@ -365,7 +428,7 @@ static DWORD WINAPI run(void *) {
             if (cue.active && !(fireReady && fireAudio.healthy()) &&
                 fireRetry.due(GetTickCount64())) {
                 fireAudio.close();
-                fireReady = fireAudio.start(cueGain);
+                fireReady = fireAudio.start(cueGain * fireShare);
                 if (fireReady)
                     fireRetry.success();
                 else
@@ -388,14 +451,56 @@ static DWORD WINAPI run(void *) {
                 if (cue.active && cue.generation != walkTarget)
                     write("WALK_TARGET distance=" + std::to_string(int(walk->distance)) +
                           " bearing=" + std::to_string(int(walk->bearing)) +
-                          " remaining=" + std::to_string(walk->remaining));
+                          " remaining=" + std::to_string(walk->remaining) +
+                          (walk->burst_guide ? " burst_guide" : ""));
                 if (cue.active)
                     walkTarget = cue.generation;
                 walk_output(cue);
             }
+            if (auto look = gameHooks.take_look()) {
+                if (look->active && look->found && look->found != lookFound)
+                    write("LOOK_FOUND groups=" + std::to_string(look->found) +
+                          " remaining=" + std::to_string(look->remaining));
+                if (look->active && look->target && look->group != lookGroup)
+                    write("LOOK_TARGET group=" + std::to_string(look->group) +
+                          " angle=" + std::to_string(int(look->angle)) +
+                          " cone=" + std::to_string(int(look->cone)) +
+                          " remaining=" + std::to_string(look->remaining));
+                lookFound = look->active ? look->found : 0;
+                lookGroup = look->active && look->target ? look->group : -1;
+                look_output(look_cue(*look));
+            }
+            if (auto melee = gameHooks.take_melee()) {
+                if (melee->controller.pointer)
+                    lastController = melee->controller.pointer;
+                if (melee->active)
+                    meleeSeen = melee->tick;
+                auto cue = melee_cue(*melee);
+                if (meleeEnabled && cue.active &&
+                    (cue.generation != meleeTarget || melee->reach != meleeReach))
+                    write("MELEE_TARGET distance=" + std::to_string(int(melee->distance)) +
+                          " bearing=" + std::to_string(int(melee->bearing)) + " locked=" +
+                          std::to_string(melee->locked) + " reach=" + std::to_string(melee->reach));
+                if (cue.active) {
+                    meleeTarget = cue.generation;
+                    meleeReach = melee->reach;
+                }
+                melee_output(cue);
+            }
         };
         auto shooting_command = [&](int command) {
-            if (command == 3) {
+            if (command == 5) {
+                // Melee outside rapid fire: D-pad Up (or the aim mode key).
+                meleeEnabled = !meleeEnabled;
+                if (!meleeEnabled)
+                    meleeAudio.silence();
+                WritePrivateProfileStringW(L"gameplay", L"melee_beacon", meleeEnabled ? L"1" : L"0",
+                                           ini.c_str());
+                std::string text = meleeEnabled ? "Melee beacon on." : "Melee beacon off.";
+                write("MELEE_BEACON " + std::to_string(meleeEnabled));
+                if (notifications.focused() && !muted && speaking)
+                    speech.speak(text, false);
+            } else if (command == 3) {
                 gameHooks.stop_lock_trace();
                 shootingMode = next_shooting_mode(shootingMode);
                 gameHooks.shooting(shootingMode);
@@ -560,7 +665,7 @@ static DWORD WINAPI run(void *) {
             if (cue->active && !(countInReady && countInAudio.healthy()) &&
                 countInRetry.due(GetTickCount64())) {
                 countInAudio.close();
-                countInReady = countInAudio.start(cueGain);
+                countInReady = countInAudio.start(cueGain * countInShare);
                 if (countInReady)
                     countInRetry.success();
                 else
@@ -618,8 +723,24 @@ static DWORD WINAPI run(void *) {
             // Held while the note is up; announced once it is confirmed.
             if (qteNoteActive)
                 return;
+            // Episode 1's map must still be the one loaded: its object at the same
+            // address, with the same index and name.
+            auto episode1Loaded = [&] {
+                auto runtimeInstance = instance();
+                auto base = runtimeInstance ? membase(runtimeInstance) : nullptr;
+                Memory memory([&](uint32_t at, void *out, size_t size) {
+                    SIZE_T got{};
+                    return base &&
+                           ReadProcessMemory(GetCurrentProcess(), base + at, out, size, &got) &&
+                           got == size;
+                });
+                auto level = uint32_t(tutorialLevel >> 32);
+                return level && memory.u32(level + 0x20) == uint32_t(tutorialLevel) &&
+                       reader.object_name(memory, level) == "BC-S000";
+            };
             if (!combined.empty() && qteEnabled && modTutorials && tutorialBase && tutorialLevel &&
-                qteNoteLevel != tutorialLevel && !gameHooks.tutorial_running()) {
+                qteNoteLevel != tutorialLevel && !gameHooks.tutorial_running() &&
+                episode1Loaded()) {
                 qteNoteLevel = tutorialLevel;
                 auto run = *tutorialBase;
                 run.boxes = qte_note();
@@ -686,6 +807,7 @@ static DWORD WINAPI run(void *) {
                 auto stem = L"dump-" + std::to_wstring(GetTickCount64());
                 std::ofstream dump(logs / (stem + L".txt"));
                 reader.diagnostic(memory, dump);
+                write_gameplay_dump(memory, reader, lastController, dump);
                 dump.close();
                 std::ofstream raw(logs / (stem + L".pages"), std::ios::binary);
                 uint32_t magic = 0x41575031, count = 0;
@@ -842,6 +964,14 @@ static DWORD WINAPI run(void *) {
             if (speaking && !text.empty())
                 speech.speak(text, true);
         };
+        auto set_cue_gains = [&] {
+            beaconAudio.set_gain(cueGain * shootShare);
+            walkAudio.set_gain(cueGain * walkShare);
+            meleeAudio.set_gain(cueGain * meleeShare);
+            lookAudio.set_gain(cueGain * lookShare);
+            countInAudio.set_gain(cueGain * countInShare);
+            fireAudio.set_gain(cueGain * fireShare);
+        };
         auto apply_setting = [&](const std::string &key, const std::string &value) {
             WritePrivateProfileStringW(L"gameplay", wide(key).c_str(), wide(value).c_str(),
                                        ini.c_str());
@@ -883,15 +1013,35 @@ static DWORD WINAPI run(void *) {
                 gameHooks.walk_beacon(on);
                 if (!on)
                     walkAudio.silence();
+            } else if (key == "look_beacon") {
+                lookEnabled = on;
+                if (!on)
+                    lookAudio.silence();
+            } else if (key == "melee_beacon") {
+                meleeEnabled = on;
+                if (!on)
+                    meleeAudio.silence();
             } else if (key == "mod_tutorials") {
                 modTutorials = on;
                 gameHooks.mod_tutorials(on);
             } else if (key == "audio_cue_volume") {
                 cueGain = std::clamp(number, 0.f, 100.f) * .004f;
-                beaconAudio.set_gain(cueGain);
-                walkAudio.set_gain(cueGain);
-                countInAudio.set_gain(cueGain);
-                fireAudio.set_gain(cueGain);
+                set_cue_gains();
+            } else if (key.ends_with("_volume")) {
+                auto share = std::clamp(number, 0.f, 100.f) / 100.f;
+                if (key == "shooting_beacon_volume")
+                    shootShare = share;
+                else if (key == "walk_beacon_volume")
+                    walkShare = share;
+                else if (key == "melee_beacon_volume")
+                    meleeShare = share;
+                else if (key == "look_beacon_volume")
+                    lookShare = share;
+                else if (key == "fire_warning_volume")
+                    fireShare = share;
+                else if (key == "count_in_volume")
+                    countInShare = share;
+                set_cue_gains();
             }
         };
         // Pausing uses BCGFxMovieScene.SetGamePause, resolved once.
@@ -985,8 +1135,9 @@ static DWORD WINAPI run(void *) {
             if (name == L"settings")
                 menu_input(GameplayHooks::menu_toggle);
             // Keyboard equivalents of the D-pad shooting controls.
+            // In melee outside rapid fire it toggles the melee beacon, like D-pad Up.
             if (name == L"aimmode")
-                shooting_command(3);
+                shooting_command(meleeSeen && GetTickCount64() - meleeSeen <= 300 ? 5 : 3);
             if (name == L"aimprev")
                 shooting_command(1);
             if (name == L"aimnext")
@@ -1076,6 +1227,8 @@ static DWORD WINAPI run(void *) {
                         beacons.reset();
                         beaconAudio.silence();
                         walkAudio.silence();
+                        meleeAudio.silence();
+                        lookAudio.silence();
                         lastAim.reset();
                         reader.clear_script_scenes();
                         if (textHooks)
@@ -1188,17 +1341,31 @@ static DWORD WINAPI run(void *) {
                                     menu_input(event.menu_input);
                                 } else if (event.tutorial_level) {
                                     auto level = reader.object_name(memory, event.tutorial_level);
-                                    write("MOD_TUTORIAL rail shooting in " + level);
+                                    write(std::string(event.tutorial_melee
+                                                          ? "MOD_TUTORIAL melee in "
+                                                          : "MOD_TUTORIAL rail shooting in ") +
+                                          level);
                                     uint64_t key = uint64_t(event.tutorial_level) << 32 |
                                                    event.tutorial_level_index;
                                     // Episode 1's first rail shooting, or Episode 8's chase (a
                                     // shooting section with the game's lock-on off).
-                                    const bool episode1 =
-                                                   level == "BC-S000" && key != tutorialLevel,
-                                               chase = level == "BC-S070" &&
-                                                       event.tutorial_no_lock && key != chaseLevel;
-                                    if (episode1 || chase) {
-                                        (episode1 ? tutorialLevel : chaseLevel) = key;
+                                    // Another map: the QTE note belongs only to the Episode 1
+                                    // run whose rail shooting was reported.
+                                    if (level != "BC-S000")
+                                        tutorialLevel = 0;
+                                    // Episode 2's first melee section gets the melee one.
+                                    const bool episode1 = !event.tutorial_melee &&
+                                                          level == "BC-S000" &&
+                                                          key != tutorialLevel,
+                                               chase = !event.tutorial_melee &&
+                                                       level == "BC-S070" &&
+                                                       event.tutorial_no_lock && key != chaseLevel,
+                                               melee = event.tutorial_melee && level == "BC-S010" &&
+                                                       key != meleeLevel;
+                                    if (episode1 || chase || melee) {
+                                        (episode1 ? tutorialLevel
+                                         : chase  ? chaseLevel
+                                                  : meleeLevel) = key;
                                         GameplayHooks::TutorialRun run;
                                         const auto &layout = reader.layout();
                                         auto advertise = ScriptLookup::find(
@@ -1247,11 +1414,13 @@ static DWORD WINAPI run(void *) {
                                         if (!left.empty() && !right.empty())
                                             labels.dpad_left_right = left + " or " + right;
                                         run.boxes = episode1 ? rail_shooting_tutorial(labels)
-                                                             : chase_tutorial(labels);
+                                                    : chase  ? chase_tutorial(labels)
+                                                             : melee_tutorial(labels);
                                         if (run.valid()) {
                                             gameHooks.start_tutorial(std::move(run));
                                             write(episode1 ? "MOD_TUTORIAL rail shooting started"
-                                                           : "MOD_TUTORIAL chase started");
+                                                  : chase  ? "MOD_TUTORIAL chase started"
+                                                           : "MOD_TUTORIAL melee started");
                                         } else
                                             write("MOD_TUTORIAL unavailable: lookup incomplete");
                                     }
@@ -1363,6 +1532,8 @@ static DWORD WINAPI run(void *) {
                         if (!focused) {
                             beaconAudio.silence();
                             walkAudio.silence();
+                            meleeAudio.silence();
+                            lookAudio.silence();
                         }
                         if (focused && !was) {
                             forceContext = true;
@@ -1392,6 +1563,8 @@ static DWORD WINAPI run(void *) {
         gameHooks.capture(false);
         beaconAudio.close();
         walkAudio.close();
+        meleeAudio.close();
+        lookAudio.close();
         countInAudio.close();
         drain_lock_trace();
         presentations.capture(false);

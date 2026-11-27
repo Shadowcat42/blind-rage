@@ -2,7 +2,9 @@
 #include "restart_support.h"
 #include "settings_file.h"
 #include "recomp_setup.h"
+#include "self_update.h"
 #include "default_settings.h"
+#include "blind_rage_version.h"
 #include <fstream>
 #include <iostream>
 #include <sstream>
@@ -66,7 +68,7 @@ int wmain(int argc, wchar_t **argv) {
         DWORD pid = 0, restartParent = 0;
         std::wstring command;
         std::optional<std::wstring> restartCommand;
-        bool checkOnly = false, setupMode = false;
+        bool checkOnly = false, setupMode = false, skipUpdate = false;
         const BuildProfile *requested = nullptr;
         const BuildProfile *selected = nullptr;
         for (int i = 1; i < argc; i++) {
@@ -82,7 +84,13 @@ int wmain(int argc, wchar_t **argv) {
                 setupMode = true;
             else if (arg == L"--check")
                 checkOnly = true;
-            else if (arg == L"--restart-parent" && i + 1 < argc)
+            else if (arg == L"--skip-update")
+                skipUpdate = true;
+            else if (arg == L"--version") {
+                std::cout << "Blind Rage "
+                          << (*kBlindRageVersion ? kBlindRageVersion : "development build") << '\n';
+                return 0;
+            } else if (arg == L"--restart-parent" && i + 1 < argc)
                 restartParent = restart_parent_id(argv[++i]);
             else if (arg == L"--restart-command" && i + 1 < argc)
                 restartCommand = argv[++i];
@@ -93,7 +101,7 @@ int wmain(int argc, wchar_t **argv) {
                     throw std::runtime_error("Unknown build; choose auto, disc, or updated");
             } else
                 throw std::runtime_error(
-                    "Usage: BlindRage.exe [--build auto|disc|updated] [--setup] [--check] [--attach PID] [--command repeat|mute|dump|status|aimmode|aimprev|aimnext|aimpriority|rsup|rsdown|rsleft|rsright]");
+                    "Usage: BlindRage.exe [--build auto|disc|updated] [--setup] [--check] [--skip-update] [--version] [--attach PID] [--command repeat|mute|dump|status|aimmode|aimprev|aimnext|aimpriority|rsup|rsdown|rsleft|rsright]");
         }
         // BlindRage.exe copied without the rest of the package cannot load the mod.
         if (!checkOnly && command.empty() &&
@@ -194,8 +202,17 @@ int wmain(int argc, wchar_t **argv) {
                       << "\n";
             return 0;
         }
+        auto ini = root / L"mods" / L"accessibility" / L"accessibility.ini";
         if (command.empty())
-            refresh_settings(root / L"mods" / L"accessibility" / L"accessibility.ini");
+            refresh_settings(ini);
+        // A newer release is offered before the game starts (never while it runs,
+        // since the mod's DLL is loaded in it). update_check=0 turns this off.
+        if (!pid && command.empty() && !restartParent && !skipUpdate &&
+            GetPrivateProfileIntW(L"launcher", L"update_check", 1, ini.c_str())) {
+            std::vector<std::wstring> arguments(argv + 1, argv + argc);
+            if (auto code = SelfUpdate(root).run(kBlindRageVersion, arguments))
+                return *code;
+        }
         if (!pid) {
             if (!command.empty())
                 throw std::runtime_error("No running game");

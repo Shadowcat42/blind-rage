@@ -11,7 +11,11 @@ struct StatusContext {
     bool operator==(const StatusContext &) const = default;
 };
 // Mirror the Back handler's pawn/controller relationship, then require an
-// unpaused, noncinematic game with an open gauge and no active menu scene.
+// unpaused game with an open gauge and no active menu scene. Cinematic mode is
+// allowed only with the gauge displayed (+0x1e0, not just open): scripted
+// scenes such as Episode 10's hot spring keep the HUD up while the gauge fills,
+// but ordinary cutscenes hide it (and Back skips them, which the game still
+// handles itself).
 // The game keeps updating gauge values even when its display is hidden.
 // Called only on a button press and before delivery, never on a timer.
 // The shooting commands use the same checks without the health gauge, which a
@@ -29,10 +33,11 @@ inline std::optional<StatusContext> capture_status_context(const Memory &m, uint
     StatusContext value;
     value.input = input;
     uint32_t outer{}, pawn{}, flags{}, world{}, paused{}, hud{}, manager{}, scene{};
+    bool cinematic = false;
     if (!word(input, 0x20, value.input_index) || !value.input_index || !word(input, 0x28, outer) ||
         !word(outer, 0x5c4, pawn) || !word(pawn, 0x1e4, value.controller) ||
         !word(value.controller, 0x20, value.controller_index) || !value.controller_index ||
-        !word(value.controller, 0x378, flags) || (flags & 0x8000) ||
+        !word(value.controller, 0x378, flags) || ((cinematic = flags & 0x8000) && !require_gauge) ||
         !word(value.controller, 0xd4, world) || !word(world, 0x368, paused) || paused ||
         !word(value.controller, 0x3c8, hud) || !word(hud, 0x44c, flags) || (flags & 0x10000000) ||
         !word(hud, 0x478, manager))
@@ -43,6 +48,8 @@ inline std::optional<StatusContext> capture_status_context(const Memory &m, uint
         return value;
     if (!word(hud, 0x488, value.gauge) || !word(value.gauge, 0x20, value.gauge_index) ||
         !value.gauge_index || !word(value.gauge, 0xc8, flags) || !(flags & 0x80000000))
+        return {};
+    if (cinematic && (!word(value.gauge, 0x1e0, flags) || !(flags & 0x80000000)))
         return {};
     return value;
 }
@@ -121,6 +128,7 @@ struct GameplayEvent {
     // and steps of a running tutorial (TutorialStep), with the box number.
     uint32_t tutorial_level{}, tutorial_level_index{};
     bool tutorial_no_lock{};
+    bool tutorial_melee{}; // Reported by a melee section rather than rail shooting.
     int tutorial_step{};
     uint32_t tutorial_box{};
     // Settings menu input from the controller (GameplayHooks::MenuInput).

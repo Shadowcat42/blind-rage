@@ -36,7 +36,7 @@ jobs:
         run: ./format.ps1 -Check
       - name: Build and run synthetic tests
         shell: pwsh
-        run: ./build.ps1 -Test
+        run: ./build.ps1 -Test -Version $env:VERSION
       - name: Package
         shell: pwsh
         run: |
@@ -45,9 +45,14 @@ jobs:
           Move-Item artifacts/blind-rage-windows-x64.zip $asset
           Add-Type -AssemblyName System.IO.Compression.FileSystem
           [IO.Compression.ZipFile]::OpenRead((Resolve-Path $asset)).Entries.FullName
+          # latest.txt tells BlindRage.exe's updater the version, size and SHA-256.
+          $item = Get-Item $asset
+          $hash = (Get-FileHash $asset -Algorithm SHA256).Hash.ToLowerInvariant()
+          "version $env:VERSION`nfile $hash $($item.Length) $($item.Name)`n" | Set-Content -NoNewline -Encoding ascii artifacts/latest.txt
+          Get-Content artifacts/latest.txt
           "ASSET=$asset" | Add-Content $env:GITHUB_ENV
       - name: Publish release
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create '${{ github.ref_name }}' $env:ASSET --title "Blind Rage $env:VERSION" --notes-file release-notes.md --verify-tag
+        run: gh release create '${{ github.ref_name }}' $env:ASSET artifacts/latest.txt --title "Blind Rage $env:VERSION" --notes-file release-notes.md --verify-tag

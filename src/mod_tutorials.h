@@ -96,6 +96,28 @@ inline std::vector<TutorialBox> chase_tutorial(const TutorialLabels &labels) {
         box.text = tutorial_fill(box.text, labels);
     return boxes;
 }
+// Episode 2's first melee section: a short introduction, since Episode 3 has
+// the game's full melee tutorial.
+inline std::vector<TutorialBox> melee_tutorial(const TutorialLabels &labels) {
+    std::vector<TutorialBox> boxes{
+        {"At last, you get to punching! (While loudly insisting you didn't kill the Emperor.) "
+         "In these sections you move Asura freely with the left stick. Press {circle} to "
+         "attack, and keep pressing for a combo. Episode 3 covers the rest in full."},
+        {"On their own, your attacks only turn Asura toward an enemy that's close and roughly "
+         "in front of him. Anything farther away or behind you gets missed. Press {l1} to lock "
+         "on to the nearest enemy, and your attacks will follow it wherever it goes. Press {l1} "
+         "again to let go."},
+        {"Hold {circle} for a dash attack: Asura charges in, turned toward his target. "
+         "Combined with lock-on, it's a quick way to get to an enemy that's out of reach."},
+        {"A melee beacon leads you to enemies. Left or right in your ears means left or right; "
+         "a higher tone means ahead of you, a lower one behind. It points to the nearest enemy "
+         "and pulses faster as you close in. It turns into a steady tone once an enemy is in "
+         "reach, which means your attacks will turn toward it. Press {dpad_up} to turn the "
+         "beacon off or back on."}};
+    for (auto &box : boxes)
+        box.text = tutorial_fill(box.text, labels);
+    return boxes;
+}
 // Shown when Episode 1's first QTE appears, before that QTE is announced.
 inline std::vector<TutorialBox> qte_note() {
     return {{"Central to the Asura's Wrath experience are many, many QTEs, all of which are "

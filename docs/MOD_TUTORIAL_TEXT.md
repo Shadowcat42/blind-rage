@@ -32,6 +32,17 @@ Shown when Episode 1's first QTE appears (in a run where its rail-shooting secti
 
 1. Central to the Asura's Wrath experience are many, many QTEs, all of which are announced. Be ready! You could be asked to press something, multiple somethings or do something with either stick at any time.
 
+## Melee (Episode 2 only)
+
+Shown when Episode 2's first melee section starts (`BC-S010`, `PDEMode` 1). Episode 3 has the game's full melee tutorial, so this only introduces the basics. No box plays a demonstration.
+
+1. At last, you get to punching! (While loudly insisting you didn't kill the Emperor.) In these sections you move Asura freely with the left stick. Press circle to attack, and keep pressing for a combo. Episode 3 covers the rest in full.
+2. On their own, your attacks only turn Asura toward an enemy that's close and roughly in front of him. Anything farther away or behind you gets missed. Press L1 to lock on to the nearest enemy, and your attacks will follow it wherever it goes. Press L1 again to let go.
+3. Hold circle for a dash attack: Asura charges in, turned toward his target. Combined with lock-on, it's a quick way to get to an enemy that's out of reach.
+4. A melee beacon leads you to enemies. Left or right in your ears means left or right; a higher tone means ahead of you, a lower one behind. It points to the nearest enemy and pulses faster as you close in. It turns into a steady tone once an enemy is in reach, which means your attacks will turn toward it. Press up on the D-pad to turn the beacon off or back on.
+
+Evidence: the attack, combo, dash attack and lock-on buttons come from the game's own tutorial text (`S010_Assault`, `S020_DashAssault`, `S020_TLock`). Automatic targeting picks only enemies within 500 units in line of sight, favouring those in front, and attacks turn Asura to that target as they start; L1 searches 5000 units for the nearest enemy, and combo follow-ups keep facing a locked target ([gameplay systems](GAMEPLAY_SYSTEMS.md)). The dash attack plays Asura's `Chg01` animations with root translation kept: in Episode 9's animation set the start moves the root about 257 units and the finishing strike about 839 along the axis every attack moves on, against about 328 for the first combo hit; the hold loop stays in place. That axis being forward is an inference from all attacks using it. The game's own attack box (`S010_Assault`) follows a one-second Kismet delay after the section starts; it is an inference that the mod's pause also holds that delay, so it appears after the mod's boxes. Not yet seen in play.
+
 ## Episode 8 chase
 
 Shown when Episode 8's chase starts (`BC-S070`, a shooting section whose controller has the game's lock-on off).

@@ -50,8 +50,16 @@ inline std::vector<SettingItem> gameplay_settings() {
         {"boost_homing", "Boosted rapid fire homing", {}, 1, 10, 1, "times", "3"},
         {"tracking_strength", "L1 steering speed", {}, 0, 100, 10, "percent", "100"},
         {"walk_beacon", "Walking beacon", onOff, 0, 0, 1, "", "1"},
+        {"melee_beacon", "Melee beacon", onOff, 0, 0, 1, "", "1"},
+        {"look_beacon", "Look-around beacon", onOff, 0, 0, 1, "", "1"},
         {"mod_tutorials", "Blind Rage tutorials", onOff, 0, 0, 1, "", "1"},
         {"audio_cue_volume", "Sound cue volume", {}, 0, 100, 10, "percent", "60"},
+        {"shooting_beacon_volume", "Shooting beacon volume", {}, 0, 100, 10, "percent", "100"},
+        {"walk_beacon_volume", "Walking beacon volume", {}, 0, 100, 10, "percent", "100"},
+        {"melee_beacon_volume", "Melee beacon volume", {}, 0, 100, 10, "percent", "100"},
+        {"look_beacon_volume", "Look-around beacon volume", {}, 0, 100, 10, "percent", "100"},
+        {"fire_warning_volume", "Fire warning volume", {}, 0, 100, 10, "percent", "100"},
+        {"count_in_volume", "Synchronic count-in volume", {}, 0, 100, 10, "percent", "100"},
     };
 }
 class SettingsMenu {

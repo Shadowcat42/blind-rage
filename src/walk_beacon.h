@@ -5,7 +5,7 @@
 #include <vector>
 
 // Walking guidance: points to the nearest Kismet touch trigger (SeqEvent_Touch)
-// not yet entered in the loaded levels. Walking sections advance through these
+// not yet entered in the loaded levels, or to the game's burst guide target. Walking sections advance through these
 // (Episode 4's opening section: two scenery triggers, then GameEvent_Proceed).
 // See docs/WALK_BEACON.md.
 namespace a11y {
@@ -74,16 +74,23 @@ struct WalkSnapshot {
     AimIdentity controller, pawn, target;
     uint64_t tick{};
     bool active{}, valid{}, enemies{};
-    float bearing{};  // Degrees from the camera's facing; positive is to the right.
-    float distance{}; // Native world units, horizontal.
+    bool burst_guide{}; // The target is the game's burst guide target.
+    float bearing{};    // Degrees from the camera's facing; positive is to the right.
+    float distance{};   // Native world units, horizontal.
     unsigned remaining{};
 };
 
 // The nearest enabled touch trigger that has not fired yet, relative to the
 // camera's horizontal facing. While a live enemy pawn exists the snapshot is
 // marked so guidance can stay quiet during the fight.
+//
+// A burst guide (BCSeqAct_BurstGuide, Episode 9's last door) takes priority: it
+// stores its target on the controller (BCPlayerController.BurstGuideTargetActor,
+// at `guide_offset`), and the game shows the R2 prompt only once the target is
+// in sight and near; until then sighted players follow an on-screen arrow.
 inline WalkSnapshot capture_walk(const Memory &m, uint32_t pc, uint64_t tick,
-                                 const std::vector<uint32_t> &events, const ClassTest &is_class) {
+                                 const std::vector<uint32_t> &events, const ClassTest &is_class,
+                                 uint32_t guide_offset = 0) {
     WalkSnapshot out;
     out.tick = tick;
     out.controller = {pc, m.u32(pc + 0x20)};
@@ -108,6 +115,30 @@ inline WalkSnapshot capture_walk(const Memory &m, uint32_t pc, uint64_t tick,
             break;
         }
     const float facing = std::atan2(camera.forward.y, camera.forward.x);
+    auto aim = [&](const LockVector &position, AimIdentity target) {
+        auto dx = position.x - at.x, dy = position.y - at.y;
+        auto bearing = (std::atan2(dy, dx) - facing) * 57.2957795f;
+        while (bearing > 180)
+            bearing -= 360;
+        while (bearing < -180)
+            bearing += 360;
+        // Unreal's world is left-handed: positive yaw turns to the right.
+        out.bearing = bearing;
+        out.distance = std::hypot(dx, dy);
+        out.target = target;
+    };
+    if (auto guide = guide_offset ? m.u32(pc + guide_offset) : 0;
+        guide && m.u32(guide + 0x20) && !(m.u32(guide + 0xac) & 0x10000000)) {
+        LockVector position;
+        if (lock_vector(m, guide + 0x54, position) &&
+            std::isfinite(std::hypot(position.x - at.x, position.y - at.y))) {
+            aim(position, {guide, m.u32(guide + 0x20)});
+            out.burst_guide = true;
+            out.remaining = 1;
+            out.valid = true;
+            return out;
+        }
+    }
     float best = std::numeric_limits<float>::infinity();
     for (auto event : events) {
         auto trigger = m.u32(event + WalkLayout::originator);
@@ -125,15 +156,7 @@ inline WalkSnapshot capture_walk(const Memory &m, uint32_t pc, uint64_t tick,
         ++out.remaining;
         if (distance < best) {
             best = distance;
-            auto bearing = (std::atan2(dy, dx) - facing) * 57.2957795f;
-            while (bearing > 180)
-                bearing -= 360;
-            while (bearing < -180)
-                bearing += 360;
-            // Unreal's world is left-handed: positive yaw turns to the right.
-            out.bearing = bearing;
-            out.distance = distance;
-            out.target = {event, m.u32(event + 0x20)};
+            aim(position, {event, m.u32(event + 0x20)});
         }
     }
     out.valid = true;

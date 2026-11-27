@@ -49,6 +49,16 @@ int main() {
               "Episode 8 chase boxes with the warning demonstrated after the second");
         for (const auto &box : chase)
             check(!contains(box.text, "{"), "every chase name is filled in");
+        auto melee = melee_tutorial({});
+        check(melee.size() == 4 && melee[0].text.starts_with("At last, you get to punching!") &&
+                  contains(melee[0].text, "Press circle to attack") &&
+                  contains(melee[1].text, "Press L1 to lock on") &&
+                  contains(melee[2].text, "Hold circle for a dash attack") &&
+                  contains(melee[3].text, "Press up on the D-pad to turn the beacon off"),
+              "Episode 2 melee boxes with the agreed wording");
+        for (const auto &box : melee)
+            check(!contains(box.text, "{") && box.after == TutorialSound::none,
+                  "every melee name is filled in and no box plays a demo");
         auto note = qte_note();
         check(note.size() == 1 && note[0].after == TutorialSound::none &&
                   note[0].text.starts_with("Central to the Asura's Wrath experience") &&

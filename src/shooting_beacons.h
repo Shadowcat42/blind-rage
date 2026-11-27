@@ -649,9 +649,17 @@ class ShootingBeacons {
     bool waiting_{}, manual_focus_{};
     uint64_t fired_{}, generation_{};
 };
+// Each beacon has its own sound: the shooting beacon a triangle wave, the
+// walking beacon a sine, the melee beacon a square wave an octave lower.
+enum class BeaconVoice { triangle, sine, square };
 // Pure stereo synthesis, shared by the audio backend and offline tests.
 class BeaconSynth {
   public:
+    // Configuration before playback: waveform and middle pitch (Hz).
+    void voice(BeaconVoice voice, float middle = 525.f) {
+        voice_ = voice;
+        middle_ = std::isfinite(middle) && middle > 50 ? middle : 525.f;
+    }
     void render(const BeaconCue &cue, float gain, float *out, unsigned frames, uint64_t now) {
         bool audible =
             cue.active && now >= cue.tick && now - cue.tick <= (cue.hold_ms ? cue.hold_ms : 200u) &&
@@ -662,9 +670,9 @@ class BeaconSynth {
         }
         auto pan = std::isfinite(cue.pan) ? std::clamp(cue.pan, -1.f, 1.f) : 0.f;
         // Middle pitch matches the synchronic count-in's low beat (525 Hz).
-        auto frequency = 525.f * std::pow(2.f, std::isfinite(cue.elevation)
-                                                   ? std::clamp(cue.elevation, -1.f, 1.f) * .65f
-                                                   : 0.f);
+        auto frequency = middle_ * std::pow(2.f, std::isfinite(cue.elevation)
+                                                     ? std::clamp(cue.elevation, -1.f, 1.f) * .65f
+                                                     : 0.f);
         auto error = std::isfinite(cue.error) ? std::clamp(cue.error, 0.f, 45.f) : 45.f;
         auto period = .055f + .295f * error / 45.f;
         // Fill the gaps progressively inside eight degrees; within four degrees
@@ -680,11 +688,23 @@ class BeaconSynth {
             // Band-limited triangle: alternating odd harmonics decay as 1/n^2.
             // Even at the highest guide pitch, all five harmonics stay below
             // Nyquist. Keep the existing peak gain limit and stereo positioning.
-            auto triangle =
-                .810569469f *
-                (std::sin(phase_) - std::sin(3.f * phase_) / 9.f + std::sin(5.f * phase_) / 25.f -
-                 std::sin(7.f * phase_) / 49.f + std::sin(9.f * phase_) / 81.f);
-            auto sample = volume_ * envelope_ * triangle;
+            float wave;
+            if (voice_ == BeaconVoice::sine)
+                wave = std::sin(phase_);
+            else if (voice_ == BeaconVoice::square) {
+                // Band-limited square: odd harmonics at 1/n, up to the 15th (under
+                // 7 kHz at the melee beacon's highest pitch), scaled to a peak
+                // near the triangle's.
+                wave = 0;
+                for (int k = 1; k <= 15; k += 2)
+                    wave += std::sin(float(k) * phase_) / float(k);
+                wave *= 1.27323954f * .6f;
+            } else
+                wave =
+                    .810569469f * (std::sin(phase_) - std::sin(3.f * phase_) / 9.f +
+                                   std::sin(5.f * phase_) / 25.f - std::sin(7.f * phase_) / 49.f +
+                                   std::sin(9.f * phase_) / 81.f);
+            auto sample = volume_ * envelope_ * wave;
             out[i * 2] = sample * std::sqrt((1 - pan) * .5f);
             out[i * 2 + 1] = sample * std::sqrt((1 + pan) * .5f);
             phase_ = std::fmod(phase_ + 6.2831853f * frequency / 48000.f, 6.2831853f);
@@ -695,5 +715,7 @@ class BeaconSynth {
   private:
     float phase_{}, pulse_{}, volume_{}, envelope_{};
     uint64_t generation_{};
+    BeaconVoice voice_ = BeaconVoice::triangle;
+    float middle_ = 525.f;
 };
 }

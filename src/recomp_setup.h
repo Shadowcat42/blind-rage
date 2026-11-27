@@ -10,9 +10,9 @@
 // are current while a file is open), against the download size in the
 // release manifest or the size of the disc image. Results come from the lines
 // it appends to userdata/install_log.txt and update_log.txt.
+#include "http_client.h"
 #include "platform.h"
 #include <windows.h>
-#include <winhttp.h>
 #include <tlhelp32.h>
 #include <shobjidl.h>
 #include <shlguid.h>
@@ -408,49 +408,6 @@ class RecompSetup {
         if (manifest.files.empty())
             return std::nullopt;
         return manifest;
-    }
-    static std::optional<std::string> http_get(const std::wstring &url) {
-        URL_COMPONENTS parts{};
-        parts.dwStructSize = sizeof(parts);
-        wchar_t host[256]{}, path[2048]{};
-        parts.lpszHostName = host;
-        parts.dwHostNameLength = DWORD(std::size(host));
-        parts.lpszUrlPath = path;
-        parts.dwUrlPathLength = DWORD(std::size(path));
-        if (!WinHttpCrackUrl(url.c_str(), 0, 0, &parts) || parts.nScheme != INTERNET_SCHEME_HTTPS)
-            return std::nullopt;
-        std::optional<std::string> out;
-        auto session = WinHttpOpen(L"BlindRage-Setup/1", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
-                                   WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
-        auto connection = session ? WinHttpConnect(session, host, parts.nPort, 0) : nullptr;
-        auto request =
-            connection ? WinHttpOpenRequest(connection, L"GET", path, nullptr, WINHTTP_NO_REFERER,
-                                            WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE)
-                       : nullptr;
-        DWORD status = 0, size = sizeof(status);
-        if (request &&
-            WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA,
-                               0, 0, 0) &&
-            WinHttpReceiveResponse(request, nullptr) &&
-            WinHttpQueryHeaders(request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
-                                WINHTTP_HEADER_NAME_BY_INDEX, &status, &size,
-                                WINHTTP_NO_HEADER_INDEX) &&
-            status == 200) {
-            std::string body;
-            for (DWORD available = 0; WinHttpQueryDataAvailable(request, &available) && available &&
-                                      body.size() < 1024 * 1024;) {
-                std::string chunk(available, '\0');
-                DWORD read = 0;
-                if (!WinHttpReadData(request, chunk.data(), available, &read) || !read)
-                    break;
-                body.append(chunk.data(), read);
-            }
-            out = std::move(body);
-        }
-        for (auto handle : {request, connection, session})
-            if (handle)
-                WinHttpCloseHandle(handle);
-        return out;
     }
     // "Blind Rage setup" in the installation folder, like the PC version's own
     // "Add update or DLC" shortcut.

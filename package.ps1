@@ -17,7 +17,7 @@ try {
  $docs=Split-Path -Parent $mod
  foreach($name in @('README.md','CHANGELOG.md','THIRD_PARTY_NOTICES.md','LICENSE','LICENSE-EXCEPTION.txt')){Copy-Item -LiteralPath (Join-Path $PSScriptRoot $name) -Destination $docs}
  New-Item -ItemType Directory -Force -Path (Join-Path $docs 'docs') | Out-Null
- foreach($name in @('SHOOTING_BEACONS.md','MELEE_AIM.md','WALK_BEACON.md','ROADMAP.md')){
+ foreach($name in @('SHOOTING_BEACONS.md','MELEE_AIM.md','WALK_BEACON.md','LOOK_AROUND.md','ROADMAP.md')){
   Copy-Item -LiteralPath (Join-Path $PSScriptRoot ('docs/'+$name)) -Destination (Join-Path $docs 'docs')
  }
  $archive=Join-Path $PSScriptRoot 'artifacts/blind-rage-windows-x64.zip'

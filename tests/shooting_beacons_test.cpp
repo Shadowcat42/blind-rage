@@ -1,4 +1,5 @@
 #include "../src/walk_beacon.h"
+#include "../src/melee_locator.h"
 #include <iostream>
 #include <stdexcept>
 using namespace a11y;
@@ -454,12 +455,64 @@ int main() {
                 check(walk.target.pointer == ahead && cue.elevation == 0 &&
                           std::abs(cue.pan) < .01f && std::abs(cue.error - 15.f) < .01f,
                       "the next trigger ahead plays at 525 Hz, centred, pulsing by distance");
+                // A burst guide target overrides the touch triggers.
+                constexpr uint32_t guideField = 0x900, door = 0x10400;
+                put(door + 0x20, 12);
+                real(door + 0x54 + 4, 2000);
+                put(pc + guideField, door);
+                walk = capture_walk(memory, pc, 100, events, walkClasses, guideField);
+                cue = walk_cue(walk);
+                check(walk.burst_guide && walk.target.pointer == door && walk.remaining == 1 &&
+                          std::abs(walk.distance - 2000) < .1f && cue.active &&
+                          std::abs(std::abs(cue.pan) - 1) < .01f,
+                      "the burst guide target replaces the nearest trigger");
+                put(door + 0xac, 0x10000000);
+                walk = capture_walk(memory, pc, 100, events, walkClasses, guideField);
+                check(!walk.burst_guide && walk.target.pointer == ahead,
+                      "a deleted guide target falls back to the triggers");
+                put(pc + guideField, 0);
                 data[pawn + 0x454] = 24;
                 check(!capture_walk(memory, pc, 100, events, walkClasses).active,
                       "walking guidance yields to rapid fire");
                 data[pawn + 0x454] = 0;
                 data[pawn + 0x466] = 0;
                 put(enemy + 0x2d8, 100);
+            }
+            {
+                // Melee beacon: the game's own target (TargetControl.LockedActor), else
+                // the nearest live enemy.
+                constexpr uint32_t control = 0x11000;
+                MeleeFields fields{0x904, 0x10, 0x14, 0x1};
+                data[pawn + 0x466] = 1;
+                auto melee = capture_melee(memory, pc, 100, fields, classes);
+                check(melee.active && melee.valid && melee.target.pointer == enemy &&
+                          !melee.reach && std::abs(melee.distance - std::hypot(800.f, 200.f)) < .5f,
+                      "without a game target the melee beacon points to the nearest enemy");
+                auto cue = melee_cue(melee);
+                check(cue.active && cue.error >= 8, "an enemy out of reach always pulses");
+                put(pc + 0x904, control);
+                put(control + 0x10, enemy);
+                melee = capture_melee(memory, pc, 100, fields, classes);
+                check(melee.target.pointer == enemy && melee.reach && !melee.locked &&
+                          melee_cue(melee).error == 0,
+                      "the game's automatic target is in reach: steady tone");
+                put(control + 0x14, 1);
+                melee = capture_melee(memory, pc, 100, fields, classes);
+                check(melee.locked && !melee.reach,
+                      "a locked enemy beyond 500 units is not in reach");
+                put(enemy + 0x2d8, 0);
+                melee = capture_melee(memory, pc, 100, fields, classes);
+                check(melee.valid && !melee.target.pointer && !melee_cue(melee).active,
+                      "no live enemies: the melee beacon is quiet");
+                put(enemy + 0x2d8, 100);
+                data[pawn + 0x454] = 24;
+                check(!capture_melee(memory, pc, 100, fields, classes).active,
+                      "the melee beacon yields to rapid fire");
+                data[pawn + 0x454] = 0;
+                data[pawn + 0x466] = 0;
+                put(pc + 0x904, 0);
+                put(control + 0x10, 0);
+                put(control + 0x14, 0);
             }
         }
         check(std::abs(melee_homing_degrees() - 2.5626f) < .01f &&
@@ -508,6 +561,36 @@ int main() {
             check(std::abs(harmonic(3) / fundamental - 1. / 9.) < .005 &&
                       harmonic(2) / fundamental < .005,
                   "triangle has the expected odd harmonics rather than a sine or square spectrum");
+            // The walking beacon's sine and the melee beacon's lower square wave.
+            auto spectrum = [](BeaconVoice voice, float middle, unsigned frames) {
+                BeaconSynth synth;
+                synth.voice(voice, middle);
+                BeaconCue cue{true, -1, 0, 0, 1, 100};
+                std::vector<float> out(frames * 2);
+                synth.render(cue, .2f, out.data(), frames, 100);
+                synth.render(cue, .2f, out.data(), frames, 100);
+                auto peak = 0.f;
+                for (unsigned i = 0; i < frames; ++i)
+                    peak = std::max(peak, std::abs(out[i * 2]));
+                auto bin = [&](double frequency) {
+                    double real = 0, imaginary = 0;
+                    for (unsigned i = 0; i < frames; ++i) {
+                        auto angle = 6.283185307179586 * frequency * i / 48000.;
+                        real += out[i * 2] * std::cos(angle);
+                        imaginary += out[i * 2] * std::sin(angle);
+                    }
+                    return std::hypot(real, imaginary);
+                };
+                return std::array<double, 4>{bin(middle), bin(middle * 2), bin(middle * 3), peak};
+            };
+            auto sine = spectrum(BeaconVoice::sine, 525, 9600);
+            check(sine[2] / sine[0] < .005 && sine[1] / sine[0] < .005 && sine[3] <= .2f,
+                  "the walking beacon is a pure sine");
+            // 0.4 s holds a whole number of 262.5-Hz cycles.
+            auto square = spectrum(BeaconVoice::square, kMeleeBeaconPitch, 19200);
+            check(std::abs(square[2] / square[0] - 1. / 3.) < .01 && square[1] / square[0] < .005 &&
+                      square[3] <= .2f,
+                  "the melee beacon is a square wave an octave lower, within the peak level");
             for (unsigned block = 0; block < 10; ++block) {
                 double energy = 0;
                 for (unsigned i = block * 480; i < (block + 1) * 480; ++i)

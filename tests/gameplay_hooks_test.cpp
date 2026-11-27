@@ -50,6 +50,32 @@ extern "C" __declspec(noinline) void movie_event_target(void *context, uint8_t *
 int main() {
     try {
         {
+            // A new map's controller can reuse the previous controller's address (seen
+            // going from the front end into Episode 2); the map still tells them apart.
+            std::vector<uint8_t> data(0x1000);
+            auto put = [&](uint32_t at, uint32_t value) {
+                for (int i = 0; i < 4; ++i)
+                    data[at + i] = uint8_t(value >> (24 - 8 * i));
+            };
+            Memory memory([&](uint32_t at, void *out, size_t size) {
+                if (uint64_t(at) + size > data.size())
+                    return false;
+                memcpy(out, data.data() + at, size);
+                return true;
+            });
+            constexpr uint32_t controller = 0x100, level = 0x200, map = 0x300;
+            put(controller + 0x20, 7);
+            put(controller + 0x28, level);
+            put(level + 0x28, map);
+            put(map + 0x20, 11);
+            auto frontEnd = tutorial_section(memory, controller);
+            check(frontEnd[0] == controller && frontEnd[2] == map && frontEnd[3] == 11,
+                  "a section is its controller and outermost map");
+            put(map + 0x20, 12);
+            check(tutorial_section(memory, controller) != frontEnd,
+                  "the same controller address in a new map is a new section");
+        }
+        {
             // Calling a script function: the parameter block, its string data and the
             // registers ProcessEvent receives, all restored afterwards.
             ScriptFunction function;
@@ -517,6 +543,15 @@ int main() {
         check(source.take(overflow).empty(),
               "transition into a cinematic inside the original handler cancels status");
         enterCinematic = false;
+        // A scripted scene in cinematic mode with the gauge displayed (Episode 10's
+        // hot spring) still reads status.
+        word(base, gauge + 0x1e0, 0x80000000);
+        context[0] = input;
+        call_script(context.data(), base);
+        events = source.take(overflow);
+        check(events.size() == 1 && events[0].status_request,
+              "cinematic scene with the gauge on screen reads status");
+        word(base, gauge + 0x1e0, 0);
         word(base, pc + 0x378, 0);
         word(base, owner + 0x2c, 7);
         context[0] = input;

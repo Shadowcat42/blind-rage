@@ -17,12 +17,27 @@ live enemy pawn (a different `TeamType`) exists, the beacon is silent, so it
 neither competes with combat nor leads away from a fight; some triggers spawn
 enemies mid-walk.
 
-- Steady pitch: 525 Hz while the trigger is within 90 degrees of the camera's
+- A sine tone (the shooting beacon is a triangle wave, the melee beacon a
+  lower square wave), at a steady pitch: 525 Hz while the trigger is within 90 degrees of the camera's
   facing, 440 Hz when it is behind.
 - Stereo: the side, relative to the camera; fully left or right at 90 degrees and
   beyond.
 - Pulse rate: slow beyond 3000 units, quickening as the horizontal distance
   shrinks, continuous within about 270 units.
+
+### Burst guides
+
+Some doors open with Burst rather than a trigger. Episode 9's last door
+(`BC-S080_L05_PLY_01`) has no touch triggers: once the enemies are dead and the
+Mantra gauge is full, a `BCSeqAct_BurstGuide` stores the door as
+`BCPlayerController.BurstGuideTargetActor`. The HUD's `TickBurstTarget` shows the
+R2 prompt only once that target is in sight and near (or the player is inside a
+linked burst area); until then sighted players follow an on-screen arrow
+(`UpdateBurstGuide`). While a guide target is set, the beacon points at it instead
+of any trigger, with the same tones, and the log adds `burst_guide` to
+`WALK_TARGET`. The field's offset is looked up by name in the controller's class.
+The radius the game requires is not set by that level and was not found in the
+class defaults.
 
 `walk_beacon=1` (default) enables it; `audio_cue_volume` sets its loudness. The log
 records `WALK_TARGET distance= bearing= remaining=` when the target changes.

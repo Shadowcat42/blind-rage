@@ -20,7 +20,6 @@
 - A clearer cue for Episode 5's missile counters, which can come too late to react to.
 - Finish keyboard support: lock-on target switching, gesture wording and the right-stick replacement.
 - Lighter right-stick browsing in Control Settings.
-- Melee enemy locator outside rapid fire, for enemies behind the camera.
 - Find out why L1 tracking once stayed stuck on an unknown target.
 - Versioned adapters for future recomp releases.
 

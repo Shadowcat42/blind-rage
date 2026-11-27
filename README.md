@@ -26,6 +26,10 @@ If the game is already installed, steps 1 and 3 are skipped. The PC version's ow
 
 BlindRage.exe attaches to a recognized game already running from this installation. Otherwise it starts the game: the title-update build when it's installed, otherwise the disc build. To choose explicitly, run `BlindRage.exe --build disc` or `BlindRage.exe --build updated`. The disc build is refused once the title update is installed, because it can't run with the update's patch. `BlindRage.exe --check` reports which build would be used without starting anything.
 
+### Updating
+
+On launch, BlindRage.exe checks whether a newer Blind Rage release is out. If so, it reads out what changed (every version since yours, from the release's changelog) and asks whether to install it: type y and press Enter, or just press Enter to skip. It downloads the release, rejects it unless it matches the release's published checksum, replaces the mod's files and starts the new version. If anything goes wrong, the old files are put back. Your settings aren't touched. The check only happens before starting the game, takes a moment, and stays silent when offline or up to date. Set `update_check=0` under `[launcher]` in `accessibility.ini` to turn it off. Builds you make yourself have no version number and never update.
+
 When an option asks to restart the game, the mod restarts it through its own launcher with the same build and arguments, so narration continues.
 
 ## Controls
@@ -36,6 +40,7 @@ When an option asks to restart the game, the mod restarts it through its own lau
 | --- | --- | --- |
 | Back / Select | Gameplay | Read Health, Burst and Unlimited status. Cutscene skipping still works. |
 | D-pad Up | Rail shooting, melee rapid fire | Cycle shooting assistance: off, beacons, boosted. The choice is saved. |
+| D-pad Up | Melee, outside rapid fire | Turn the melee beacon on or off. The choice is saved. |
 | D-pad Left / Right | Rail shooting, melee rapid fire | Previous / next target cluster for the beacon |
 | D-pad Down | Melee rapid fire | Switch between projectiles first and enemies first. Saved. |
 | Hold L1 | Rail shooting, melee rapid fire | Steer the cursor onto targets; moving the stick takes over |
@@ -53,7 +58,7 @@ These work with any controller or keyboard setup.
 | `` ` `` (backtick) | Repeat the current menu item, cue or latest announcement |
 | Ctrl+Alt+F5 | Turn narration on or off |
 | H | Read Health, Burst and Unlimited status |
-| M | Cycle shooting assistance (D-pad Up) |
+| M | Cycle shooting assistance, or in melee outside rapid fire toggle the melee beacon (D-pad Up) |
 | , (comma) / . (period) | Previous / next target cluster (D-pad Left / Right) |
 | / (slash) | Switch melee aim priority (D-pad Down) |
 | Ctrl+O | Open or close the settings menu (on a controller: click both sticks) |
@@ -71,7 +76,9 @@ Shortcuts are only registered while the game window has focus, so they never aff
 - **Quick-time events:** presses, mashes, holds, stick directions, rotations, finishers and counters. Synchronic (timed) prompts get a four-beep count-in whose high fourth beep marks the moment to press.
 - **Status:** Health and Burst on request, low-health warnings, "Burst ready" and the Unlimited gauge once an episode allows it.
 - **Rail shooting and melee rapid fire:** a beacon on the selected target cluster. Stereo position means left/right, pitch means up/down, and pulses speed up as your aim closes in. You still aim and fire; holding L1 steers the cursor. Boosted mode also widens the game's own lock-on cone (rail shooting) or homing angle (melee rapid fire). See [shooting modes](docs/SHOOTING_BEACONS.md) and [melee aiming](docs/MELEE_AIM.md).
-- **Walking sections:** a steady beacon toward the nearest area that moves the story on (525 Hz ahead, 440 Hz behind, quicker as you approach, silent during fights). See [walking beacon](docs/WALK_BEACON.md).
+- **Walking sections:** a soft sine-tone beacon toward the nearest area that moves the story on (525 Hz ahead, 440 Hz behind, quicker as you approach, silent during fights). See [walking beacon](docs/WALK_BEACON.md).
+- **Look-around scenes** (Episode 10's hot spring): a beacon leads the right stick to each thing the game reacts to, steady once the view is on it, then moves on. See [look-around beacon](docs/LOOK_AROUND.md).
+- **Melee fights:** a lower, buzzier square-wave beacon (262 Hz ahead, 220 Hz behind) toward the enemy your attacks will turn to, steady once it's in reach, otherwise toward the nearest enemy, pulsing faster as you close in. D-pad Up (or M) toggles it outside rapid fire. See [melee aiming](docs/MELEE_AIM.md#melee-beacon).
 
 Image-only text and some conversation and interlude routes aren't read yet.
 
@@ -89,10 +96,13 @@ Press **Ctrl+O**, or click both sticks on a controller, to open the spoken setti
 | `boost_point_blank`, `boost_max_range` | 2, 3 | Boosted lock-on cone, as multiples of the game's limits (50 degrees at point blank, 3.6 degrees at maximum range in Episode 1) |
 | `boost_homing` | 3 | Boosted melee homing, as a multiple of the game's 2.6-degree homing angle |
 | `aim_priority` | projectiles | Melee rapid fire tracks `projectiles` or `enemies` first |
-| `mod_tutorials` | 1 | The mod's own tutorial boxes (Episode 1's rail-shooting introduction); 0 skips them |
+| `mod_tutorials` | 1 | The mod's own tutorial boxes (rail shooting in Episode 1, melee in Episode 2, the chase in Episode 8); 0 skips them |
 | `walk_beacon` | 1 | Walking-section beacon |
+| `look_beacon` | 1 | Look-around beacon in scenes where the right stick turns the camera |
+| `melee_beacon` | 1 | Melee beacon toward the enemy you'd attack (D-pad Up toggles it in melee) |
 | `tracking_strength` | 100 | L1 steering speed as a percentage of the game's cursor speed |
 | `audio_cue_volume` | 60 | Volume of the mod's beacons and count-in, 0-100 |
+| `shooting_beacon_volume`, `walk_beacon_volume`, `melee_beacon_volume`, `look_beacon_volume`, `fire_warning_volume`, `count_in_volume` | 100 | Each cue's share of that volume, 0-100 |
 
 ## Known issues
 
@@ -104,7 +114,7 @@ Press **Ctrl+O**, or click both sticks on a controller, to open the spoken setti
 
 ## Diagnostics
 
-The log and diagnostic dumps stay on your computer under `userdata/accessibility`. Dumps contain game memory and screen text, so look at them before sharing one. Starting the game clears the previous session's log and dumps, so copy anything you want to keep first.
+The log and diagnostic dumps stay on your computer under `userdata/accessibility`. Dumps contain game memory and screen text, so look at them before sharing one. A dump's text file also lists the gameplay state at that moment: your position and facing, the walking beacon's triggers, live enemies, the game's burst guide target, and blocking volumes near the path to the beacon's target. Take one where a beacon leads you somewhere you can't go. Starting the game clears the previous session's log and dumps, so copy anything you want to keep first.
 
 The log records every spoken line (`SPEAK`), plus gameplay markers such as `GAME_TEXT`, `GAME_QTE`, `GAME_STATUS` and `GAMEPLAY_STATS`. When reporting a problem, say what you were doing and what was missing, late, repeated or wrong, and include the log if you can.
 
@@ -130,7 +140,7 @@ The log records every spoken line (`SPEAK`), plus gameplay markers such as `GAME
    git push origin v0.2.0
    ```
 
-The [release workflow](.github/workflows/release.yml) then builds and tests the mod from a clean checkout, packages it, and publishes a GitHub release named after the version, with that changelog section as its notes and `blind-rage-0.2.0-windows-x64.zip` attached. It stops without publishing if the changelog has no section for the tag, or if any test fails. Fix the problem, then delete and push the tag again.
+The [release workflow](.github/workflows/release.yml) then builds and tests the mod from a clean checkout, packages it, and publishes a GitHub release named after the version, with that changelog section as its notes and `blind-rage-0.2.0-windows-x64.zip` attached. The build carries the tag's version, and the release also gets `latest.txt` (version, size and SHA-256 of the package), which installed copies read to update themselves. It stops without publishing if the changelog has no section for the tag, or if any test fails. Fix the problem, then delete and push the tag again.
 
 Developer notes: [build profiles](docs/BUILD_PROFILES.md), [event-driven menu reader](docs/HOOK_RESEARCH.md), [text narration](docs/GAMEPLAY_TEXT_READER.md), [input prompts](docs/INPUT_PROMPTS.md), [gameplay systems](docs/GAMEPLAY_SYSTEMS.md), [Synchronic timing](docs/SYNCHRONIC_TIMING.md), [lock tracing](docs/LOCK_TRACE.md) and the [roadmap](docs/ROADMAP.md). Earlier research: [gameplay cues](docs/GAMEPLAY_CUE_RESEARCH.md), [QTE input](docs/QTE_INPUT_RESEARCH.md) and [Episode 1 groundwork](docs/EPISODE_1_GROUNDWORK.md).
 

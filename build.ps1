@@ -1,4 +1,4 @@
-param([switch]$Test,[string]$InstallTo,[switch]$NoInstall)
+param([switch]$Test,[string]$InstallTo,[switch]$NoInstall,[string]$Version)
 $ErrorActionPreference='Stop'
 Push-Location $PSScriptRoot
 try {
@@ -34,10 +34,18 @@ try {
  $defaults=[IO.File]::ReadAllText((Join-Path $PSScriptRoot 'config/accessibility.ini'))
  if($defaults.Contains(')BRINI"')){throw 'Default settings contain the embedding delimiter'}
  [IO.File]::WriteAllText((Join-Path $PSScriptRoot 'build/generated/default_settings.h'),"#pragma once`nnamespace a11y {`ninline constexpr const char kDefaultSettings[] = R`"BRINI($defaults)BRINI`";`n}`n",[Text.UTF8Encoding]::new($false))
+ # Release builds carry their version (from the tag); development builds have
+ # none, so they never offer to update themselves from a release.
+ if($Version -and $Version -notmatch '^\d+(\.\d+){0,3}$'){throw "Invalid version '$Version'"}
+ [IO.File]::WriteAllText((Join-Path $PSScriptRoot 'build/generated/blind_rage_version.h'),"#pragma once`nnamespace a11y {`ninline constexpr const char kBlindRageVersion[] = `"$Version`";`n}`n",[Text.UTF8Encoding]::new($false))
  & $compiler @common '-Ibuild/generated' 'tests/settings_file_test.cpp' '-o' 'build/tests/settings_file_test.exe'
  if($LASTEXITCODE){throw 'Settings file test compilation failed'}
  & $compiler @common 'tests/recomp_setup_test.cpp' '-o' 'build/tests/recomp_setup_test.exe' '-lwinhttp' '-lole32' '-luuid' '-luser32' '-lbcrypt'
  if($LASTEXITCODE){throw 'Recomp setup test compilation failed'}
+ & $compiler @common 'tests/self_update_test.cpp' '-o' 'build/tests/self_update_test.exe' '-lwinhttp' '-lole32' '-luuid' '-luser32' '-lbcrypt'
+ if($LASTEXITCODE){throw 'Self-update test compilation failed'}
+ & $compiler @common 'tests/look_around_test.cpp' '-o' 'build/tests/look_around_test.exe'
+ if($LASTEXITCODE){throw 'Look-around test compilation failed'}
  & $compiler @common 'tests/settings_menu_test.cpp' '-o' 'build/tests/settings_menu_test.exe'
  if($LASTEXITCODE){throw 'Settings menu test compilation failed'}
  & $compiler @common 'tests/fire_warning_test.cpp' '-o' 'build/tests/fire_warning_test.exe'
@@ -90,7 +98,9 @@ try {
   & ./build/tests/mod_tutorials_test.exe; if($LASTEXITCODE){throw 'Mod tutorial tests failed'}
   & ./build/tests/fire_warning_test.exe; if($LASTEXITCODE){throw 'Fire warning tests failed'}
   & ./build/tests/settings_menu_test.exe; if($LASTEXITCODE){throw 'Settings menu tests failed'}
+  & ./build/tests/look_around_test.exe; if($LASTEXITCODE){throw 'Look-around tests failed'}
   & ./build/tests/recomp_setup_test.exe; if($LASTEXITCODE){throw 'Recomp setup tests failed'}
+  & ./build/tests/self_update_test.exe; if($LASTEXITCODE){throw 'Self-update tests failed'}
   & ./build/tests/shooting_beacons_test.exe; if($LASTEXITCODE){throw 'Shooting beacon tests failed'}
   & ./build/tests/reader_test.exe; if($LASTEXITCODE){throw 'Reader tests failed'}
   & ./build/hooks/hook_test.exe; if($LASTEXITCODE){throw 'Hook tests failed'}
