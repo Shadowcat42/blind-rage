@@ -28,7 +28,7 @@ BlindRage.exe attaches to a recognized game already running from this installati
 
 ### Updating
 
-On launch, BlindRage.exe checks whether a newer Blind Rage release is out. If so, it reads out what changed (every version since yours, from the release's changelog) and asks whether to install it: type y and press Enter, or just press Enter to skip. It downloads the release, rejects it unless it matches the release's published checksum, replaces the mod's files and starts the new version. If anything goes wrong, the old files are put back. Your settings aren't touched. The check only happens before starting the game, takes a moment, and stays silent when offline or up to date. Set `update_check=0` under `[launcher]` in `accessibility.ini` to turn it off. Builds you make yourself have no version number and never update.
+On launch, BlindRage.exe checks whether a newer Blind Rage release is out. If so, a dialog says which version is available and lists what changed since yours, in a text box you can read line by line. Press Enter or choose Update now to install it, or Escape or Skip to carry on with your version. It downloads the release, rejects it unless it matches the release's published checksum, replaces the mod's files and starts the new version. If anything goes wrong, the old files are put back and a message says why. Your settings aren't touched. The check only happens before starting the game, takes a moment, and stays silent when offline or up to date. Set `update_check=0` under `[launcher]` in `accessibility.ini` to turn it off. Builds you make yourself have no version number and never update.
 
 When an option asks to restart the game, the mod restarts it through its own launcher with the same build and arguments, so narration continues.
 

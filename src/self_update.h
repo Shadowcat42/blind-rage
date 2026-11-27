@@ -17,6 +17,7 @@
 #include "platform.h"
 #include "recomp_setup.h"
 #include "restart_support.h"
+#include "update_dialog.h"
 #include <algorithm>
 #include <cctype>
 #include <optional>
@@ -225,26 +226,22 @@ class SelfUpdate {
             return std::nullopt;
         // What changed, from the new release's own CHANGELOG.md, including any
         // versions skipped in between. Missing notes never stop the update.
+        std::string notes;
         if (auto changelog =
                 http_get(wide(std::string(kSource) + "v" + info->version + "/CHANGELOG.md"),
-                         512 * 1024, 5000)) {
-            auto notes = changelog_since(*changelog, current, info->version);
-            std::istringstream lines(notes);
-            for (std::string line; std::getline(lines, line);)
-                say(line);
-        }
-        auto answer =
-            ask("Blind Rage " + info->version + " is available; you have " + std::string(current) +
-                ". Type y and press Enter to update now, or just press Enter to skip. "
-                "Your settings are kept.");
-        if (answer != L"y" && answer != L"Y") {
+                         512 * 1024, 5000))
+            notes = changelog_since(*changelog, current, info->version);
+        if (!update_dialog("Blind Rage " + info->version + " is available. You have " +
+                               std::string(current) + ". Your settings are kept when updating.",
+                           notes)) {
             say("Not updating. Set update_check=0 in accessibility.ini to stop these checks.");
             return std::nullopt;
         }
         if (!install(*info)) {
             cleanup();
-            say("The update did not complete; nothing was changed. Starting Blind Rage " +
-                std::string(current) + ".");
+            update_message(error_ + " Nothing was changed; Blind Rage " + std::string(current) +
+                               " will start as it is.",
+                           true);
             return std::nullopt;
         }
         cleanup();
@@ -258,7 +255,7 @@ class SelfUpdate {
         PROCESS_INFORMATION pi{};
         if (!CreateProcessW(exe.c_str(), line.data(), nullptr, nullptr, FALSE, 0, nullptr,
                             root_.c_str(), &si, &pi)) {
-            say("Could not start the updated BlindRage.exe. Run it again.");
+            update_message("Could not start the updated BlindRage.exe. Run it again.", true);
             return 1;
         }
         CloseHandle(pi.hThread);
@@ -282,12 +279,16 @@ class SelfUpdate {
         fs::remove(root_ / L"BlindRage.exe.old", ec);
     }
     bool install(const ReleaseInfo &info) {
+        auto fail = [&](const std::string &text) {
+            say(text);
+            error_ = text;
+            return false;
+        };
         std::error_code ec;
         auto folder = staging(), zip = folder / L"package.zip", files = folder / L"files";
         fs::remove_all(folder, ec);
         if (!fs::create_directories(files, ec)) {
-            say("Could not create the update folder.");
-            return false;
+            return fail("Could not create the update folder.");
         }
         say("Downloading Blind Rage " + info.version + ", " + megabytes(info.size) + " megabytes.");
         uint64_t received = 0;
@@ -307,12 +308,10 @@ class SelfUpdate {
             downloaded = downloaded && out;
         }
         if (!downloaded || received != info.size) {
-            say("The download failed. Check your internet connection.");
-            return false;
+            return fail("The download failed. Check your internet connection.");
         }
         if (sha256(zip) != info.sha256) {
-            say("The download was damaged: its checksum does not match the release.");
-            return false;
+            return fail("The download was damaged: its checksum does not match the release.");
         }
         std::wstring system(MAX_PATH, L'\0');
         system.resize(GetSystemDirectoryW(system.data(), MAX_PATH));
@@ -324,8 +323,7 @@ class SelfUpdate {
         PROCESS_INFORMATION pi{};
         if (!CreateProcessW(tar.c_str(), line.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW,
                             nullptr, folder.c_str(), &si, &pi)) {
-            say("Could not start Windows' tar to extract the update.");
-            return false;
+            return fail("Could not start Windows' tar to extract the update.");
         }
         CloseHandle(pi.hThread);
         DWORD code = 1;
@@ -335,16 +333,15 @@ class SelfUpdate {
             TerminateProcess(pi.hProcess, 1);
         CloseHandle(pi.hProcess);
         if (code) {
-            say("The update could not be extracted.");
-            return false;
+            return fail("The update could not be extracted.");
         }
         std::string error;
         if (!apply_staged(files, root_, error)) {
-            say(error);
-            return false;
+            return fail(error);
         }
         return true;
     }
+    std::string error_;
     fs::path root_;
 };
 } // namespace a11y
