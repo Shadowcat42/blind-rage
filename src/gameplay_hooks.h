@@ -1848,10 +1848,17 @@ class GameplayHooks {
                 if (pressed & bit)
                     send(input);
             std::memset(pad, 0, 12);
-        } else if (buttons & l3)
-            // L3 does nothing in the released game; while it is held, R3 (camera
-            // reset) is hidden so the menu chord never moves the camera.
-            pad[1] &= uint8_t(~r3);
+        } else {
+            if (buttons & l3)
+                // L3 does nothing in the released game; while it is held, R3 (camera
+                // reset) is hidden so the menu chord never moves the camera.
+                pad[1] &= uint8_t(~r3);
+            // The game disables its pause menu only while a pausing box is up; a mod
+            // tutorial also unpauses between boxes for its sounds, so Start stays
+            // hidden for the whole run.
+            if (self.tutorial_active_.load())
+                pad[1] &= uint8_t(~start);
+        }
     }
     bool run_pause(void *context, uint8_t *base, uint32_t name) {
         static thread_local bool inside = false;
