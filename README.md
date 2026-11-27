@@ -110,7 +110,6 @@ Press **Ctrl+O**, or click both sticks on a controller, to open the spoken setti
 - **Episode 5:** counter prompts for incoming missiles can come too late to react to.
 - **Control Settings:** browsing with the right stick needs a nearly full tilt.
 - **Setup:** Blind Rage's first-time setup has been tested by two players; the PC version's own graphical setup still needs OCR.
-- Holding L1 once stayed stuck on an unknown target.
 
 ## Diagnostics
 

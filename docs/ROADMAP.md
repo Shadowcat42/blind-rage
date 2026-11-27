@@ -20,7 +20,6 @@
 - A clearer cue for Episode 5's missile counters, which can come too late to react to.
 - Finish keyboard support: lock-on target switching, gesture wording and the right-stick replacement.
 - Lighter right-stick browsing in Control Settings.
-- Find out why L1 tracking once stayed stuck on an unknown target.
 - Walking routes around obstacles: the route finder on the `walk-pathfinder` branch needs a working way to call the game's collision traces (native functions do not run through `ProcessEvent`; see the walking beacon's known limitation).
 - Versioned adapters for future recomp releases.
 
