@@ -924,6 +924,7 @@ class GameplayHooks {
                         frame.snapshot.targets[kept++] = frame.snapshot.targets[i];
                 frame.snapshot.count = kept;
                 frame.snapshot.hold_target = true;
+                frame.snapshot.vertical_only = true;
                 auto pawn = memory.u32(source + 0x5c4);
                 LockVector at;
                 const auto camera = lock_camera(memory, source);
@@ -999,9 +1000,10 @@ class GameplayHooks {
                     frame.snapshot.active && enabled_.load() &&
                     aim_context_active(memory, frame.snapshot.controller, frame.snapshot.pawn);
                 aim_mailbox_.put(frame.snapshot);
-                // Without native locks the cursor also moves the player sideways
-                // (March.PlayerOffsetCtrl), so L1 steering is not offered there.
-                state.tracking = nativeLocks ? frame.snapshot : AimSnapshot{};
+                // Without native locks the cursor's horizontal position also moves the
+                // player sideways (March.PlayerOffsetCtrl uses only cursor X), so L1
+                // steers only the vertical aim there.
+                state.tracking = frame.snapshot;
                 SetEvent(event_);
             }
             if (trace_.pending())
@@ -1334,14 +1336,21 @@ class GameplayHooks {
             };
             float up = 0, right = 0, steeredUp = 0, steeredRight = 0;
             bool steered = false;
-            if (nudge && (nudge->up || nudge->right) && input && input < UINT32_MAX - 0x144) {
+            const bool verticalOnly = shot.vertical_only;
+            if (nudge && (nudge->up || (!verticalOnly && nudge->right)) && input &&
+                input < UINT32_MAX - 0x144) {
                 up = readFloat(upAt);
                 right = readFloat(rightAt);
-                if (std::isfinite(up) && std::isfinite(right) &&
-                    std::max(std::abs(up), std::abs(right)) < kStickPriority) {
+                // Vertical-only steering leaves the player's horizontal stick alone and
+                // yields only to their vertical input.
+                const bool free = verticalOnly
+                                      ? std::abs(up) < kStickPriority
+                                      : std::max(std::abs(up), std::abs(right)) < kStickPriority;
+                if (std::isfinite(up) && std::isfinite(right) && free) {
                     steeredUp = nudge->up;
-                    steeredRight = nudge->right;
-                    steered = writeFloat(upAt, steeredUp) && writeFloat(rightAt, steeredRight);
+                    steeredRight = verticalOnly ? right : nudge->right;
+                    steered = writeFloat(upAt, steeredUp) &&
+                              (verticalOnly || writeFloat(rightAt, steeredRight));
                     if (steered)
                         ++self.tracking_nudges_;
                 }

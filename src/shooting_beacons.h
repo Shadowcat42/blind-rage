@@ -178,6 +178,9 @@ struct AimSnapshot {
     // Hold one target until it is gone instead of following clusters (sections
     // without the game's lock-on, where targets dash in and out).
     bool hold_target{};
+    // L1 steering may move only the vertical aim (the horizontal cursor also moves
+    // the player in those sections).
+    bool vertical_only{};
     std::array<AimTarget, capacity> targets{};
 };
 // The game producer replaces one copied snapshot, never queues large payloads
