@@ -282,6 +282,10 @@ class GameplayHooks {
         tutorial_movie_ = tutorial_movie_index_ = 0;
         tutorial_active_ = true;
     }
+    // The player controller that last ran PlayerTick, in any gameplay mode.
+    uint32_t player_controller() const {
+        return player_controller_.load(std::memory_order_relaxed);
+    }
     bool tutorial_running() const {
         return tutorial_active_.load();
     }
@@ -488,7 +492,9 @@ class GameplayHooks {
         std::map<std::pair<uint32_t, std::string>, bool> classes;
         uint32_t clock_source{};
         float clock_now = NAN;
-        std::vector<uint32_t> walk_events;
+        std::vector<WalkTrigger> walk_events;
+        WalkLinkLayout walk_layout;
+        bool walk_layout_read{};
         uint32_t walk_world{};
         // The last section reported for mod tutorials: controller and its map, each
         // with its object index. A new map's controller can reuse the old address.
@@ -906,6 +912,10 @@ class GameplayHooks {
     bool observe_lock(Route route, void *context, uint8_t *base, const Memory &memory,
                       Thread &state, uint32_t source, uint32_t locals) {
         if (route == Route::shoot_tick) {
+            // Every player controller ticks here, in melee, rail shooting and every
+            // other mode, so dumps take the current one from this.
+            if (cached_subclass(memory, state, source, "BCPlayerController"))
+                player_controller_.store(source, std::memory_order_relaxed);
             // A new rail-shooting controller: report its map, which decides whether
             // a mod tutorial belongs to this section (the worker checks the name).
             if (auto section = tutorial_section(memory, source);
@@ -1173,7 +1183,13 @@ class GameplayHooks {
                     if (now - state.walk_refreshed >= 2000 ||
                         state.walk_world != memory.u32(source + 0xd4)) {
                         state.walk_world = memory.u32(source + 0xd4);
-                        state.walk_events = walk_touch_events(memory, state.walk_world, classes);
+                        auto events = walk_touch_events(memory, state.walk_world, classes);
+                        if (!events.empty() && !state.walk_layout_read) {
+                            state.walk_layout_read = true;
+                            state.walk_layout = walk_link_layout(memory, state, events.front());
+                        }
+                        state.walk_events =
+                            walk_triggers(memory, events, state.walk_layout, classes);
                         state.walk_refreshed = now;
                     }
                     auto cls = memory.u32(source + 0x34);
@@ -2065,6 +2081,52 @@ class GameplayHooks {
         }
         return shot;
     }
+    // Kismet fields for the walk beacon's trigger roles, from a touch event's class.
+    // Arrays: offset at the property's +0x54, inner property at +0x64, the struct
+    // at the inner's +0x64 and its PropertiesSize at +0x48 (as for Notifies below).
+    // Logged once as WALK_FIELDS so a live session can confirm them.
+    WalkLinkLayout walk_link_layout(const Memory &memory, Thread &state, uint32_t event) {
+        WalkLinkLayout layout;
+        auto cls = memory.u32(event + 0x34);
+        auto array_struct = [&](uint32_t owner, std::string_view name, uint32_t &offset,
+                                uint32_t &size) -> uint32_t {
+            auto array = ScriptLookup::field(memory, state.reader, owner, name);
+            auto inner = array ? memory.u32(array + 0x64) : 0;
+            auto type = inner ? memory.u32(inner + 0x64) : 0;
+            if (!type)
+                return 0;
+            offset = memory.u32(array + 0x54);
+            size = memory.u32(type + 0x48);
+            return type;
+        };
+        layout.max_trigger_count =
+            ScriptLookup::property(memory, state.reader, cls, "MaxTriggerCount").first;
+        auto output = array_struct(cls, "OutputLinks", layout.output_links, layout.output_size);
+        auto link = output ? array_struct(output, "Links", layout.links, layout.link_size) : 0;
+        auto events = array_struct(cls, "EventLinks", layout.event_links, layout.event_size);
+        auto member = [&](uint32_t owner, std::string_view name, uint32_t &offset) {
+            if (!owner || !ScriptLookup::field(memory, state.reader, owner, name))
+                return false;
+            offset = ScriptLookup::property(memory, state.reader, owner, name).first;
+            return true;
+        };
+        // Every lookup runs so the log shows all offsets that were found.
+        bool op = member(link, "LinkedOp", layout.linked_op);
+        bool input = member(link, "InputLinkIdx", layout.input_index);
+        bool linked = member(events, "LinkedEvents", layout.linked_events);
+        layout.links_found = op && input && linked;
+        std::ostringstream line;
+        line << "WALK_FIELDS max_trigger_count=" << layout.max_trigger_count
+             << " output_links=" << layout.output_links << " output_size=" << layout.output_size
+             << " links=" << layout.links << " link_size=" << layout.link_size
+             << " linked_op=" << layout.linked_op << " input_index=" << layout.input_index
+             << " event_links=" << layout.event_links << " event_size=" << layout.event_size
+             << " linked_events=" << layout.linked_events << " found=" << layout.links_found
+             << " links_known=" << layout.links_known();
+        std::lock_guard lock(wave_log_mutex_);
+        wave_log_.push_back(line.str());
+        return layout;
+    }
     // The sword waves an AnimSequence fires: its BCAnimNotify_ShotArcheType
     // notifies whose projectile is a BCProj_Ogs. Cached per sequence.
     const std::vector<Shot> &sequence_shots(const Memory &memory, Thread &state,
@@ -2432,6 +2494,7 @@ class GameplayHooks {
     std::atomic<ShootingMode> mode_{ShootingMode::boosted};
     AimMailbox aim_mailbox_;
     std::atomic<uint64_t> fired_{};
+    std::atomic<uint32_t> player_controller_{};
     std::atomic<uint64_t> lock_frames_{};
     std::atomic<bool> mod_tutorials_{}, tutorial_active_{}, mod_tips_{};
     NativeHooks input_hooks_;

@@ -12,7 +12,8 @@ store no order between them.
 
 In melee mode (`PDEMode` 1), outside aimed fire, cinematics, pause and menus, the
 beacon points to the nearest enabled touch trigger that has not fired
-(`TriggerCount` 0). When it fires, the next nearest becomes the target. While any
+(`TriggerCount` 0), route triggers first (below). When it fires, the next nearest
+becomes the target. While any
 live enemy pawn (a different `TeamType`) exists, the beacon is silent, so it
 neither competes with combat nor leads away from a fight; some triggers spawn
 enemies mid-walk.
@@ -24,6 +25,31 @@ enemies mid-walk.
   beyond.
 - Pulse rate: slow beyond 3000 units, quickening as the horizontal distance
   shrinks, continuous within about 270 units.
+
+### Route triggers first
+
+A survey of every playable package, DLC included, found 35 touch triggers. Those
+that move the episode on, spawn enemies or set counters fire once
+(`MaxTriggerCount` 1, the default). Those that can fire any number of times
+(`MaxTriggerCount` 0) change camera angles, play scenery or NPC reactions, stream
+levels or switch other triggers. Episode 12's opening street
+(`BC-S130_L03_PLY_01`) switches such triggers on behind the player as they walk
+on (they play the girl's reactions), and nearest-first guidance used to turn the
+player around and lead them in circles.
+
+So the beacon prefers route triggers: one-shot triggers, and a repeatable trigger
+that switches on (`SeqAct_Toggle` input Turn On or Toggle) a one-shot trigger that
+is still off and unfired. Episode 10's `BC-S100_L01_PLY_02` needs that exception:
+its repeatable `Touch_9` switches on the one-shot trigger that spawns the next
+enemies. Other repeatable triggers are used only when no route trigger is
+waiting. The route is still trigger by trigger in straight lines; on Episode 12's
+street it becomes the two scenery triggers and then the exit.
+
+The fields are looked up by name in the touch event's class
+(`SequenceEvent.MaxTriggerCount`, `SequenceOp.OutputLinks`/`EventLinks` and their
+structs' `PropertiesSize`) and logged once as `WALK_FIELDS`; if any is missing,
+every trigger counts as a route trigger, as before. Links through hubs are not
+followed (none of the surveyed gates uses one).
 
 ### Burst guides
 

@@ -8,6 +8,8 @@
 - Sword waves in an Episode 11 fight: a buzz points toward the gap when a blade in a fan would hit you, and a quick rising tone tells you when to jump a wide wave. Both start during the enemy's wind-up, read from the attack animation, so there's warning even up close.
 - Synchronic count-ins keep all four beats when a key comes up with less lead than usual (several in Episode 11): the beats are spaced closer instead of the first being dropped.
 - Fight tips, with their own setting (`mod_tips`): a short pausing box when an enemy whose fight isn't obvious appears. So far there are two, in Episodes 7 and 11.
+- The walking beacon no longer turns you around on Episode 12's opening walk. It now prefers the triggers that move the walk on over ones that only react when you go back, so it leads straight on.
+- F5 dumps taken during rail shooting now include the gameplay state; they used to say no player controller had been seen.
 
 ## 0.3.0
 

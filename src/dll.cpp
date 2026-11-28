@@ -875,7 +875,10 @@ static DWORD WINAPI run(void *) {
                 auto stem = L"dump-" + std::to_wstring(GetTickCount64());
                 std::ofstream dump(logs / (stem + L".txt"));
                 reader.diagnostic(memory, dump);
-                write_gameplay_dump(memory, reader, lastController, dump);
+                // The hooks see every player controller tick, rail shooting included;
+                // the melee beacon's controller is only a fallback without them.
+                auto controller = gameHooks.player_controller();
+                write_gameplay_dump(memory, reader, controller ? controller : lastController, dump);
                 dump.close();
                 std::ofstream raw(logs / (stem + L".pages"), std::ios::binary);
                 uint32_t magic = 0x41575031, count = 0;

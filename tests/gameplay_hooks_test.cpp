@@ -1212,6 +1212,19 @@ int main() {
             "level cues, resets and sound requests outside marker callbacks remain distinguishable");
         source.lock_diagnostics(false);
         traceOriginal = {};
+        // Dumps take the controller from PlayerTick in any mode, not from the melee beacon.
+        check(source.player_controller() == 0,
+              "a PlayerTick owner that is not a player controller is not taken for dumps");
+        {
+            constexpr uint32_t player = 0x1dc00, playerClass = 0x1dd00;
+            name(81, "BCPlayerController");
+            word(base, player + 0x34, playerClass);
+            word(base, player + 0x20, 33);
+            word(base, playerClass + 0x2c, 81);
+            invoke(16, player);
+            check(source.player_controller() == player,
+                  "dumps take the player controller from its PlayerTick");
+        }
         source.capture(false);
         context[0] = track;
         call_script(context.data(), base);

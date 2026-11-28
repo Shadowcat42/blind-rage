@@ -429,15 +429,22 @@ int main() {
                 real(triggers + 0x100 + 0x54, 1000); // ahead
                 real(triggers + 0x200 + 0x54, -500); // behind, nearer
                 data[pawn + 0x466] = 1;
+                constexpr uint32_t toggle = 0x10800;
                 auto walkClasses = [&](uint32_t object, std::string_view cls) {
+                    if (cls == "SeqAct_Toggle")
+                        return object == toggle;
                     if (cls == "SeqEvent_Touch")
                         return object == fired || object == ahead || object == behind;
                     if (cls == "Sequence")
                         return object == nested;
                     return classes(object, cls);
                 };
-                auto events = walk_touch_events(memory, world, walkClasses);
-                check(events.size() == 3, "touch triggers are found in nested level sequences");
+                auto found = walk_touch_events(memory, world, walkClasses);
+                check(found.size() == 3, "touch triggers are found in nested level sequences");
+                // Without the Kismet layout every trigger is a route trigger, as before.
+                auto events = walk_triggers(memory, found, {}, walkClasses);
+                check(events.size() == 3 && !events[0].repeatable && !events[2].repeatable,
+                      "an unknown layout treats every trigger as a route trigger");
                 auto walk = capture_walk(memory, pc, 100, events, walkClasses);
                 check(walk.active && walk.valid && walk.enemies && walk.remaining == 2 &&
                           walk.target.pointer == behind && std::abs(walk.distance - 500) < .1f,
@@ -471,6 +478,70 @@ int main() {
                 check(!walk.burst_guide && walk.target.pointer == ahead,
                       "a deleted guide target falls back to the triggers");
                 put(pc + guideField, 0);
+                {
+                    // Route triggers first (Episode 12's opening street): a repeatable
+                    // trigger nearer than a one-shot one does not draw the beacon back,
+                    // unless it switches on a one-shot trigger that is off (Episode 10's gate).
+                    WalkLinkLayout layout;
+                    layout.max_trigger_count = 0xc8;
+                    layout.output_links = 0x80;
+                    layout.output_size = 0x20;
+                    layout.links = 0;
+                    layout.link_size = 8;
+                    layout.linked_op = 0;
+                    layout.input_index = 4;
+                    layout.event_links = 0x90;
+                    layout.event_size = 0x18;
+                    layout.linked_events = 4;
+                    layout.links_found = true;
+                    check(layout.links_known(), "the synthetic Kismet layout is accepted");
+                    put(behind + 0xc4, 0);
+                    put(fired + 0xc4, 0);
+                    put(fired + 0xc8, 0);  // repeatable, nearest (at the player)
+                    put(behind + 0xc8, 0); // repeatable, 500 behind
+                    put(ahead + 0xc8, 1);  // one-shot, 1000 ahead
+                    events = walk_triggers(memory, found, layout, walkClasses);
+                    auto walk = capture_walk(memory, pc, 100, events, walkClasses);
+                    check(events[0].repeatable && !events[1].repeatable && events[2].repeatable &&
+                              walk.target.pointer == ahead && walk.remaining == 3,
+                          "a one-shot trigger ahead wins over nearer repeatable ones");
+                    // behind -> SeqAct_Toggle (input 0, Turn On) -> ahead, now off.
+                    constexpr uint32_t outputs = 0x10900, links = 0x10a00, eventLinks = 0x10b00,
+                                       linked = 0x10c00;
+                    put(behind + 0x80, outputs);
+                    put(behind + 0x84, 1);
+                    put(outputs, links);
+                    put(outputs + 4, 1);
+                    put(links, toggle);
+                    put(links + 4, 0);
+                    put(toggle + 0x90, eventLinks);
+                    put(toggle + 0x94, 1);
+                    put(eventLinks + 4, linked);
+                    put(eventLinks + 8, 1);
+                    put(linked, ahead);
+                    put(ahead + 0xd0, 0);
+                    events = walk_triggers(memory, found, layout, walkClasses);
+                    walk = capture_walk(memory, pc, 100, events, walkClasses);
+                    check(
+                        events[2].switches_on.size() == 1 && walk.target.pointer == behind,
+                        "a repeatable trigger that switches on an off one-shot trigger is a step");
+                    put(links + 4, 1); // Turn Off instead
+                    events = walk_triggers(memory, found, layout, walkClasses);
+                    walk = capture_walk(memory, pc, 100, events, walkClasses);
+                    check(events[2].switches_on.empty() && walk.target.pointer == fired,
+                          "with no route trigger left, the nearest repeatable one is used");
+                    put(links + 4, 0);
+                    put(ahead + 0xd0, 0x80000000);
+                    events = walk_triggers(memory, found, layout, walkClasses);
+                    walk = capture_walk(memory, pc, 100, events, walkClasses);
+                    check(walk.target.pointer == ahead,
+                          "once the one-shot trigger is on, the gate is no longer a step");
+                    for (auto event : {fired, behind, ahead})
+                        put(event + 0xc8, 0);
+                    put(behind + 0x80, 0);
+                    put(behind + 0x84, 0);
+                    put(fired + 0xc4, 1);
+                }
                 data[pawn + 0x454] = 24;
                 check(!capture_walk(memory, pc, 100, events, walkClasses).active,
                       "walking guidance yields to rapid fire");
