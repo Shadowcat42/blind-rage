@@ -118,6 +118,34 @@ inline std::vector<TutorialBox> melee_tutorial(const TutorialLabels &labels) {
         box.text = tutorial_fill(box.text, labels);
     return boxes;
 }
+// Fight tips: a short box when an enemy whose fight isn't obvious appears. Only
+// what a blind player can't work out alone; the rest is left to discover.
+enum class FightTip { none, elephant_gohma, augus_waves };
+// Episode 7's giant elephant Gohma (BCPawn_zou01, BC-S060's second section).
+inline std::vector<TutorialBox> fight_tip(FightTip tip) {
+    if (tip == FightTip::elephant_gohma)
+        return {{"This giant elephant Gohma can't just be beaten down. Watch for sweeping blows, "
+                 "fireballs that come down where you were standing, and a huge stomp whose "
+                 "shockwave lands under you. Right after the stomp it's open to a special attack, "
+                 "so watch for the prompt. Once your Burst is half full it gets angry, and each "
+                 "volley becomes a rain of fireballs. Good luck."}};
+    // Episode 11's Augus after the eyecatch (BCPawn_ogs02, BC-S110's second section).
+    if (tip == FightTip::augus_waves)
+        return {{"Augus has decided he wants to become a zoner, keeping his distance and "
+                 "fighting with sword waves. A buzz means a blade is about to hit you: step "
+                 "toward the side it's on, and it stops once you're clear. A quick rising tone "
+                 "means a wide wave is coming: jump when the tone ends."}};
+    return {};
+}
+// The enemy and map that bring each tip: tied to the episode, so the same enemy
+// appearing elsewhere brings no tip.
+inline FightTip fight_tip_for(std::string_view enemy_class, std::string_view map) {
+    if (enemy_class == "BCPawn_zou01" && map == "BC-S060")
+        return FightTip::elephant_gohma;
+    if (enemy_class == "BCPawn_ogs02" && map == "BC-S110")
+        return FightTip::augus_waves;
+    return FightTip::none;
+}
 // Shown when Episode 1's first QTE appears, before that QTE is announced.
 inline std::vector<TutorialBox> qte_note() {
     return {{"Central to the Asura's Wrath experience are many, many QTEs, all of which are "

@@ -13,6 +13,7 @@
 #include "hotkey_names.h"
 #include "mod_tutorials.h"
 #include "fire_warning.h"
+#include "wave_guide.h"
 #include "settings_menu.h"
 #include "script_calls.h"
 #include <atomic>
@@ -220,6 +221,9 @@ class GameplayHooks {
         tutorial_beacon,
         tutorial_fire
     };
+    void mod_tips(bool enabled) {
+        mod_tips_ = enabled;
+    }
     void mod_tutorials(bool enabled) {
         mod_tutorials_ = enabled;
     }
@@ -307,6 +311,15 @@ class GameplayHooks {
     }
     std::optional<FireCue> take_fire() {
         return fire_mailbox_.take();
+    }
+    // Sword-wave guidance in melee (wave_guide.h).
+    std::optional<WaveCues> take_waves() {
+        return wave_mailbox_.take();
+    }
+    // Diagnostic lines about sword waves, for the log.
+    std::vector<std::string> take_wave_log() {
+        std::lock_guard lock(wave_log_mutex_);
+        return std::exchange(wave_log_, {});
     }
     void aim_priority(AimPriority priority) {
         priority_ = priority;
@@ -488,10 +501,51 @@ class GameplayHooks {
         // LockedActor offset and bFixLock {offset, mask}.
         std::map<uint32_t, uint32_t> target_control_fields;
         std::map<uint32_t, MeleeFields> lock_control_fields;
+        // Per pawn class: SpecialMove and AttackType offsets; the last busy state logged.
+        std::map<uint32_t, std::pair<uint32_t, uint32_t>> pawn_move_fields;
+        std::pair<uint8_t, uint8_t> melee_busy_logged{};
         // Look-around cameras: fields resolved once, and the groups found so far.
         LookFields look_fields;
         bool look_view_resolved{}, look_camera_resolved{};
         LookTracker look;
+        // Sword waves in melee: the guide, and AddColNum's offset per projectile class.
+        WaveGuide waves;
+        // Per projectile class: AddColNum, AddColRelativeLocY, Speed and
+        // CylinderComponent offsets; per component class: Translation, CollisionRadius.
+        struct WaveFields {
+            uint32_t addcol{}, addcol_y{}, speed{}, cylinder{};
+        };
+        std::map<uint32_t, WaveFields> wave_fields;
+        std::map<uint32_t, std::pair<uint32_t, uint32_t>> cylinder_fields;
+        std::vector<uint32_t> waves_seen;
+        bool waves_active{}, step_on{};
+        uint64_t waves_quiet_since{};
+        // Wave wind-ups, read from enemies' playing animations: fields resolved
+        // once; per AnimSequence the wave shots its notifies fire; per mesh the
+        // animation nodes that can fire one; per node how often it has restarted.
+        struct ShotFields {
+            bool node{}, sequence{}, pawn{}, mesh_class{};
+            uint32_t mesh{}, tick_array{};
+            uint32_t anim_seq{}, current_time{}, rate{}, playing{}, playing_mask{}, weight{};
+            uint32_t notifies{}, notify_size{}, notify_time{}, notify_object{}, rate_scale{};
+        };
+        ShotFields shot_fields;
+        std::map<uint32_t, std::pair<uint32_t, uint32_t>> shot_info_fields;
+        std::map<uint32_t, std::vector<Shot>> sequence_shots;
+        struct MeshNodes {
+            uint64_t scanned{};
+            std::vector<uint32_t> nodes;
+            size_t logged = size_t(-1); // node count last logged
+        };
+        std::map<uint32_t, MeshNodes> mesh_nodes;
+        struct NodePlay {
+            float time{};
+            uint32_t plays{};
+        };
+        std::map<uint32_t, NodePlay> node_plays;
+        // Fight tips: enemies already reported, and when the pawn list was last scanned.
+        std::vector<std::pair<uint32_t, uint32_t>> tipped;
+        uint64_t tip_scan{};
         FireTracker fire;
         uint64_t walk_refreshed{};
     };
@@ -929,7 +983,144 @@ class GameplayHooks {
                             fields = known->second;
                             fields.target_control = control->second;
                         }
+                        if (auto self = memory.u32(source + 0x5c4)) {
+                            auto pawnClass = memory.u32(self + 0x34);
+                            auto moves = state.pawn_move_fields.find(pawnClass);
+                            if (moves == state.pawn_move_fields.end())
+                                moves = state.pawn_move_fields
+                                            .emplace(
+                                                pawnClass,
+                                                std::pair{
+                                                    ScriptLookup::property(memory, state.reader,
+                                                                           pawnClass, "SpecialMove")
+                                                        .first,
+                                                    ScriptLookup::property(memory, state.reader,
+                                                                           pawnClass, "AttackType")
+                                                        .first})
+                                            .first;
+                            std::tie(fields.special_move, fields.attack_type) = moves->second;
+                        }
                         auto melee = capture_melee(memory, source, now, fields, classes);
+                        if (melee.active && std::pair{melee.special_move, melee.attack_type} !=
+                                                state.melee_busy_logged) {
+                            state.melee_busy_logged = {melee.special_move, melee.attack_type};
+                            std::lock_guard lock(wave_log_mutex_);
+                            wave_log_.push_back(
+                                "MELEE_MOVE special_move=" + std::to_string(melee.special_move) +
+                                " attack_type=" + std::to_string(melee.attack_type) +
+                                (melee.busy ? " beacon quiet" : ""));
+                        }
+                        // Sword waves (BCProj_Ogs) heading for the player, in melee
+                        // including rapid fire.
+                        if (auto pawn = memory.u32(source + 0x5c4);
+                            pawn && memory.u8(pawn + 0x466) == 1 &&
+                            aim_context_active(memory, melee.controller, melee.pawn)) {
+                            std::vector<WaveSample> waves;
+                            for (const auto &p : fire_samples(memory, source)) {
+                                if (!classes(p.id, "BCProj_Ogs"))
+                                    continue;
+                                const auto &f = wave_fields_of(memory, state, p.id);
+                                // The wide wave's extra hit areas ride along at speed 0.
+                                if (f.speed &&
+                                    !(std::bit_cast<float>(memory.u32(p.id + f.speed)) > 0))
+                                    continue;
+                                WaveSample sample{p.id, p.x, p.y};
+                                auto extra = f.addcol ? int32_t(memory.u32(p.id + f.addcol)) : 0;
+                                sample.wide = extra > 0;
+                                auto component = f.cylinder ? memory.u32(p.id + f.cylinder) : 0;
+                                auto [translation, radius] = cylinder_of(memory, state, component);
+                                LockVector offset{};
+                                if (component && translation)
+                                    lock_vector(memory, component + translation, offset);
+                                auto r = component && radius
+                                             ? std::bit_cast<float>(memory.u32(component + radius))
+                                             : 50.f;
+                                if (!std::isfinite(r) || r <= 0 || r > 2000)
+                                    r = 50.f;
+                                // Turn the Translation by the actor's rotation (Unreal's
+                                // rotation matrix, pitch/yaw/roll at +0x60) and keep x/y.
+                                auto angle = [&](uint32_t at) {
+                                    return float(memory.u32(p.id + at) & 65535) * 6.2831853f /
+                                           65536.f;
+                                };
+                                float P = angle(0x60), Y = angle(0x64), R = angle(0x68);
+                                float sp = std::sin(P), cp = std::cos(P), sy = std::sin(Y),
+                                      cy = std::cos(Y), sr = std::sin(R), cr = std::cos(R);
+                                sample.yaw = Y * 57.2957795f;
+                                sample.offset_x = offset.x * cp * cy +
+                                                  offset.y * (sr * sp * cy - cr * sy) -
+                                                  offset.z * (cr * sp * cy + sr * sy);
+                                sample.offset_y = offset.x * cp * sy +
+                                                  offset.y * (sr * sp * sy + cr * cy) +
+                                                  offset.z * (cy * sr - cr * sp * sy);
+                                sample.radius = r;
+                                if (sample.wide) {
+                                    // Extra areas spaced AddColRelativeLocY apart across it.
+                                    auto spacing =
+                                        f.addcol_y
+                                            ? std::bit_cast<float>(memory.u32(p.id + f.addcol_y))
+                                            : 250.f;
+                                    if (!std::isfinite(spacing) || spacing <= 0 || spacing > 2000)
+                                        spacing = 250.f;
+                                    sample.radius = (float(extra) / 2.f) * spacing + r;
+                                }
+                                if (std::find(state.waves_seen.begin(), state.waves_seen.end(),
+                                              p.id) == state.waves_seen.end()) {
+                                    state.waves_seen.push_back(p.id);
+                                    if (state.waves_seen.size() > 64)
+                                        state.waves_seen.erase(state.waves_seen.begin());
+                                    std::ostringstream line;
+                                    line << "WAVE_SEEN wide=" << sample.wide
+                                         << " radius=" << int(sample.radius) << " offset=("
+                                         << int(offset.x) << ", " << int(offset.y) << ") world=("
+                                         << int(sample.offset_x) << ", " << int(sample.offset_y)
+                                         << ") roll="
+                                         << int(memory.u32(p.id + 0x68) & 65535) * 360 / 65536;
+                                    std::lock_guard lock(wave_log_mutex_);
+                                    wave_log_.push_back(line.str());
+                                }
+                                waves.push_back(sample);
+                            }
+                            auto windups = wave_windups(memory, state, source, pawn, now);
+                            LockVector at;
+                            auto camera = lock_camera(memory, source);
+                            if ((!waves.empty() || !windups.empty() || state.waves_active) &&
+                                camera.valid && lock_vector(memory, pawn + 0x54, at)) {
+                                float fx = camera.forward.x, fy = camera.forward.y,
+                                      length = std::hypot(fx, fy);
+                                if (length > 1e-4f) {
+                                    auto cues = state.waves.update(waves, at.x, at.y, -fy / length,
+                                                                   fx / length, now, windups);
+                                    if (!state.waves.log.empty()) {
+                                        std::lock_guard lock(wave_log_mutex_);
+                                        for (auto &line : state.waves.log)
+                                            wave_log_.push_back(std::move(line));
+                                        state.waves.log.clear();
+                                    }
+                                    if (cues.step.active != state.step_on) {
+                                        state.step_on = cues.step.active;
+                                        std::lock_guard lock(wave_log_mutex_);
+                                        wave_log_.push_back(cues.step.active
+                                                                ? "WAVE_STEP " +
+                                                                      std::string(cues.step.pan > 0
+                                                                                      ? "right"
+                                                                                      : "left")
+                                                                : std::string("WAVE_STEP off"));
+                                    }
+                                    state.waves_active = !waves.empty() || !windups.empty();
+                                    wave_mailbox_.put(cues);
+                                }
+                            }
+                            // Forget waves once nothing has been coming for a moment: the
+                            // tick between a wind-up's shot and its wave must not reset
+                            // the cue it already had.
+                            if (!waves.empty() || !windups.empty())
+                                state.waves_quiet_since = 0;
+                            else if (!state.waves_quiet_since)
+                                state.waves_quiet_since = now;
+                            else if (now - state.waves_quiet_since > 300)
+                                state.waves.reset();
+                        }
                         // A melee section under a new controller: report its map, which
                         // decides whether the melee tutorial belongs here.
                         if (auto section = tutorial_section(memory, source);
@@ -942,6 +1133,32 @@ class GameplayHooks {
                             event.tutorial_level_index = memory.u32(top + 0x20);
                             event.tutorial_melee = true;
                             publish(event);
+                        }
+                        // Fight tips: twice a second during melee, look for an enemy
+                        // that brings one (once per enemy).
+                        if (melee.active && mod_tips_.load(std::memory_order_relaxed) &&
+                            now - state.tip_scan >= 500) {
+                            state.tip_scan = now;
+                            auto world = memory.u32(source + 0xd4);
+                            auto map = state.reader.object_name(
+                                memory, tutorial_section(memory, source)[2]);
+                            unsigned walked = 0;
+                            for (auto pawn = world ? memory.u32(world + 0x3d8) : 0;
+                                 pawn && walked < 1024; pawn = memory.u32(pawn + 0x1e8), ++walked) {
+                                auto tip =
+                                    fight_tip_for(state.reader.class_name(memory, pawn), map);
+                                std::pair<uint32_t, uint32_t> id{pawn, memory.u32(pawn + 0x20)};
+                                if (tip == FightTip::none ||
+                                    std::find(state.tipped.begin(), state.tipped.end(), id) !=
+                                        state.tipped.end())
+                                    continue;
+                                state.tipped.push_back(id);
+                                GameplayEvent event;
+                                event.fight_tip = int(tip);
+                                event.tip_enemy = id.first;
+                                event.tip_enemy_index = id.second;
+                                publish(event);
+                            }
                         }
                         melee.active = melee.active && enabled_.load();
                         melee_mailbox_.put(melee);
@@ -1786,6 +2003,254 @@ class GameplayHooks {
     }
     // Class-chain test cached per class object; melee capture asks it for every
     // projectile and pawn on each rapid-fire tick.
+    // A sword-wave projectile class's AddColNum, AddColRelativeLocY, Speed and
+    // CylinderComponent offsets (0 when absent).
+    static const Thread::WaveFields &wave_fields_of(const Memory &memory, Thread &state,
+                                                    uint32_t object) {
+        auto cls = memory.u32(object + 0x34);
+        auto field = state.wave_fields.find(cls);
+        if (field == state.wave_fields.end()) {
+            Thread::WaveFields f;
+            f.addcol = ScriptLookup::property(memory, state.reader, cls, "AddColNum").first;
+            f.addcol_y =
+                ScriptLookup::property(memory, state.reader, cls, "AddColRelativeLocY").first;
+            f.speed = ScriptLookup::property(memory, state.reader, cls, "Speed").first;
+            f.cylinder =
+                ScriptLookup::property(memory, state.reader, cls, "CylinderComponent").first;
+            field = state.wave_fields.emplace(cls, f).first;
+        }
+        return field->second;
+    }
+    // A cylinder component's Translation and CollisionRadius offsets.
+    static std::pair<uint32_t, uint32_t> cylinder_of(const Memory &memory, Thread &state,
+                                                     uint32_t component) {
+        auto cls = component ? memory.u32(component + 0x34) : 0;
+        auto known = state.cylinder_fields.find(cls);
+        if (known == state.cylinder_fields.end())
+            known =
+                state.cylinder_fields
+                    .emplace(
+                        cls,
+                        std::pair{
+                            ScriptLookup::property(memory, state.reader, cls, "Translation").first,
+                            ScriptLookup::property(memory, state.reader, cls, "CollisionRadius")
+                                .first})
+                    .first;
+        return known->second;
+    }
+    // The shape of the wave a sword-wave archetype fires.
+    static Shot wave_shot(const Memory &memory, Thread &state, uint32_t archetype, float time) {
+        Shot shot;
+        shot.time = time;
+        const auto &f = wave_fields_of(memory, state, archetype);
+        if (f.speed) {
+            auto speed = std::bit_cast<float>(memory.u32(archetype + f.speed));
+            if (std::isfinite(speed) && speed > 0 && speed < 100000)
+                shot.speed = speed;
+        }
+        auto component = f.cylinder ? memory.u32(archetype + f.cylinder) : 0;
+        auto radius = component ? cylinder_of(memory, state, component).second : 0;
+        auto r = radius ? std::bit_cast<float>(memory.u32(component + radius)) : 50.f;
+        if (!std::isfinite(r) || r <= 0 || r > 2000)
+            r = 50.f;
+        shot.radius = r;
+        auto extra = f.addcol ? int32_t(memory.u32(archetype + f.addcol)) : 0;
+        if (extra > 0) {
+            auto spacing =
+                f.addcol_y ? std::bit_cast<float>(memory.u32(archetype + f.addcol_y)) : 250.f;
+            if (!std::isfinite(spacing) || spacing <= 0 || spacing > 2000)
+                spacing = 250.f;
+            shot.wide = true;
+            shot.radius = (float(extra) / 2.f) * spacing + r;
+        }
+        return shot;
+    }
+    // The sword waves an AnimSequence fires: its BCAnimNotify_ShotArcheType
+    // notifies whose projectile is a BCProj_Ogs. Cached per sequence.
+    const std::vector<Shot> &sequence_shots(const Memory &memory, Thread &state,
+                                            uint32_t sequence) {
+        static const std::vector<Shot> none;
+        if (!sequence)
+            return none;
+        if (auto known = state.sequence_shots.find(sequence); known != state.sequence_shots.end())
+            return known->second;
+        auto &f = state.shot_fields;
+        if (!f.sequence) {
+            // AnimSequence.Notifies is an array of AnimNotifyEvent {Time, Notify,
+            // Comment, Duration}; its element size is the struct's PropertiesSize
+            // (+0x48, after SuperField and Children; logged to check).
+            f.sequence = true;
+            auto cls = memory.u32(sequence + 0x34);
+            f.rate_scale = ScriptLookup::property(memory, state.reader, cls, "RateScale").first;
+            auto array = ScriptLookup::field(memory, state.reader, cls, "Notifies");
+            auto inner = array ? memory.u32(array + 0x64) : 0;
+            auto event = inner ? memory.u32(inner + 0x64) : 0;
+            if (event) {
+                f.notifies = memory.u32(array + 0x54);
+                f.notify_size = memory.u32(event + 0x48);
+                f.notify_time = ScriptLookup::property(memory, state.reader, event, "Time").first;
+                f.notify_object =
+                    ScriptLookup::property(memory, state.reader, event, "Notify").first;
+            }
+            std::ostringstream line;
+            line << "WAVE_FIELDS notifies=" << f.notifies << " size=" << f.notify_size
+                 << " time=" << f.notify_time << " notify=" << f.notify_object
+                 << " rate_scale=" << f.rate_scale << " node_time=" << f.current_time
+                 << " weight=" << f.weight;
+            std::lock_guard lock(wave_log_mutex_);
+            wave_log_.push_back(line.str());
+        }
+        std::vector<Shot> shots;
+        if (f.notifies && f.notify_size >= 12 && f.notify_size <= 64) {
+            auto data = memory.u32(sequence + f.notifies);
+            auto count = memory.u32(sequence + f.notifies + 4);
+            for (uint32_t i = 0; data && i < count && i < 256; ++i) {
+                auto event = data + i * f.notify_size;
+                auto notify = memory.u32(event + f.notify_object);
+                if (!notify ||
+                    !cached_subclass(memory, state, notify, "BCAnimNotify_ShotArcheType"))
+                    continue;
+                auto cls = memory.u32(notify + 0x34);
+                auto info = state.shot_info_fields.find(cls);
+                if (info == state.shot_info_fields.end()) {
+                    std::pair<uint32_t, uint32_t> found{};
+                    auto field = ScriptLookup::field(memory, state.reader, cls, "ShotInfo");
+                    if (auto type = field ? memory.u32(field + 0x64) : 0) {
+                        found.first = memory.u32(field + 0x54);
+                        found.second = ScriptLookup::property(memory, state.reader, type,
+                                                              "ProjectileArcheType")
+                                           .first;
+                    }
+                    info = state.shot_info_fields.emplace(cls, found).first;
+                }
+                auto [offset, member] = info->second;
+                auto archetype = offset ? memory.u32(notify + offset + member) : 0;
+                if (!archetype || !cached_subclass(memory, state, archetype, "BCProj_Ogs"))
+                    continue;
+                auto time = std::bit_cast<float>(memory.u32(event + f.notify_time));
+                if (std::isfinite(time) && time >= 0)
+                    shots.push_back(wave_shot(memory, state, archetype, time));
+            }
+        }
+        if (state.sequence_shots.size() > 4096)
+            state.sequence_shots.clear();
+        return state.sequence_shots[sequence] = std::move(shots);
+    }
+    // Waves enemies are winding up to fire: for each enemy animation node that
+    // is playing a sequence with a sword-wave shot still ahead, the time to it.
+    // Each enemy mesh's AnimTickArray is searched for such nodes once a second;
+    // in between only those nodes are read.
+    std::vector<WindUp> wave_windups(const Memory &memory, Thread &state, uint32_t pc,
+                                     uint32_t pawn, uint64_t now) {
+        std::vector<WindUp> out;
+        auto &f = state.shot_fields;
+        auto world = memory.u32(pc + 0xd4);
+        const auto team = memory.u8(pawn + 0x468);
+        auto classes = [&](uint32_t object, std::string_view cls) {
+            return cached_subclass(memory, state, object, cls);
+        };
+        unsigned walked = 0;
+        for (auto other = world ? memory.u32(world + 0x3d8) : 0; other && walked < 1024;
+             other = memory.u32(other + 0x1e8), ++walked) {
+            if (!live_enemy(memory, other, pawn, team, classes))
+                continue;
+            if (!f.pawn) {
+                f.pawn = true;
+                f.mesh =
+                    ScriptLookup::property(memory, state.reader, memory.u32(other + 0x34), "Mesh")
+                        .first;
+            }
+            auto mesh = f.mesh ? memory.u32(other + f.mesh) : 0;
+            if (!mesh)
+                continue;
+            if (!f.mesh_class) {
+                f.mesh_class = true;
+                f.tick_array = ScriptLookup::property(memory, state.reader, memory.u32(mesh + 0x34),
+                                                      "AnimTickArray")
+                                   .first;
+            }
+            if (!f.tick_array)
+                continue;
+            auto &known = state.mesh_nodes[mesh];
+            if (!known.scanned || now - known.scanned >= 1000) {
+                known.scanned = now;
+                known.nodes.clear();
+                auto data = memory.u32(mesh + f.tick_array);
+                auto count = memory.u32(mesh + f.tick_array + 4);
+                for (uint32_t i = 0; data && i < count && i < 1024; ++i) {
+                    auto node = memory.u32(data + i * 4);
+                    if (!node || !classes(node, "AnimNodeSequence"))
+                        continue;
+                    if (!f.node) {
+                        f.node = true;
+                        auto cls = memory.u32(node + 0x34);
+                        auto prop = [&](std::string_view name) {
+                            return ScriptLookup::property(memory, state.reader, cls, name);
+                        };
+                        f.anim_seq = prop("AnimSeq").first;
+                        f.current_time = prop("CurrentTime").first;
+                        f.rate = prop("Rate").first;
+                        std::tie(f.playing, f.playing_mask) = prop("bPlaying");
+                        f.weight = prop("NodeTotalWeight").first;
+                    }
+                    if (f.anim_seq &&
+                        !sequence_shots(memory, state, memory.u32(node + f.anim_seq)).empty())
+                        known.nodes.push_back(node);
+                }
+                if (known.nodes.size() != known.logged) {
+                    known.logged = known.nodes.size();
+                    std::ostringstream line;
+                    line << "WAVE_NODES " << state.reader.class_name(memory, other)
+                         << " nodes=" << known.nodes.size() << " ticked=" << count;
+                    std::lock_guard lock(wave_log_mutex_);
+                    wave_log_.push_back(line.str());
+                }
+            }
+            if (known.nodes.empty())
+                continue;
+            LockVector from;
+            if (!lock_vector(memory, other + 0x54, from))
+                continue;
+            for (auto node : known.nodes) {
+                auto sequence = memory.u32(node + f.anim_seq);
+                const auto &shots = sequence_shots(memory, state, sequence);
+                auto time = std::bit_cast<float>(memory.u32(node + f.current_time));
+                auto &play = state.node_plays[node];
+                if (std::isfinite(time) && time < play.time - .01f)
+                    ++play.plays; // restarted: a new wind-up
+                if (std::isfinite(time))
+                    play.time = time;
+                if (shots.empty() || !f.playing || !f.playing_mask ||
+                    !(memory.u32(node + f.playing) & f.playing_mask) || !f.weight ||
+                    !(std::bit_cast<float>(memory.u32(node + f.weight)) > .01f))
+                    continue;
+                float rate = f.rate ? std::bit_cast<float>(memory.u32(node + f.rate)) : 1.f;
+                float scale = f.rate_scale && sequence
+                                  ? std::bit_cast<float>(memory.u32(sequence + f.rate_scale))
+                                  : 1.f;
+                if (!std::isfinite(scale) || scale <= 0)
+                    scale = 1.f;
+                float seconds = 0;
+                auto index = next_shot(shots, time, rate * scale, seconds);
+                if (index < 0 || seconds > WaveGuide::kWarnSeconds)
+                    continue;
+                WindUp w;
+                w.id = 0x80000000u |
+                       (((node >> 2) * 2654435761u + play.plays * 40503u + uint32_t(index)) &
+                        0x7fffffffu);
+                w.x = from.x;
+                w.y = from.y;
+                w.seconds = seconds;
+                w.shot = shots[size_t(index)];
+                out.push_back(w);
+            }
+        }
+        if (state.node_plays.size() > 4096)
+            state.node_plays.clear();
+        if (state.mesh_nodes.size() > 256)
+            state.mesh_nodes.clear();
+        return out;
+    }
     static bool cached_subclass(const Memory &memory, Thread &state, uint32_t object,
                                 std::string_view name) {
         auto cls = memory.u32(object + 0x34);
@@ -1940,6 +2405,9 @@ class GameplayHooks {
         look_mailbox_.put(look);
     }
     LatestMailbox<FireCue> fire_mailbox_;
+    LatestMailbox<WaveCues> wave_mailbox_;
+    std::mutex wave_log_mutex_;
+    std::vector<std::string> wave_log_;
     NativeHooks hooks_;
     const BuildProfile *profile_{};
     std::array<Function, 3> original_{};
@@ -1965,7 +2433,7 @@ class GameplayHooks {
     AimMailbox aim_mailbox_;
     std::atomic<uint64_t> fired_{};
     std::atomic<uint64_t> lock_frames_{};
-    std::atomic<bool> mod_tutorials_{}, tutorial_active_{};
+    std::atomic<bool> mod_tutorials_{}, tutorial_active_{}, mod_tips_{};
     NativeHooks input_hooks_;
     Function input_original_{};
     bool input_installed_{};

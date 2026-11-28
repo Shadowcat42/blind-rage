@@ -149,14 +149,14 @@ button over that enemy (`BCHUD.StartShowButton`, group `FinishAttack`, button ty
 34, icon `Finish_Y`) and sets it active; other downed enemies get the same icon set
 inactive as guides. The heavy-attack press then starts `StartFinishAttack` instead of
 a swing. The game calls it a Special Attack (result screen, tutorial). The mod says
-"Special attack, triangle." when an icon becomes active, once per activation.
+"Triangle special attack." when an icon becomes active, once per activation.
 
 ### Reaction snatch
 
 Assault, heavy and shot presses first call `TrialSnatchInput(1/2/3)`.
 `ShowReactionSnatchButton` creates a HUD prompt `SnatchButton_N` for the window
 (button types 30-33 and 10 or 35, shown as e.g. `Y4`) and removes it when the window
-ends. The tutorial calls it a counterattack. The mod says "Counter, triangle." (with
+ends. The tutorial calls it a counterattack. The mod says "Triangle counter." (with
 the icon's button) once per window.
 
 The button comes from the enemy animation's `BCAnimNotify_CounterGrabHit`

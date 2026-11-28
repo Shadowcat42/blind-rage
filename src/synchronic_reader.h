@@ -73,7 +73,8 @@ class SynchronicReader {
             return;
         auto perfect = state.stamp + int64_t(double(state.until) * 1e9);
         if (count_in_.generation != state.generation || !count_in_.active)
-            count_in_ = {perfect, state.stamp, state.generation, true};
+            count_in_ = {perfect, state.stamp, state.generation, true,
+                         count_in_spacing(perfect, state.stamp)};
         else
             count_in_.perfect = perfect;
         count_in_changed_ = true;

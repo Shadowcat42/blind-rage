@@ -129,6 +129,8 @@ struct GameplayEvent {
     uint32_t tutorial_level{}, tutorial_level_index{};
     bool tutorial_no_lock{};
     bool tutorial_melee{}; // Reported by a melee section rather than rail shooting.
+    int fight_tip{};       // FightTip: an enemy with a fight tip has appeared.
+    uint32_t tip_enemy{}, tip_enemy_index{};
     int tutorial_step{};
     uint32_t tutorial_box{};
     // Settings menu input from the controller (GameplayHooks::MenuInput).

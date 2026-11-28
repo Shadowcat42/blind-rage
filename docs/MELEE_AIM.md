@@ -87,6 +87,12 @@ Asura toward it when they start.
   220 Hz behind. Stereo shows the side relative to the camera. The walking beacon
   (a sine) is silent while enemies live, and the shooting beacon (a triangle) only
   plays during rapid fire, so they never overlap.
+- Quiet during a counter or special attack, so their animation and sound come
+  through. A counter is `PlayCounterGrab` -> `DoSpecialMove(21)`. A special attack
+  is `StartFinishAttack` -> `PlayAttack(26)` (`BCATT_FINISHATTACK`), whose
+  `InitFinishAttack` does `DoSpecialMove(50)`. The beacon is quiet while
+  `BCPawn.SpecialMove` is non-zero or `AttackType` is 26; normal combos keep it.
+  The log records `MELEE_MOVE special_move= attack_type=` on each change.
 
 `melee_beacon=1` (default) enables it, also in the settings menu. D-pad Up toggles
 it in melee outside rapid fire (the game's own D-pad handlers are empty), and so
@@ -94,6 +100,24 @@ does the `aimmode` key; during rapid fire both still cycle the shooting mode. Th
 log records `MELEE_TARGET distance= bearing= locked= reach=` when the target or
 its reach changes. Field offsets are looked up by name in the controller's and
 target control's classes.
+
+## Sword waves
+
+Episode 11's second section (`BC-S110_L02_PLY_01`) is a long-range fight with Augus (`BCPawn_ogs02`, `BCAI_EnemyBossOgs02`): far away he only fires waves, and when the player comes within 500 units he dashes off to a far point. His waves (`BCProj_Ogs`) fly straight along the ground at 3000 units per second. The upright blades (`_length` archetypes) come as a fan of seven, straight at the player and 0.2, 0.4 and 0.6 rad to each side; the wide horizontal wave (`_cross`) has nine extra side hit areas (`AddColNum` 9).
+
+In melee, including rapid fire, the mod follows these waves from the map's projectile cache (`src/wave_guide.h`), using their world velocity so the player's own movement doesn't bend the prediction:
+
+- Each wave's hit cylinder is read from the game: each cylinder's `Translation` is turned by the projectile's actual rotation. The blades' cylinders are 400 tall and 50 wide (`CollisionHeight` from `Default__BCProj_Ogs`), so `BCProj_Ogs.Init` rolls them 90 degrees (`bTrans`) and their (-150, -350, 0) offset points back and up: horizontally the cylinder runs along the blade's own path. The wide wave's nine extra hit areas are separate zero-speed projectiles riding along; they are skipped, and the wide wave counts as half its whole width (`AddColNum` areas `AddColRelativeLocY` 250 apart, plus its 250 radius).
+- Fan blades: silent while every blade will pass by (further than its radius plus the player's, 60, from the player's centre). When one will hit within 2.5 s, the fire warning's buzz plays fully to one side, toward the wider gap to the next blade (with equal gaps, away from the blade), louder as it nears.
+- The wide wave: when its path comes within 1200 units, a 150 ms sweep from 500 to 1000 Hz ends at the moment to jump, 0.6 s before the wave arrives (0.25 s was too late in play). That lead is an estimate (`JumpSpeedZ` 1000; the first 0.13 s of a jump can't be hit, `JumpStartInvalidDamageTime`) to tune in play, as is the wave's half width.
+
+Both start during the wind-up, before the wave exists. Each attack animation fires its waves from a `BCAnimNotify_ShotArcheType` notify, whose `ShotInfo.ProjectileArcheType` names the wave. Augus's fan swing (`atk01`, 1.67 s) fires at 0.729 s; the glow comes at 0.21 s and the swing sound at 0.54 s. His wide swing (`atk02`) fires at 0.746 s. The special's barrage (`Spl01_ed01`/`ed02`, alternating fan and wide) fires 0.142 s into each swing. The mod scans each enemy mesh's `AnimTickArray` once a second for `AnimNodeSequence` nodes whose sequence fires a `BCProj_Ogs`. While such a node plays (`bPlaying`, `NodeTotalWeight` above 0.01), the shot time minus `CurrentTime`, divided by `Rate` times `RateScale`, gives the time until the wave fires. Its shape (speed, width) comes from the archetype.
+
+- During a fan wind-up the buzz plays panned right: the middle blade will be aimed at the player (the swing homes in, `HomingTime` 1 s), and the gaps either side are equal. That aim is an inference from the AI's homing parameters. Once the blades exist, their real gaps decide.
+- A wide wind-up schedules the jump from the predicted arrival (time to the shot plus distance over speed). The spawned wave arrives within 0.5 s of that and shares the cue.
+- At close range this turns about 0.2 s of warning at 600 units into about 0.95 s.
+
+Both use the fire warning's volume share. The log records `WAVE_SEEN` for each wave (width, cylinder offset), `WAVE_STEP left|right|off`, `WAVE_JUMP in <ms>`, `WAVE_WINDUP` for each wind-up (time to the shot and arrival), `WAVE_NODES` per enemy (wave-firing nodes found) and `WAVE_FIELDS` once (the notify array layout read by reflection).
 
 ## Not yet verified
 

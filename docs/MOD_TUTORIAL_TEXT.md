@@ -53,3 +53,23 @@ Shown when Episode 8's chase starts (`BC-S070`, a shooting section whose control
 3. When the enemy drops back to you, the game tells you to attack: hit it with circle for combos. Fill your Burst gauge and press R2 to finish the chase. The beacon here points only at the enemy. Hold L1 to auto aim up and down; left and right stay with you, since they also move Asura.
 
 Evidence: the missing lock-on, the cursor moving Asura sideways, fire skimming the ground and increasing with Burst, and the attack prompt are from the game's scripts and level data; square rapid fire and Burst with R2 ending the chase are from play. Dodging with cross was confirmed in play, in this chase as well as Episode 1's rail shooting.
+
+## Fight tips
+
+Separate from the tutorials and switched by their own setting (`mod_tips`). A tip covers only what a blind player can't work out alone, and leaves the rest, such as which attacks work, to discover. Each belongs to one episode's map and one enemy, and is shown when that enemy appears there during melee, so the same enemy elsewhere brings no tip.
+
+### Episode 7's giant elephant Gohma
+
+Shown when `BCPawn_zou01` appears (`BC-S060`'s second section). The third section's Gohma gets no tip.
+
+1. This giant elephant Gohma can't just be beaten down. Watch for sweeping blows, fireballs that come down where you were standing, and a huge stomp whose shockwave lands under you. Right after the stomp it's open to a special attack, so watch for the prompt. Once your Burst is half full it gets angry, and each volley becomes a rain of fireballs. Good luck.
+
+Evidence: the Gohma is spawned invincible and the section ends on Burst (level script). `BCAI_EnemyBossZou01` attacks in a fixed order: combo, shot, combo, Vajra attack, shot. Shots (`BCProj_Zou`) rise and come down on the player's position when fired, marked on the ground. The Vajra attack's shockwave (`CreateVajraShockwave`) lands at the player's ground position, and just before it the Gohma's targets accept finishing attacks (`ExecBehaviorAttackZou`, `SetIgnoreFinishAttack(false)`). At 50% Burst (`EmotionHealthList`, read from the player's Mantra gauge in `CheckEmotion`) it turns angry, and each shot becomes 10 fireballs (`ExecBehaviorShoot`).
+
+### Episode 11's Augus after the eyecatch
+
+Shown when `BCPawn_ogs02` appears (`BC-S110`'s second section). Augus's first section (`BCPawn_ogs01`) gets no tip.
+
+1. Augus has decided he wants to become a zoner, keeping his distance and fighting with sword waves. A buzz means a blade is about to hit you: step toward the side it's on, and it stops once you're clear. A quick rising tone means a wide wave is coming: jump when the tone ends.
+
+Evidence: far away `BCAI_EnemyBossOgs02` only fires waves, and within 500 units it dashes to a far point (`ExecBehaviorSwiftlySlash`). The buzz and the rising tone are the mod's sword-wave guide ([melee aiming](MELEE_AIM.md#sword-waves)).

@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- Counter and special attack prompts say the button first ("Triangle counter."), so you hear which button sooner when counters mix triangle and circle.
+- The melee beacon goes quiet during counters and special attacks.
+- Quick QTE wording (`qte_wording=quick`, also in the settings menu): "LS right RS left", "LS clockwise", "Mash L2 R2", without joining words, mash counts or "then release". Verbose stays the default.
+- Sword waves in an Episode 11 fight: a buzz points toward the gap when a blade in a fan would hit you, and a quick rising tone tells you when to jump a wide wave. Both start during the enemy's wind-up, read from the attack animation, so there's warning even up close.
+- Synchronic count-ins keep all four beats when a key comes up with less lead than usual (several in Episode 11): the beats are spaced closer instead of the first being dropped.
+- Fight tips, with their own setting (`mod_tips`): a short pausing box when an enemy whose fight isn't obvious appears. So far there are two, in Episodes 7 and 11.
+
 ## 0.3.0
 
 - Updates itself: on launch, BlindRage.exe checks for a newer Blind Rage release and offers it in a dialog that lists what changed since your version. It downloads the package, checks it against the release's checksum, replaces the mod's files (putting the old ones back if anything fails) and starts the new version. Settings are kept. Turn the check off with `update_check=0`. This is the first version with the updater, so updating to it from 0.2.0 is still done by hand.

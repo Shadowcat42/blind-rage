@@ -48,12 +48,13 @@ int main() {
         check(reader.take().empty(), "a tap's press moment is the count-in, not speech");
         check(reader.repeat() == "Timing: triangle.", "repeat still names the button");
         check(!reader.take_count_in(), "no count-in before the track clock is read");
-        state.until = 1.f;
+        // A typical first reading: 1.04 s before the key (logged 1.038-1.055 s).
+        state.until = 1.04f;
         state.stamp = 10'000'000'000;
         reader.apply(state, 4, name);
         auto count = reader.take_count_in();
-        check(count && count->active && count->perfect == 11'000'000'000 &&
-                  count->from == 10'000'000'000,
+        check(count && count->active && std::llabs(count->perfect - 11'040'000'000) < 1000 &&
+                  count->spacing == kCountInBeatNs && count->from == 10'000'000'000,
               "count-in lands its high beat on the key's perfect time");
         check(!reader.take_count_in(), "a schedule is taken once");
         state.until = .2f;
@@ -170,6 +171,23 @@ int main() {
             check(loud(after, 14'360'000'000, 14'697'000'000, 14'747'000'000) > .1f &&
                       loud(after, 14'360'000'000, 15'027'000'000, 15'077'000'000) > .1f,
                   "the third and the high beat play after the resume");
+        }
+        check(count_in_spacing(11'000'000'000, 9'950'000'000) == kCountInBeatNs,
+              "a full lead keeps the 0.33 s count-in");
+        check(std::abs(count_in_spacing(11'000'000'000, 10'130'000'000) - 276'666'666) < 1000,
+              "a 0.87 s lead spaces four beats evenly over the time left");
+        check(count_in_spacing(11'000'000'000, 10'600'000'000) == kCountInMinBeatNs,
+              "a very short lead stops at the 0.15 s floor");
+        {
+            // A 0.87 s lead: all four beats play, the last on the perfect time.
+            CountInCue squeezed{11'000'000'000, 10'130'000'000, 21, true,
+                                count_in_spacing(11'000'000'000, 10'130'000'000)};
+            CountInSynth fitted;
+            std::fill(samples.begin(), samples.end(), 0.f);
+            fitted.render(squeezed, .2f, samples.data(), 96000, 10'000'000'000);
+            check(peak(.17, .22) > .1f && peak(.45, .5) > .1f && peak(.725, .775) > .1f &&
+                      peak(1.0, 1.05) > .1f && peak(.05, .15) == 0,
+                  "a short lead still gets four beats ending on the perfect time");
         }
         CountInCue late{11'000'000'000, 10'500'000'000, 9, true};
         std::fill(samples.begin(), samples.end(), 0.f);

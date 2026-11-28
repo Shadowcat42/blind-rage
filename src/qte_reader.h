@@ -55,10 +55,51 @@ inline InputDescription describe_qte_icon(std::string tag, const ButtonLabel &bu
         return {label, InputAction::press};
     return gestures ? gestures(tag) : controller_gesture(tag);
 }
+// Quick wording's stick names: LS and RS, and "both sticks" for the pair.
+inline std::string quick_label(std::string label) {
+    for (auto [from, to] : {std::pair<std::string_view, std::string_view>{"left stick", "LS"},
+                            {"right stick", "RS"}}) {
+        for (auto at = label.find(from); at != std::string::npos; at = label.find(from, at))
+            label.replace(at, from.size(), to);
+    }
+    if (label.starts_with("sticks "))
+        label = "both " + label;
+    return label;
+}
+// Verbose: "Left stick right and right stick left together." Quick (the
+// qte_wording setting): "LS right RS left", no joining words or full stop, no
+// mash count and no "then release". Several inputs in one prompt always go
+// together: QTEs taken one at a time show one input.
 inline std::string qte_instruction(const QteGroup &group,
-                                   const std::vector<InputDescription> &inputs) {
+                                   const std::vector<InputDescription> &inputs,
+                                   bool quick = false) {
     if (inputs.empty() || group.mode > 5)
         return {};
+    if (quick) {
+        std::string list;
+        for (size_t i = 0; i < inputs.size(); ++i) {
+            if (inputs[i].label.empty())
+                return {};
+            list += (i ? " " : "") + quick_label(inputs[i].label);
+        }
+        std::string text = list;
+        if (group.mode == 2 || group.mode == 4) {
+            text = (group.mode == 4 ? "Keep holding " : "Hold ") + list;
+            if (group.mode == 2 && group.hold_seconds > 0) {
+                std::ostringstream duration;
+                duration << group.hold_seconds;
+                text += " " + duration.str() + " seconds";
+            }
+        } else if (group.mode == 1) {
+            bool presses =
+                std::all_of(inputs.begin(), inputs.end(), [](const InputDescription &input) {
+                    return input.action == InputAction::press;
+                });
+            text = presses ? "Mash " + list : list + " repeatedly";
+        }
+        text[0] = char(std::toupper(static_cast<unsigned char>(text[0])));
+        return text;
+    }
     bool same = std::all_of(inputs.begin(), inputs.end(), [&](const InputDescription &input) {
         return input.action == inputs.front().action;
     });
@@ -106,6 +147,10 @@ class QteReader {
     };
     explicit QteReader(ButtonLabel buttons = {}, GestureLabel gestures = {})
         : buttons_(std::move(buttons)), gestures_(std::move(gestures)) {}
+    // The qte_wording setting: quick ("LS right RS left") or verbose.
+    void quick(bool enabled) {
+        quick_ = enabled;
+    }
     void reset() {
         icons_.clear();
         groups_.clear();
@@ -243,15 +288,20 @@ class QteReader {
             return {};
         std::string action;
         if (icon.input.starts_with("Finish_") && icon.activated)
-            action = "Special attack";
+            action = "special attack";
         else if (icon.tag.starts_with("SnatchButton"))
-            action = "Counter";
+            action = "counter";
         else
             return {};
         auto input = describe_qte_icon(icon.input, buttons_, gestures_);
         if (input.label.empty() || input.action != InputAction::press)
             return {};
-        return action + ", " + input.label + ".";
+        // The button first: later fights mix triangle and circle counters, so the
+        // part that changes is heard soonest.
+        auto label = input.label;
+        if (label[0] >= 'a' && label[0] <= 'z')
+            label[0] = char(label[0] - 'a' + 'A');
+        return label + " " + action + ".";
     }
     struct Group {
         QteGroup data;
@@ -293,12 +343,13 @@ class QteReader {
                 inputs.push_back(std::move(input));
             key += std::to_string(i) + "/" + std::to_string(selected->serial) + ";";
         }
-        auto text = qte_instruction(group.data, inputs);
+        auto text = qte_instruction(group.data, inputs, quick_);
         return text.empty() ? std::pair<std::string, std::string>{}
                             : std::pair{key, std::move(text)};
     }
     ButtonLabel buttons_;
     GestureLabel gestures_;
+    bool quick_{};
     uint64_t icon_serial_{};
     std::vector<Icon> icons_;
     std::vector<Group> groups_;

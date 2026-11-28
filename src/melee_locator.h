@@ -9,6 +9,11 @@
 // LockOnDistance (500) in line of sight, favouring those in front, and attacks
 // turn Asura toward it. So an unlocked LockedActor means an enemy in reach. See
 // docs/MELEE_AIM.md.
+//
+// The beacon goes quiet while Asura is in a scripted move: a counter
+// (PlayCounterGrab -> DoSpecialMove(21)) or a special attack (StartFinishAttack
+// -> PlayAttack(BCATT_FINISHATTACK, 26), whose InitFinishAttack does
+// DoSpecialMove(50)). BCPawn.SpecialMove is non-zero during any special move.
 #include "walk_beacon.h"
 namespace a11y {
 // Offsets resolved by name at runtime (0 when absent).
@@ -16,13 +21,18 @@ struct MeleeFields {
     uint32_t target_control{};         // BCPlayerController.TargetControl
     uint32_t locked_actor{};           // BCTargetLockControl.LockedActor
     uint32_t fix_offset{}, fix_mask{}; // BCTargetLockControl.bFixLock
+    uint32_t special_move{};           // BCPawn.SpecialMove (byte)
+    uint32_t attack_type{};            // BCPawn.AttackType (byte, EBCAttackType)
 };
+inline constexpr uint8_t kFinishAttack = 26; // EBCAttackType BCATT_FINISHATTACK
 struct MeleeSnapshot {
     AimIdentity controller, pawn, target;
     uint64_t tick{};
     bool active{}, valid{};
     bool locked{}; // Held by L1 lock-on.
     bool reach{};  // The game's own target: attacks turn to it.
+    bool busy{};   // In a counter, special attack or other special move.
+    uint8_t special_move{}, attack_type{};
     float bearing{}, distance{};
 };
 // The game's auto-targeting radius (BCPlayerParam.LockOnDistance); also used as
@@ -51,6 +61,11 @@ inline MeleeSnapshot capture_melee(const Memory &m, uint32_t pc, uint64_t tick,
     LockVector at;
     if (!camera.valid || !lock_vector(m, pawn + 0x54, at))
         return out;
+    if (fields.special_move)
+        out.special_move = m.u8(pawn + fields.special_move);
+    if (fields.attack_type)
+        out.attack_type = m.u8(pawn + fields.attack_type);
+    out.busy = out.special_move != 0 || out.attack_type == kFinishAttack;
     const auto team = m.u8(pawn + 0x468);
     uint32_t target = 0;
     if (auto control = fields.target_control ? m.u32(pc + fields.target_control) : 0;
@@ -107,7 +122,7 @@ inline MeleeSnapshot capture_melee(const Memory &m, uint32_t pc, uint64_t tick,
 inline BeaconCue melee_cue(const MeleeSnapshot &melee) {
     BeaconCue cue;
     cue.tick = melee.tick;
-    if (!melee.active || !melee.valid || !melee.target.pointer)
+    if (!melee.active || !melee.valid || !melee.target.pointer || melee.busy)
         return cue;
     cue.active = true;
     cue.pan = std::clamp(melee.bearing / 90.f, -1.f, 1.f);

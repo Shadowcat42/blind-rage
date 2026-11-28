@@ -496,6 +496,21 @@ int main() {
                 check(melee.target.pointer == enemy && melee.reach && !melee.locked &&
                           melee_cue(melee).error == 0,
                       "the game's automatic target is in reach: steady tone");
+                // Counters and special attacks run as special moves: the beacon hushes.
+                MeleeFields moves = fields;
+                moves.special_move = 0x470;
+                moves.attack_type = 0x471;
+                data[pawn + 0x470] = 21;
+                melee = capture_melee(memory, pc, 100, moves, classes);
+                check(melee.busy && !melee_cue(melee).active, "quiet during a counter");
+                data[pawn + 0x470] = 0;
+                data[pawn + 0x471] = kFinishAttack;
+                check(!melee_cue(capture_melee(memory, pc, 100, moves, classes)).active,
+                      "quiet during a special attack");
+                data[pawn + 0x471] = 1;
+                check(melee_cue(capture_melee(memory, pc, 100, moves, classes)).active,
+                      "a normal combo keeps the beacon");
+                data[pawn + 0x471] = 0;
                 put(control + 0x14, 1);
                 melee = capture_melee(memory, pc, 100, fields, classes);
                 check(melee.locked && !melee.reach,

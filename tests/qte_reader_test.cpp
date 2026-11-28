@@ -40,6 +40,32 @@ int main() {
         check(qte_instruction(wording, {{"W, D, S, A in order", InputAction::sequence}}) ==
                   "W, D, S, A in order.",
               "keyboard rotation sequence retains ordering without a press prefix");
+        // Quick wording.
+        wording.mode = 3;
+        check(qte_instruction(wording,
+                              {{"left stick right", InputAction::move},
+                               {"right stick left", InputAction::move}},
+                              true) == "LS right RS left",
+              "quick wording: LS and RS, no joining words");
+        wording.mode = 0;
+        check(qte_instruction(wording, {{"left stick clockwise", InputAction::rotate}}, true) ==
+                  "LS clockwise",
+              "quick rotation");
+        check(qte_instruction(wording, {{"sticks clockwise", InputAction::rotate}}, true) ==
+                  "Both sticks clockwise",
+              "quick wording names both sticks");
+        wording.mode = 1;
+        wording.required = 30;
+        check(qte_instruction(wording, {{"L2", InputAction::press}, {"R2", InputAction::press}},
+                              true) == "Mash L2 R2",
+              "quick mash drops the count");
+        wording.required = 0;
+        wording.mode = 2;
+        wording.hold_seconds = 2;
+        check(qte_instruction(wording, {{"cross", InputAction::press}}, true) ==
+                  "Hold cross 2 seconds",
+              "quick hold keeps the seconds");
+        wording.hold_seconds = 0;
         QteReader reader(buttons);
         QteGroup group;
         group.source = 1;
@@ -164,7 +190,7 @@ int main() {
         check(melee.take().empty(), "an out-of-range finisher guide stays quiet");
         melee.apply(active("BCTargetComponent_7", true, 3));
         lines = melee.take();
-        check(lines.size() == 1 && lines[0] == "Special attack, triangle.",
+        check(lines.size() == 1 && lines[0] == "Triangle special attack.",
               "the usable finisher is announced with its button");
         melee.apply(active("BCTargetComponent_7", true, 4));
         check(melee.take().empty(), "a finisher stays quiet while it remains usable");
@@ -176,7 +202,7 @@ int main() {
         melee.apply(done);
         melee.apply(icon("Y4", "SnatchButton_0", 8));
         lines = melee.take();
-        check(lines.size() == 1 && lines[0] == "Counter, triangle.",
+        check(lines.size() == 1 && lines[0] == "Triangle counter.",
               "a counter window is announced once with its button");
         check(melee.take().empty(), "an open counter window is not repeated");
         melee.apply(icon("Y4", "SnatchButton_1", 9));

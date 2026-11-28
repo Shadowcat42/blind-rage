@@ -181,6 +181,16 @@ class ScriptLookup {
                 }
         return {};
     }
+    // The property object itself (for an array's inner property or a struct's
+    // type, both at +0x64), or 0.
+    static uint32_t field(const Memory &m, Reader &reader, uint32_t cls, std::string_view name) {
+        for (unsigned depth = 0; cls && depth < 24; cls = m.u32(cls + 0x40), ++depth)
+            for (auto field = m.u32(cls + 0x44), count = 0u; field && count < 4096;
+                 field = m.u32(field + 0x3c), ++count)
+                if (reader.object_name(m, field) == name)
+                    return field;
+        return 0;
+    }
     // A function of `cls` or one of its superclasses, with its parameters.
     static ScriptFunction function(const Memory &m, Reader &reader, uint32_t cls,
                                    std::string_view name) {

@@ -20,6 +20,15 @@ inline int64_t steady_ns() {
 // just after that reading with room for the audio queue.
 inline constexpr int64_t kCountInBeatNs = 330'000'000;
 inline constexpr int kCountInBeats = 4;
+// Some keys sit less than 1.1 s into their scene, so the prompt appears with less
+// lead (Episode 11: 0.87, 1.04 and 1.06 s). Then the four beats are spaced evenly
+// over the time left, after room for the audio queue, never closer than 0.15 s;
+// below that, the earliest beats are skipped. The high beat stays on the key.
+inline constexpr int64_t kCountInQueueNs = 40'000'000, kCountInMinBeatNs = 150'000'000;
+inline int64_t count_in_spacing(int64_t perfect, int64_t from) {
+    auto available = perfect - from - kCountInQueueNs;
+    return std::clamp<int64_t>(available / (kCountInBeats - 1), kCountInMinBeatNs, kCountInBeatNs);
+}
 inline constexpr float kCountInLow = 525.f, kCountInHigh = 1050.f;
 inline constexpr float kCountInLength = .05f, kCountInEdge = .005f;
 struct CountInCue {
@@ -28,6 +37,9 @@ struct CountInCue {
     int64_t perfect{}, from{};
     uint64_t generation{};
     bool active{};
+    // Onset to onset, chosen when the count-in is first scheduled and kept when
+    // later clock readings move it, so the tempo never changes partway.
+    int64_t spacing = kCountInBeatNs;
 };
 class CountInSynth {
   public:
@@ -61,7 +73,8 @@ class CountInSynth {
             float sample = 0;
             if (cue.active)
                 for (int beat = 0; beat < kCountInBeats; ++beat) {
-                    auto begin = cue.perfect - (kCountInBeats - 1 - beat) * kCountInBeatNs;
+                    auto spacing = cue.spacing > 0 ? cue.spacing : kCountInBeatNs;
+                    auto begin = cue.perfect - (kCountInBeats - 1 - beat) * spacing;
                     if (begin < cue.from)
                         continue;
                     auto t = float(double(start - begin) / 1e9 + double(i) / 48000.);

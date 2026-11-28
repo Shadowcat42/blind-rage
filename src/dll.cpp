@@ -317,10 +317,36 @@ static DWORD WINAPI run(void *) {
         // The mod's own tutorial boxes (Episode 1's rail-shooting introduction).
         bool modTutorials = setting(L"mod_tutorials", 1);
         gameHooks.mod_tutorials(modTutorials);
+        // Fight tips: a short box when an enemy whose fight isn't obvious appears.
+        bool modTips = setting(L"mod_tips", 1);
+        gameHooks.mod_tips(modTips);
         uint64_t tutorialLevel = 0, chaseLevel = 0, meleeLevel = 0, beaconDemo = 0;
         // Lookups from the first tutorial, reused: script classes and the SE_UI cues
         // stay loaded for the whole session.
         std::optional<GameplayHooks::TutorialRun> tutorialBase;
+        // The tutorial box's script functions and the lock cues, looked up by name.
+        auto tutorial_run = [&](const Memory &memory) {
+            GameplayHooks::TutorialRun run;
+            const auto &layout = reader.layout();
+            auto advertise =
+                ScriptLookup::find(memory, reader, layout, "BCGFxUI_Advertise", "Class");
+            run.advertise_class = advertise;
+            run.create = ScriptLookup::function(memory, reader, advertise, "CallCreate");
+            run.show = ScriptLookup::function(memory, reader, advertise, "ShowAdvertise");
+            run.sound = ScriptLookup::function(memory, reader, advertise, "PlayGFxUISound");
+            auto [offset, mask] = ScriptLookup::property(memory, reader, advertise, "bUsePause");
+            run.use_pause_offset = offset;
+            run.use_pause_mask = mask;
+            run.lock_tone = ScriptLookup::find(memory, reader, layout, "SE_UI_lockon1_Cue",
+                                               "SoundCue", "SE_UI");
+            run.full_lock_tone = ScriptLookup::find(memory, reader, layout, "SE_UI_lockon2_Cue",
+                                                    "SoundCue", "SE_UI");
+            auto names = memory.u32(layout.names_global + 4);
+            for (uint32_t i = 0; i < names && i < 250000 && !run.tick_name; ++i)
+                if (reader.name(memory, i) == "Tick")
+                    run.tick_name = i;
+            return run;
+        };
         // The QTE note holds Episode 1's first QTE announcement until its box is
         // confirmed. If the box does not open promptly, the QTE is announced anyway.
         uint64_t qteNoteLevel = 0, qteNoteStarted = 0;
@@ -415,6 +441,27 @@ static DWORD WINAPI run(void *) {
             if (lookReady && lookAudio.healthy())
                 lookAudio.update(cue);
         };
+        // Jump cue for wide sword waves: a quick 500-1000 Hz sweep.
+        JumpAudio jumpAudio;
+        AudioRetry jumpRetry;
+        bool jumpReady = false;
+        uint64_t jumpLogged = 0;
+        auto jump_output = [&](JumpCue cue) {
+            if (!notifications.focused() || muted)
+                cue.active = false;
+            if (cue.active && !(jumpReady && jumpAudio.healthy()) &&
+                jumpRetry.due(GetTickCount64())) {
+                jumpAudio.close();
+                jumpReady = jumpAudio.start(cueGain * fireShare);
+                if (jumpReady)
+                    jumpRetry.success();
+                else
+                    jumpRetry.failure(GetTickCount64());
+                write(jumpReady ? "JUMP_AUDIO ready" : "JUMP_AUDIO unavailable");
+            }
+            if (jumpReady && jumpAudio.healthy())
+                jumpAudio.update(cue);
+        };
         // Incoming-fire warning in shooting sections without the game's lock-on.
         FireAudio fireAudio;
         AudioRetry fireRetry;
@@ -441,6 +488,18 @@ static DWORD WINAPI run(void *) {
         auto drain_beacons = [&] {
             if (auto fire = gameHooks.take_fire())
                 fire_output(*fire);
+            for (const auto &line : gameHooks.take_wave_log())
+                write(line);
+            if (auto waves = gameHooks.take_waves()) {
+                fire_output(waves->step);
+                const auto &lastJump = waves->jump;
+                if (lastJump.active && lastJump.generation != jumpLogged) {
+                    write("WAVE_JUMP in " +
+                          std::to_string(int64_t(lastJump.at) - int64_t(GetTickCount64())) + "ms");
+                    jumpLogged = lastJump.generation;
+                }
+                jump_output(lastJump);
+            }
             if (auto sample = gameHooks.take_aim()) {
                 lastAim = *sample;
                 beacon_output(beacons.update(*sample));
@@ -585,6 +644,12 @@ static DWORD WINAPI run(void *) {
         };
         QteReader qtes([&](std::string_view tag) { return prompts.button(tag); },
                        [&](std::string_view tag) { return prompts.gesture(tag); });
+        {
+            wchar_t wording[32]{};
+            GetPrivateProfileStringW(L"gameplay", L"qte_wording", L"verbose", wording, 32,
+                                     ini.c_str());
+            qtes.quick(utf8(wording) == "quick");
+        }
         SynchronicReader timing([&](std::string_view tag) { return prompts.button(tag); });
         if (textHooks) {
             events.push_back(presentations.event());
@@ -654,7 +719,7 @@ static DWORD WINAPI run(void *) {
         countInAudio.synth().clock(gameHooks.timing_clock());
         AudioRetry countInRetry;
         bool countInReady = false;
-        int64_t countInPerfect = 0;
+        int64_t countInPerfect = 0, countInSpacing = kCountInBeatNs;
         std::string countInLogged;
         auto count_in_output = [&] {
             auto cue = timing.take_count_in();
@@ -674,8 +739,10 @@ static DWORD WINAPI run(void *) {
             }
             if (countInReady && countInAudio.healthy())
                 countInAudio.update(*cue);
-            if (cue->active)
+            if (cue->active) {
                 countInPerfect = cue->perfect;
+                countInSpacing = cue->spacing;
+            }
         };
         // Log each beat once it has been rendered, relative to the perfect time.
         auto count_in_log = [&] {
@@ -688,7 +755,8 @@ static DWORD WINAPI run(void *) {
                 text += " beat" + std::to_string(beat + 1) + "=";
                 text += at ? std::to_string((at - countInPerfect) / 1'000'000) + "ms" : "-";
             }
-            text = "COUNT_IN_PLAYED generation=" + std::to_string(played.generation) + text;
+            text = "COUNT_IN_PLAYED generation=" + std::to_string(played.generation) +
+                   " spacing=" + std::to_string(countInSpacing / 1'000'000) + "ms" + text;
             if (text != countInLogged) {
                 countInLogged = text;
                 write(text);
@@ -971,6 +1039,7 @@ static DWORD WINAPI run(void *) {
             lookAudio.set_gain(cueGain * lookShare);
             countInAudio.set_gain(cueGain * countInShare);
             fireAudio.set_gain(cueGain * fireShare);
+            jumpAudio.set_gain(cueGain * fireShare);
         };
         auto apply_setting = [&](const std::string &key, const std::string &value) {
             WritePrivateProfileStringW(L"gameplay", wide(key).c_str(), wide(value).c_str(),
@@ -1021,6 +1090,11 @@ static DWORD WINAPI run(void *) {
                 meleeEnabled = on;
                 if (!on)
                     meleeAudio.silence();
+            } else if (key == "qte_wording") {
+                qtes.quick(value == "quick");
+            } else if (key == "mod_tips") {
+                modTips = on;
+                gameHooks.mod_tips(on);
             } else if (key == "mod_tutorials") {
                 modTutorials = on;
                 gameHooks.mod_tutorials(on);
@@ -1366,32 +1440,7 @@ static DWORD WINAPI run(void *) {
                                         (episode1 ? tutorialLevel
                                          : chase  ? chaseLevel
                                                   : meleeLevel) = key;
-                                        GameplayHooks::TutorialRun run;
-                                        const auto &layout = reader.layout();
-                                        auto advertise = ScriptLookup::find(
-                                            memory, reader, layout, "BCGFxUI_Advertise", "Class");
-                                        run.advertise_class = advertise;
-                                        run.create = ScriptLookup::function(
-                                            memory, reader, advertise, "CallCreate");
-                                        run.show = ScriptLookup::function(memory, reader, advertise,
-                                                                          "ShowAdvertise");
-                                        run.sound = ScriptLookup::function(
-                                            memory, reader, advertise, "PlayGFxUISound");
-                                        auto [offset, mask] = ScriptLookup::property(
-                                            memory, reader, advertise, "bUsePause");
-                                        run.use_pause_offset = offset;
-                                        run.use_pause_mask = mask;
-                                        run.lock_tone = ScriptLookup::find(memory, reader, layout,
-                                                                           "SE_UI_lockon1_Cue",
-                                                                           "SoundCue", "SE_UI");
-                                        run.full_lock_tone = ScriptLookup::find(
-                                            memory, reader, layout, "SE_UI_lockon2_Cue", "SoundCue",
-                                            "SE_UI");
-                                        auto names = memory.u32(layout.names_global + 4);
-                                        for (uint32_t i = 0;
-                                             i < names && i < 250000 && !run.tick_name; ++i)
-                                            if (reader.name(memory, i) == "Tick")
-                                                run.tick_name = i;
+                                        auto run = tutorial_run(memory);
                                         run.boxes = qte_note();
                                         if (run.valid())
                                             tutorialBase = run;
@@ -1423,6 +1472,21 @@ static DWORD WINAPI run(void *) {
                                                            : "MOD_TUTORIAL melee started");
                                         } else
                                             write("MOD_TUTORIAL unavailable: lookup incomplete");
+                                    }
+                                } else if (event.fight_tip) {
+                                    write("MOD_TIP " + std::to_string(event.fight_tip) + " for " +
+                                          reader.class_name(memory, event.tip_enemy));
+                                    if (modTips && !gameHooks.tutorial_running()) {
+                                        auto run =
+                                            tutorialBase ? *tutorialBase : tutorial_run(memory);
+                                        if (run.valid() && !tutorialBase)
+                                            tutorialBase = run;
+                                        run.boxes = fight_tip(FightTip(event.fight_tip));
+                                        if (run.valid() && !run.boxes.empty()) {
+                                            gameHooks.start_tutorial(std::move(run));
+                                            write("MOD_TIP started");
+                                        } else
+                                            write("MOD_TIP unavailable: lookup incomplete");
                                     }
                                 } else if (event.tutorial_step) {
                                     constexpr const char *steps[] = {"",         "opened", "sound",
@@ -1565,6 +1629,7 @@ static DWORD WINAPI run(void *) {
         walkAudio.close();
         meleeAudio.close();
         lookAudio.close();
+        jumpAudio.close();
         countInAudio.close();
         drain_lock_trace();
         presentations.capture(false);

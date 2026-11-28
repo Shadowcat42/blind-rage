@@ -44,6 +44,8 @@ try {
  if($LASTEXITCODE){throw 'Recomp setup test compilation failed'}
  & $compiler @common 'tests/self_update_test.cpp' '-o' 'build/tests/self_update_test.exe' '-lwinhttp' '-lole32' '-luuid' '-luser32' '-lbcrypt'
  if($LASTEXITCODE){throw 'Self-update test compilation failed'}
+ & $compiler @common 'tests/wave_guide_test.cpp' '-o' 'build/tests/wave_guide_test.exe'
+ if($LASTEXITCODE){throw 'Wave guide test compilation failed'}
  & $compiler @common 'tests/look_around_test.cpp' '-o' 'build/tests/look_around_test.exe'
  if($LASTEXITCODE){throw 'Look-around test compilation failed'}
  & $compiler @common 'tests/settings_menu_test.cpp' '-o' 'build/tests/settings_menu_test.exe'
@@ -99,6 +101,7 @@ try {
   & ./build/tests/fire_warning_test.exe; if($LASTEXITCODE){throw 'Fire warning tests failed'}
   & ./build/tests/settings_menu_test.exe; if($LASTEXITCODE){throw 'Settings menu tests failed'}
   & ./build/tests/look_around_test.exe; if($LASTEXITCODE){throw 'Look-around tests failed'}
+  & ./build/tests/wave_guide_test.exe; if($LASTEXITCODE){throw 'Wave guide tests failed'}
   & ./build/tests/recomp_setup_test.exe; if($LASTEXITCODE){throw 'Recomp setup tests failed'}
   & ./build/tests/self_update_test.exe; if($LASTEXITCODE){throw 'Self-update tests failed'}
   & ./build/tests/shooting_beacons_test.exe; if($LASTEXITCODE){throw 'Shooting beacon tests failed'}

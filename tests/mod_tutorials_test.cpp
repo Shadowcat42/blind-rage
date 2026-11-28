@@ -59,6 +59,23 @@ int main() {
         for (const auto &box : melee)
             check(!contains(box.text, "{") && box.after == TutorialSound::none,
                   "every melee name is filled in and no box plays a demo");
+        auto tip = fight_tip(fight_tip_for("BCPawn_zou01", "BC-S060"));
+        check(tip.size() == 1 &&
+                  tip[0].text.starts_with("This giant elephant Gohma can't just be beaten down.") &&
+                  tip[0].text.ends_with("Good luck.") && tip[0].after == TutorialSound::none,
+              "the elephant Gohma tip, with the agreed wording");
+        check(fight_tip_for("BCPawn_zou02", "BC-S060") == FightTip::none &&
+                  fight_tip(FightTip::none).empty(),
+              "no tip for the section 3 Gohma or other enemies");
+        check(fight_tip_for("BCPawn_zou01", "BC-S110") == FightTip::none,
+              "the same enemy in another episode brings no tip");
+        auto augus = fight_tip(fight_tip_for("BCPawn_ogs02", "BC-S110"));
+        check(augus.size() == 1 &&
+                  augus[0].text.starts_with("Augus has decided he wants to become a zoner") &&
+                  augus[0].text.ends_with("jump when the tone ends."),
+              "the Augus sword-wave tip, with the agreed wording");
+        check(fight_tip_for("BCPawn_ogs01", "BC-S110") == FightTip::none,
+              "Augus's first section brings no tip");
         auto note = qte_note();
         check(note.size() == 1 && note[0].after == TutorialSound::none &&
                   note[0].text.starts_with("Central to the Asura's Wrath experience") &&
