@@ -84,7 +84,7 @@ Image-only text and some conversation and interlude routes aren't read yet.
 
 ## Settings
 
-Press **Ctrl+O**, or click both sticks on a controller, to open the spoken settings menu. During gameplay the game pauses while it's open. Up and down choose a setting, left and right (or Enter and cross) change it, and Escape, circle or Start close the menu. Changes apply at once and are saved. Settings live in `mods/accessibility/accessibility.ini`. The package doesn't include it: BlindRage.exe creates it on first launch from its built-in [defaults](config/accessibility.ini), which explain each setting, so extracting an update never resets your choices. After an update, BlindRage.exe adds any new settings and removes retired ones, keeping every value you set. Otherwise only the mod's in-game choices change the file (the shooting mode and aim priority). Restart the game after editing it.
+Press **Ctrl+O**, or click both sticks on a controller, to open the spoken settings menu. During gameplay the game pauses while it's open. Settings are grouped in categories: speech, tutorials and tips, shooting and aiming, beacons, gameplay assists and volume. Up and down choose a category, and right, Enter or cross opens it. Inside a category, up and down choose a setting, which is read with a short description of what it does, and left and right (or Enter and cross) change it. Escape, circle or Start go back to the category list, and from there close the menu; Ctrl+O or both sticks close it from anywhere. The menu reopens on the category you last used. Changes apply at once and are saved. Settings live in `mods/accessibility/accessibility.ini`. The package doesn't include it: BlindRage.exe creates it on first launch from its built-in [defaults](config/accessibility.ini), which explain each setting, so extracting an update never resets your choices. After an update, BlindRage.exe adds any new settings and removes retired ones, keeping every value you set. Otherwise only the mod's in-game choices change the file (the shooting mode and aim priority). Restart the game after editing it.
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
@@ -93,13 +93,13 @@ Press **Ctrl+O**, or click both sticks on a controller, to open the spoken setti
 | `qte_interrupt` | 1 | Urgent quick-time prompts may interrupt the screen reader |
 | `qte_wording` | verbose | `quick` shortens QTE prompts ("LS right RS left", "Mash L2 R2"); `verbose` spells them out |
 | `qte_freeze` | 0 | Pauses the game for this many milliseconds (up to 300) when a new button or stick QTE appears, so its announcement gets a head start; presses during the freeze don't count; 0 is off |
-| `status_warnings`, `low_health_percent` | 1, 25 | Low-health warning and its threshold |
+| `status_warnings`, `low_health_percent` | 1, 25 | Gauge alerts (low health, Burst ready and other gauge changes) and the low-health threshold |
 | `shooting_mode` | beacons | `off`, `beacons` or `boosted` |
-| `boost_point_blank`, `boost_max_range` | 2, 3 | Boosted lock-on cone, as multiples of the game's limits (50 degrees at point blank, 3.6 degrees at maximum range in Episode 1) |
+| `boost_point_blank`, `boost_max_range` | 2, 3 | Boosted lock-on cone up close and far away, as multiples of the game's own limits; only with `boosted` |
 | `boost_homing` | 3 | Boosted melee homing, as a multiple of the game's 2.6-degree homing angle |
 | `aim_priority` | projectiles | Melee rapid fire tracks `projectiles` or `enemies` first |
-| `mod_tips` | 1 | Fight tips: a short box when an enemy whose fight isn't obvious appears (so far one fight each in Episodes 7 and 11) |
-| `mod_tutorials` | 1 | The mod's own tutorial boxes (rail shooting in Episode 1, melee in Episode 2, the chase in Episode 8); 0 skips them |
+| `mod_tips` | 1 | Fight tips: a short box when an enemy whose fight isn't obvious appears |
+| `mod_tutorials` | 1 | The mod's own tutorial boxes, which pause the game; 0 skips them |
 | `walk_beacon` | 1 | Walking-section beacon |
 | `look_beacon` | 1 | Look-around beacon in scenes where the right stick turns the camera |
 | `melee_beacon` | 1 | Melee beacon toward the enemy you'd attack (D-pad Up toggles it in melee) |

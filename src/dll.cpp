@@ -1190,10 +1190,18 @@ static DWORD WINAPI run(void *) {
                 return;
             if (input == GameplayHooks::menu_up || input == GameplayHooks::menu_down)
                 menu_say(settingsMenu.move(input == GameplayHooks::menu_up ? -1 : 1));
-            else if (input == GameplayHooks::menu_back)
-                close_menu();
-            else if (auto change =
-                         settingsMenu.adjust(input == GameplayHooks::menu_left ? -1 : 1)) {
+            else if (input == GameplayHooks::menu_back) {
+                // Back leaves a category first; on the category list it closes.
+                if (auto text = settingsMenu.back())
+                    menu_say(*text);
+                else
+                    close_menu();
+            } else if (!settingsMenu.in_category()) {
+                // Left does nothing on the category list.
+                if (input != GameplayHooks::menu_left)
+                    menu_say(settingsMenu.enter());
+            } else if (auto change =
+                           settingsMenu.adjust(input == GameplayHooks::menu_left ? -1 : 1)) {
                 apply_setting(change->key, change->value);
                 menu_say(change->speech);
             }

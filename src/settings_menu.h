@@ -1,7 +1,9 @@
 #pragma once
 // The mod's spoken settings menu (Ctrl+O, or both stick clicks). It edits the
 // [gameplay] settings of accessibility.ini; the mod applies each change at once
-// and saves it to the file. This file holds only the menu model and its speech.
+// and saves it to the file. Settings are grouped in categories: the menu opens
+// on the category list, and back returns to it. This file holds only the menu
+// model and its speech.
 #include <algorithm>
 #include <cmath>
 #include <functional>
@@ -18,97 +20,272 @@ struct SettingItem {
     int minimum = 0, maximum = 0, step = 1;
     std::string unit;
     std::string fallback;
+    // Read after the setting's position; moving on cuts it off.
+    std::string description;
 };
-inline std::vector<SettingItem> gameplay_settings() {
+struct SettingCategory {
+    std::string name;
+    std::vector<SettingItem> items;
+};
+inline std::vector<SettingCategory> gameplay_settings() {
     const std::vector<std::pair<std::string, std::string>> onOff{{"1", "on"}, {"0", "off"}};
     return {
-        {"subtitles", "Subtitles", onOff, 0, 0, 1, "", "1"},
-        {"tutorials", "Game tutorials", onOff, 0, 0, 1, "", "1"},
-        {"qtes", "QTE announcements", onOff, 0, 0, 1, "", "1"},
-        {"qte_interrupt", "QTEs interrupt speech", onOff, 0, 0, 1, "", "1"},
-        {"qte_wording",
-         "QTE wording",
-         {{"verbose", "verbose"}, {"quick", "quick"}},
-         0,
-         0,
-         1,
-         "",
-         "verbose"},
-        {"qte_freeze", "QTE freeze", {}, 0, 300, 50, "milliseconds", "0"},
-        {"interrupt", "Game text interrupts speech", onOff, 0, 0, 1, "", "0"},
-        {"status_warnings", "Low health warning", onOff, 0, 0, 1, "", "1"},
-        {"low_health_percent", "Low health at", {}, 5, 50, 5, "percent", "25"},
-        {"shooting_mode",
-         "Shooting assistance",
-         {{"off", "off"}, {"beacons", "beacons"}, {"boosted", "boosted beacons"}},
-         0,
-         0,
-         1,
-         "",
-         "beacons"},
-        {"aim_priority",
-         "Melee rapid fire aims at",
-         {{"projectiles", "projectiles first"}, {"enemies", "enemies first"}},
-         0,
-         0,
-         1,
-         "",
-         "projectiles"},
-        {"boost_point_blank", "Boosted lock-on, close range", {}, 1, 10, 1, "times", "2"},
-        {"boost_max_range", "Boosted lock-on, long range", {}, 1, 10, 1, "times", "3"},
-        {"boost_homing", "Boosted rapid fire homing", {}, 1, 10, 1, "times", "3"},
-        {"tracking_strength", "L1 steering speed", {}, 0, 100, 10, "percent", "100"},
-        {"walk_beacon", "Walking beacon", onOff, 0, 0, 1, "", "1"},
-        {"melee_beacon", "Melee beacon", onOff, 0, 0, 1, "", "1"},
-        {"look_beacon", "Look-around beacon", onOff, 0, 0, 1, "", "1"},
-        {"mod_tutorials", "Blind Rage tutorials", onOff, 0, 0, 1, "", "1"},
-        {"mod_tips", "Blind Rage fight tips", onOff, 0, 0, 1, "", "1"},
-        {"audio_cue_volume", "Sound cue volume", {}, 0, 100, 10, "percent", "60"},
-        {"shooting_beacon_volume", "Shooting beacon volume", {}, 0, 100, 10, "percent", "100"},
-        {"walk_beacon_volume", "Walking beacon volume", {}, 0, 100, 10, "percent", "100"},
-        {"melee_beacon_volume", "Melee beacon volume", {}, 0, 100, 10, "percent", "100"},
-        {"look_beacon_volume", "Look-around beacon volume", {}, 0, 100, 10, "percent", "100"},
-        {"fire_warning_volume", "Fire warning volume", {}, 0, 100, 10, "percent", "100"},
-        {"count_in_volume", "Synchronic count-in volume", {}, 0, 100, 10, "percent", "100"},
+        {"Speech",
+         {
+             {"subtitles", "Subtitles", onOff, 0, 0, 1, "", "1", "Reads subtitles."},
+             {"tutorials", "Game tutorials", onOff, 0, 0, 1, "", "1",
+              "Reads the game's own tutorial boxes."},
+             {"interrupt", "Game text interrupts speech", onOff, 0, 0, 1, "", "0",
+              "New subtitles and tutorials cut off whatever the screen reader is saying, instead of waiting."},
+             {"qtes", "QTE announcements", onOff, 0, 0, 1, "", "1", "Announces quick-time events."},
+             {"qte_interrupt", "QTEs interrupt speech", onOff, 0, 0, 1, "", "1",
+              "A new QTE prompt cuts off whatever the screen reader is saying."},
+             {"qte_wording",
+              "QTE wording",
+              {{"verbose", "verbose"}, {"quick", "quick"}},
+              0,
+              0,
+              1,
+              "",
+              "verbose",
+              "Quick says prompts briefly, like LS right RS left; verbose spells them out."},
+             {"status_warnings", "Gauge alerts", onOff, 0, 0, 1, "", "1",
+              "Announces low health, when Burst is ready, and other changes to your gauges."},
+             {"low_health_percent",
+              "Low health at",
+              {},
+              5,
+              50,
+              5,
+              "percent",
+              "25",
+              "The health percentage that counts as low health in gauge alerts."},
+         }},
+        {"Tutorials and tips",
+         {
+             {"mod_tutorials", "Tutorials", onOff, 0, 0, 1, "", "1",
+              "The mod's own tutorial boxes. They pause the game."},
+             {"mod_tips", "Fight tips", onOff, 0, 0, 1, "", "1",
+              "A short pausing box when an enemy whose fight isn't obvious appears."},
+         }},
+        {"Shooting and aiming",
+         {
+             {"shooting_mode",
+              "Shooting assistance",
+              {{"off", "off"}, {"beacons", "beacons"}, {"boosted", "boosted beacons"}},
+              0,
+              0,
+              1,
+              "",
+              "beacons",
+              "Off, audio beacons toward targets, or beacons with a larger lock-on area (boosted)."},
+             {"aim_priority",
+              "Melee rapid fire aims at",
+              {{"projectiles", "projectiles first"}, {"enemies", "enemies first"}},
+              0,
+              0,
+              1,
+              "",
+              "projectiles",
+              "Whether melee rapid fire goes for projectiles or enemies first. D-pad Down switches it during rapid fire."},
+             {"tracking_strength",
+              "L1 steering speed",
+              {},
+              0,
+              100,
+              10,
+              "percent",
+              "100",
+              "How fast holding L1 steers your aim onto targets, as a share of the game's own cursor speed."},
+         }},
+        {"Beacons",
+         {
+             {"walk_beacon", "Walking beacon", onOff, 0, 0, 1, "", "1",
+              "A tone toward where to go next when walking. Quiet during fights."},
+             {"melee_beacon", "Melee beacon", onOff, 0, 0, 1, "", "1",
+              "A tone toward the enemy your attacks will turn to. D-pad Up toggles it in melee."},
+             {"look_beacon", "Look-around beacon", onOff, 0, 0, 1, "", "1",
+              "In scenes where the right stick turns the camera, leads your view to things the game reacts to."},
+         }},
+        {"Gameplay assists",
+         {
+             {"qte_freeze",
+              "QTE freeze",
+              {},
+              0,
+              300,
+              50,
+              "milliseconds",
+              "0",
+              "Pauses the game briefly when a new QTE appears, so you hear it sooner. Presses during the freeze don't count."},
+             {"boost_point_blank",
+              "Boosted lock-on, close range",
+              {},
+              1,
+              10,
+              1,
+              "times",
+              "2",
+              "How much larger the lock-on area is up close. Only with boosted shooting assistance."},
+             {"boost_max_range",
+              "Boosted lock-on, long range",
+              {},
+              1,
+              10,
+              1,
+              "times",
+              "3",
+              "How much larger the lock-on area is far away. Only with boosted shooting assistance."},
+             {"boost_homing",
+              "Boosted rapid fire homing",
+              {},
+              1,
+              10,
+              1,
+              "times",
+              "3",
+              "How much more melee rapid fire homes in. Only with boosted shooting assistance."},
+         }},
+        {"Volume",
+         {
+             {"audio_cue_volume",
+              "Sound cue volume",
+              {},
+              0,
+              100,
+              10,
+              "percent",
+              "60",
+              "Overall volume of the mod's sounds."},
+             {"shooting_beacon_volume",
+              "Shooting beacon volume",
+              {},
+              0,
+              100,
+              10,
+              "percent",
+              "100",
+              "The shooting beacon's share of the overall volume."},
+             {"walk_beacon_volume",
+              "Walking beacon volume",
+              {},
+              0,
+              100,
+              10,
+              "percent",
+              "100",
+              "The walking beacon's share of the overall volume."},
+             {"melee_beacon_volume",
+              "Melee beacon volume",
+              {},
+              0,
+              100,
+              10,
+              "percent",
+              "100",
+              "The melee beacon's share of the overall volume."},
+             {"look_beacon_volume",
+              "Look-around beacon volume",
+              {},
+              0,
+              100,
+              10,
+              "percent",
+              "100",
+              "The look-around beacon's share of the overall volume."},
+             {"fire_warning_volume",
+              "Fire warning volume",
+              {},
+              0,
+              100,
+              10,
+              "percent",
+              "100",
+              "The share for the mod's danger warnings, such as when to jump."},
+             {"count_in_volume",
+              "Synchronic count-in volume",
+              {},
+              0,
+              100,
+              10,
+              "percent",
+              "100",
+              "The share for the count-in beats before a Synchronic QTE."},
+         }},
     };
 }
 class SettingsMenu {
   public:
     using Read = std::function<std::string(const std::string &key, const std::string &fallback)>;
-    explicit SettingsMenu(std::vector<SettingItem> items = gameplay_settings())
-        : items_(std::move(items)) {}
+    explicit SettingsMenu(std::vector<SettingCategory> categories = gameplay_settings())
+        : categories_(std::move(categories)) {}
     bool is_open() const {
         return open_;
     }
-    // Opens on the first item, reading current values. Returns the speech.
+    // True inside a category, false on the category list.
+    bool in_category() const {
+        return open_ && inside_;
+    }
+    // Opens on the category list, on the category last used, reading current
+    // values. Returns the speech.
     std::string open(const Read &read) {
         values_.clear();
-        for (const auto &item : items_)
-            values_[item.key] = normalize(item, read(item.key, item.fallback));
+        for (const auto &category : categories_)
+            for (const auto &item : category.items)
+                values_[item.key] = normalize(item, read(item.key, item.fallback));
         open_ = true;
+        inside_ = false;
         index_ = 0;
-        return "Blind Rage settings. " + describe(index_);
+        if (category_ >= categories_.size())
+            category_ = 0;
+        return "Blind Rage settings. " + current();
     }
     std::string close() {
-        open_ = false;
+        open_ = inside_ = false;
         return "Settings closed.";
     }
+    // Up/down: the next category on the list, or the next setting inside one.
+    // Both wrap.
     std::string move(int delta) {
-        if (!open_ || items_.empty())
+        if (!open_ || categories_.empty())
             return {};
-        auto n = int(items_.size());
-        index_ = size_t((int(index_) + (delta % n) + n) % n);
-        return describe(index_);
+        auto wrap = [delta](size_t at, size_t size) {
+            auto n = int(size);
+            return size_t((int(at) + (delta % n) + n) % n);
+        };
+        if (inside_) {
+            if (items().empty())
+                return {};
+            index_ = wrap(index_, items().size());
+        } else
+            category_ = wrap(category_, categories_.size());
+        return current();
+    }
+    // Right or confirm on the category list: opens the selected category.
+    std::string enter() {
+        if (!open_ || inside_ || categories_.empty() || items().empty())
+            return {};
+        inside_ = true;
+        index_ = 0;
+        return categories_[category_].name + ". " + current();
+    }
+    // Back: from a setting to the category list. Returns nothing on the list
+    // itself, where back closes the menu.
+    std::optional<std::string> back() {
+        if (!in_category())
+            return std::nullopt;
+        inside_ = false;
+        return current();
     }
     struct Change {
         std::string key, value, speech;
     };
-    // Left/right (or confirm, which steps forward). Wraps for choices, stops at
-    // the ends for numbers.
+    // Left/right (or confirm, which steps forward) inside a category. Wraps for
+    // choices, stops at the ends for numbers.
     std::optional<Change> adjust(int delta) {
-        if (!open_ || items_.empty())
+        if (!in_category() || items().empty())
             return std::nullopt;
-        const auto &item = items_[index_];
+        const auto &item = items()[index_];
         auto &value = values_[item.key];
         if (!item.choices.empty()) {
             auto n = int(item.choices.size());
@@ -121,22 +298,22 @@ class SettingsMenu {
         } else {
             int number = std::stoi(value) + delta * item.step;
             number = std::clamp(number, item.minimum, item.maximum);
-            auto next = std::to_string(number);
-            if (next == value)
-                return Change{item.key, value, spoken(item, value)};
-            value = next;
+            value = std::to_string(number);
         }
         return Change{item.key, value, spoken(item, value)};
     }
-    std::string describe(size_t index) const {
-        if (index >= items_.size())
-            return {};
-        const auto &item = items_[index];
-        return item.label + ", " + spoken(item, values_.at(item.key)) + ". " +
-               std::to_string(index + 1) + " of " + std::to_string(items_.size()) + ".";
-    }
     std::string current() const {
-        return open_ ? describe(index_) : std::string{};
+        if (!open_ || categories_.empty())
+            return {};
+        if (!inside_)
+            return categories_[category_].name + ". " + std::to_string(category_ + 1) + " of " +
+                   std::to_string(categories_.size()) + ".";
+        if (index_ >= items().size())
+            return {};
+        const auto &item = items()[index_];
+        auto text = item.label + ", " + spoken(item, values_.at(item.key)) + ". " +
+                    std::to_string(index_ + 1) + " of " + std::to_string(items().size()) + ".";
+        return item.description.empty() ? text : text + " " + item.description;
     }
 
   private:
@@ -167,9 +344,12 @@ class SettingsMenu {
                 return name;
         return item.unit.empty() ? value : value + " " + item.unit;
     }
-    std::vector<SettingItem> items_;
+    const std::vector<SettingItem> &items() const {
+        return categories_[category_].items;
+    }
+    std::vector<SettingCategory> categories_;
     std::map<std::string, std::string> values_;
-    size_t index_ = 0;
-    bool open_ = false;
+    size_t category_ = 0, index_ = 0;
+    bool open_ = false, inside_ = false;
 };
 } // namespace a11y
