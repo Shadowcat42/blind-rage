@@ -92,6 +92,7 @@ Press **Ctrl+O**, or click both sticks on a controller, to open the spoken setti
 | `interrupt` | 0 | 1 lets new gameplay text interrupt the screen reader |
 | `qte_interrupt` | 1 | Urgent quick-time prompts may interrupt the screen reader |
 | `qte_wording` | verbose | `quick` shortens QTE prompts ("LS right RS left", "Mash L2 R2"); `verbose` spells them out |
+| `qte_freeze` | 0 | Pauses the game for this many milliseconds (up to 300) when a new button or stick QTE appears, so its announcement gets a head start; presses during the freeze don't count; 0 is off |
 | `status_warnings`, `low_health_percent` | 1, 25 | Low-health warning and its threshold |
 | `shooting_mode` | beacons | `off`, `beacons` or `boosted` |
 | `boost_point_blank`, `boost_max_range` | 2, 3 | Boosted lock-on cone, as multiples of the game's limits (50 degrees at point blank, 3.6 degrees at maximum range in Episode 1) |

@@ -217,6 +217,12 @@ static DWORD WINAPI run(void *) {
         bool statusWarnings = setting(L"status_warnings", 1);
         bool interruptText = setting(L"interrupt", 0);
         bool qteEnabled = setting(L"qtes", 1), interruptQte = setting(L"qte_interrupt", 1);
+        // qte_freeze: each newly announced button or stick QTE (not Synchronic)
+        // pauses the game this many milliseconds, so speech gets a head start.
+        int qteFreezeMs = std::clamp(
+            int(GetPrivateProfileIntW(L"gameplay", L"qte_freeze", 0, ini.c_str())), 0, 300);
+        bool qteFreezeWanted = false, qteFrozen = false;
+        ULONGLONG qteFreezeEnd = 0;
         // Boosted mode scales the game's own lock cone: point_blank multiplies the
         // near limit (LockOnDegMaxVal), max_range the far limit (LockOnDegMinVal).
         auto multiplier = [&](const wchar_t *key, float fallback) {
@@ -776,6 +782,7 @@ static DWORD WINAPI run(void *) {
         auto narrate_qtes = [&] {
             auto lines = timing.take();
             auto normal = qtes.take();
+            const bool firstAppearance = qtes.take_first_appearance();
             lines.insert(lines.end(), normal.begin(), normal.end());
             std::string combined;
             for (const auto &line : lines) {
@@ -819,8 +826,11 @@ static DWORD WINAPI run(void *) {
                 write("MOD_TUTORIAL QTE note before: " + combined);
                 return;
             }
-            if (qteEnabled && !combined.empty() && notifications.focused() && !muted && speaking)
+            if (qteEnabled && !combined.empty() && notifications.focused() && !muted && speaking) {
                 speech.speak(combined, interruptQte);
+                if (firstAppearance && qteFreezeMs > 0)
+                    qteFreezeWanted = true;
+            }
         };
         ULONGLONG due = 0, burst = 0, emptySince = 0;
         uint64_t reads = 0;
@@ -1095,6 +1105,8 @@ static DWORD WINAPI run(void *) {
                     meleeAudio.silence();
             } else if (key == "qte_wording") {
                 qtes.quick(value == "quick");
+            } else if (key == "qte_freeze") {
+                qteFreezeMs = std::clamp(int(number), 0, 300);
             } else if (key == "mod_tips") {
                 modTips = on;
                 gameHooks.mod_tips(on);
@@ -1261,7 +1273,27 @@ static DWORD WINAPI run(void *) {
             "Event reader started: assignment, raw assignment, movie open/close, text, display flags, title script assignment");
         while (!stopping) {
             auto now = GetTickCount64();
+            // The QTE freeze: only during gameplay, never over a game menu or the
+            // settings menu, whose own pauses must stay in place.
+            if (std::exchange(qteFreezeWanted, false) && !qteFrozen && last.empty() &&
+                !settingsMenu.is_open() && pause_ready()) {
+                gameHooks.request_pause(true);
+                qteFrozen = true;
+                qteFreezeEnd = now + qteFreezeMs;
+                write("QTE_FREEZE " + std::to_string(qteFreezeMs) + "ms");
+            }
+            if (qteFrozen && now >= qteFreezeEnd) {
+                qteFrozen = false;
+                // The settings menu unpauses when it closes; a game menu opened
+                // meanwhile keeps its own pause.
+                bool keep = settingsMenu.is_open() || !last.empty();
+                if (!keep)
+                    gameHooks.request_pause(false);
+                write(keep ? "QTE_FREEZE ended under a menu" : "QTE_FREEZE ended");
+            }
             DWORD timeout = scheduled ? DWORD(due > now ? due - now : 0) : INFINITE;
+            if (qteFrozen)
+                timeout = std::min<DWORD>(timeout, DWORD(qteFreezeEnd - now));
             if (scheduled && due <= now) {
                 inspect(false);
                 continue;

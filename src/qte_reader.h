@@ -155,6 +155,13 @@ class QteReader {
         icons_.clear();
         groups_.clear();
         visibility_.clear();
+        first_ = false;
+    }
+    // Whether the last take() announced a QTE for the first time since it
+    // appeared, rather than one already up being announced again (the QTE
+    // freeze pauses only for the first).
+    bool take_first_appearance() {
+        return std::exchange(first_, false);
     }
     void apply(const PresentationEvent &event) {
         Movie movie{event.movie, event.index};
@@ -218,14 +225,25 @@ class QteReader {
     std::vector<std::string> take() {
         std::vector<std::string> out;
         for (auto &group : groups_) {
+            if (!group.data.active)
+                group.announced = false;
             auto cue = current(group);
             if (cue.first.empty()) {
-                group.last.clear();
+                // A prompt hidden only for a moment keeps its place, so it is not
+                // announced again when shown: pausing (the QTE freeze, the pause or
+                // settings menu) hides the button HUD until the game resumes.
+                if (current(group, true).first != group.last)
+                    group.last.clear();
                 continue;
             }
             if (cue.first == group.last)
                 continue;
             group.last = cue.first;
+            if (!group.announced || group.announced_generation != group.data.generation) {
+                group.announced = true;
+                group.announced_generation = group.data.generation;
+                first_ = true;
+            }
             if (std::find(out.begin(), out.end(), cue.second) == out.end())
                 out.push_back(std::move(cue.second));
         }
@@ -234,6 +252,7 @@ class QteReader {
             if (text.empty())
                 continue;
             icon.announced = true;
+            first_ = true;
             if (std::find(out.begin(), out.end(), text) == out.end())
                 out.push_back(std::move(text));
         }
@@ -308,8 +327,12 @@ class QteReader {
         uint64_t order{};
         std::vector<std::string> tags;
         std::string last;
+        // Announced since it last became active, in this generation.
+        bool announced{};
+        uint64_t announced_generation{};
     };
-    std::pair<std::string, std::string> current(const Group &group) const {
+    std::pair<std::string, std::string> current(const Group &group,
+                                                bool ignore_visibility = false) const {
         if (!group.data.active)
             return {};
         std::vector<InputDescription> inputs;
@@ -323,7 +346,7 @@ class QteReader {
             const Icon *selected = nullptr;
             for (const auto &icon : icons_) {
                 auto visible = visibility_.find({icon.movie.pointer, icon.movie.index});
-                if (visible != visibility_.end() && !visible->second)
+                if (!ignore_visibility && visible != visibility_.end() && !visible->second)
                     continue;
                 if (icon.tag == group.tags[i] && icon.visible && icon.enabled &&
                     icon.order <= group.order && icon.revision <= group.data.visual_revision &&
@@ -349,7 +372,7 @@ class QteReader {
     }
     ButtonLabel buttons_;
     GestureLabel gestures_;
-    bool quick_{};
+    bool quick_{}, first_{};
     uint64_t icon_serial_{};
     std::vector<Icon> icons_;
     std::vector<Group> groups_;

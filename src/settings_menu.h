@@ -34,6 +34,7 @@ inline std::vector<SettingItem> gameplay_settings() {
          1,
          "",
          "verbose"},
+        {"qte_freeze", "QTE freeze", {}, 0, 300, 50, "milliseconds", "0"},
         {"interrupt", "Game text interrupts speech", onOff, 0, 0, 1, "", "0"},
         {"status_warnings", "Low health warning", onOff, 0, 0, 1, "", "1"},
         {"low_health_percent", "Low health at", {}, 5, 50, 5, "percent", "25"},

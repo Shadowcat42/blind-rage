@@ -87,7 +87,18 @@ int main() {
         auto lines = reader.take();
         check(lines.size() == 1 && lines[0] == "Left stick down and right stick up together.",
               "paired tilts retain request grouping");
+        check(reader.take_first_appearance() && !reader.take_first_appearance(),
+              "a QTE's first announcement is its first appearance");
         check(reader.take().empty(), "unchanged active QTE is quiet");
+        reader.visibility({100, 10}, false);
+        check(reader.take().empty(), "a hidden prompt is not announced");
+        reader.visibility({100, 10}, true);
+        check(reader.take().empty() && !reader.take_first_appearance(),
+              "a prompt hidden for a moment is not announced again when shown");
+        reader.apply(icon("RUp", "tag11", 4));
+        reader.apply(group, 5, names);
+        check(reader.take().size() == 1 && !reader.take_first_appearance(),
+              "a rebuilt icon in the same QTE is not a first appearance");
         QteReader aliased([](std::string_view) { return std::string("K"); });
         aliased.apply(icon("A", "tag10", 1));
         aliased.apply(icon("X", "tag11", 2));
@@ -100,7 +111,8 @@ int main() {
               "end/cancel does not produce a new cue or stale repeat");
         group.active = true;
         reader.apply(group, 6, names);
-        check(reader.take().size() == 1, "reactivated request can speak again");
+        check(reader.take().size() == 1 && reader.take_first_appearance(),
+              "reactivated request can speak again");
         reader.reset();
         group.mode = 0;
         group.count = 2;

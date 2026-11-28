@@ -5,6 +5,7 @@
 - Counter and special attack prompts say the button first ("Triangle counter."), so you hear which button sooner when counters mix triangle and circle.
 - The melee beacon goes quiet during counters and special attacks.
 - Quick QTE wording (`qte_wording=quick`, also in the settings menu): "LS right RS left", "LS clockwise", "Mash L2 R2", without joining words, mash counts or "then release". Verbose stays the default.
+- QTE freeze (`qte_freeze`, also in the settings menu): optionally pauses the game for up to 300 ms when a new button or stick QTE appears, so you hear it with a little more time to react. Presses during the freeze don't count. Off by default; Synchronic QTEs never freeze.
 - Sword waves in an Episode 11 fight: a buzz points toward the gap when a blade in a fan would hit you, and a quick rising tone tells you when to jump a wide wave. Both start during the enemy's wind-up, read from the attack animation, so there's warning even up close.
 - Synchronic count-ins keep all four beats when a key comes up with less lead than usual (several in Episode 11): the beats are spaced closer instead of the first being dropped.
 - Fight tips, with their own setting (`mod_tips`): a short pausing box when an enemy whose fight isn't obvious appears. So far there are two, in Episodes 7 and 11.

@@ -18,12 +18,12 @@ int main() {
         };
         SettingsMenu menu;
         auto first = menu.open(read);
-        check(menu.is_open() && first == "Blind Rage settings. Subtitles, off. 1 of 26.",
+        check(menu.is_open() && first == "Blind Rage settings. Subtitles, off. 1 of 27.",
               "opening reads the first setting's current value");
-        check(menu.move(-1) == "Synchronic count-in volume, 100 percent. 26 of 26.",
+        check(menu.move(-1) == "Synchronic count-in volume, 100 percent. 27 of 27.",
               "moving up from the top wraps to the last setting");
         menu.move(-6);
-        check(menu.current() == "Sound cue volume, 90 percent. 20 of 26.",
+        check(menu.current() == "Sound cue volume, 90 percent. 21 of 27.",
               "each cue's volume follows the overall one");
         auto louder = menu.adjust(1);
         check(louder && louder->key == "audio_cue_volume" && louder->value == "100" &&
@@ -31,18 +31,22 @@ int main() {
               "right raises a number by its step");
         check(menu.adjust(1)->value == "100", "numbers stop at their maximum");
         menu.move(6);
-        check(menu.move(1) == "Subtitles, off. 1 of 26.", "moving down from the bottom wraps");
+        check(menu.move(1) == "Subtitles, off. 1 of 27.", "moving down from the bottom wraps");
         auto on = menu.adjust(1);
         check(on && on->value == "1" && on->speech == "on", "a toggle switches");
-        menu.move(8);
-        check(menu.current() == "Shooting assistance, boosted beacons. 9 of 26.",
+        menu.move(9);
+        check(menu.current() == "Shooting assistance, boosted beacons. 10 of 27.",
               "choices use their spoken names");
         check(menu.adjust(1)->value == "off" && menu.adjust(-1)->value == "boosted",
               "choices wrap in both directions");
         menu.move(-1);
-        check(menu.current() == "Low health at, 25 percent. 8 of 26.",
+        check(menu.current() == "Low health at, 25 percent. 9 of 27.",
               "an unreadable value falls back to the default");
         check(menu.adjust(-1)->speech == "20 percent", "left lowers a number");
+        menu.move(-3);
+        check(menu.current() == "QTE freeze, 0 milliseconds. 6 of 27." &&
+                  menu.adjust(1)->value == "50",
+              "the QTE freeze is off by default and moves in 50 ms steps");
         check(menu.close() == "Settings closed." && !menu.is_open() && menu.current().empty(),
               "closing");
         check(!menu.adjust(1), "a closed menu changes nothing");
